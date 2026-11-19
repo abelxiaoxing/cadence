@@ -1,7 +1,6 @@
 /** Readiness is separate from conversation/history identity. This observation
  * never opens a folder, allocates an owner attachment or sends a message. */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { abortScope } from "../../../src/abort-scope.ts";
 import {
   decodeProjectObservation,
   type ProjectObservation,
@@ -10,7 +9,13 @@ import {
   decodeProjectAssociation,
   PROJECT_ASSOCIATION_HEADER,
 } from "../../../src/service/contracts/workbench.ts";
-import { errorCode, readJson } from "./service";
+import {
+  observationRead,
+  observationRetryMs,
+  refusedAccess,
+} from "./observation-read";
+
+import type { ObservationAccess } from "./observer";
 
 interface ProjectRead {
   value: ProjectObservation;
@@ -41,8 +46,9 @@ export function projectObservationResult(
   return { ...read, error: undefined };
 }
 export function useProjectObservation(
-  id?: string,
-  selectedEpoch?: string | null,
+  id: string | undefined,
+  selectedEpoch: string | null | undefined,
+  access: ObservationAccess,
 ) {
   const [revision, setRevision] = useState(0);
   const nextRevision = useRef(0);
@@ -56,13 +62,22 @@ export function useProjectObservation(
     selectedEpoch?: string | null;
   }>({});
   useEffect(() => {
-    if (!id) return;
+    if (!id || access.signal.aborted) return;
     const version = ++serial.current;
     const abort = new AbortController();
     const current = () => !abort.signal.aborted && serial.current === version;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
+    const unsubscribe = access.subscribe(stop);
     const finish = (read?: ProjectRead, error?: string) => {
       if (!current()) return;
+      if (error && refusedAccess(error)) {
+        access.refuse("project", error);
+        return;
+      }
       setState((previous) => ({
         id,
         revision,
@@ -73,60 +88,48 @@ export function useProjectObservation(
           error,
         ),
       }));
-      if (error !== "unauthenticated" && error !== "forbidden")
-        timer = setTimeout(() => void load(), 5000);
+      timer = setTimeout(() => void load(), observationRetryMs);
     };
     const load = async () => {
       if (!current()) return;
-      const attempt = abortScope([abort.signal], 10000);
-      // Retire a timed-out read and resume polling even if its promise settles
-      // late. Lifecycle cancellation instead fails current() and posts nothing.
-      const timedOut = () => finish(undefined, "timeout");
-      attempt.signal.addEventListener("abort", timedOut, { once: true });
       try {
-        const response = await fetch(`/workbench/v1/projects/${id}`, {
-          credentials: "same-origin",
-          redirect: "error",
-          cache: "no-store",
-          signal: attempt.signal,
-        });
-        if (attempt.signal.aborted) return;
-        const value = await readJson(response);
-        if (attempt.signal.aborted) return;
-        if (!response.ok) throw new Error(errorCode(value));
-        finish({
-          value: decodeProjectObservation(value),
-          association: decodeProjectAssociation(
-            response.headers.get(PROJECT_ASSOCIATION_HEADER),
+        finish(
+          await observationRead(
+            `/workbench/v1/projects/${id}`,
+            abort.signal,
+            (value, response) => ({
+              value: decodeProjectObservation(value),
+              association: decodeProjectAssociation(
+                response.headers.get(PROJECT_ASSOCIATION_HEADER),
+              ),
+            }),
           ),
-        });
+        );
       } catch (error) {
-        if (!attempt.signal.aborted)
-          finish(
-            undefined,
-            error instanceof Error ? error.message : "unavailable",
-          );
-      } finally {
-        attempt.signal.removeEventListener("abort", timedOut);
-        attempt.dispose();
+        finish(
+          undefined,
+          error instanceof Error ? error.message : "unavailable",
+        );
       }
     };
     void load();
     return () => {
-      abort.abort();
-      clearTimeout(timer);
+      unsubscribe();
+      stop();
     };
-  }, [id, revision, selectedEpoch]);
+  }, [id, revision, selectedEpoch, access]);
   const refresh = useCallback(() => {
+    if (access.signal.aborted) return nextRevision.current;
     ++serial.current;
     const revision = ++nextRevision.current;
     setRevision(revision);
     return revision;
-  }, []);
+  }, [access]);
   // Only authenticated explicit execution preparation supplies this readiness.
   // Retire older reads synchronously so none can overwrite its new epoch.
   // The parent adopts this confirmed epoch, not the callback's old selection.
   const prepared = (epoch: string) => {
+    access.check();
     const revision = refresh();
     setState((previous) => ({
       id,
@@ -142,7 +145,14 @@ export function useProjectObservation(
       },
     }));
   };
-  const selected = state.id === id ? state : {};
+  const selected = access.refusal
+    ? {
+        error:
+          access.refusal.source === "project" ? access.refusal.code : undefined,
+      }
+    : state.id === id
+      ? state
+      : {};
   const fresh =
     selected.revision === revision && selected.selectedEpoch === selectedEpoch;
   return {

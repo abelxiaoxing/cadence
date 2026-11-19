@@ -71,6 +71,12 @@ export const zh = {
     "模型选择结果尚未确认，请读取当前模型后再决定是否重新选择。",
 
   "Recorded history could not be read.": "暂时无法读取历史证据。",
+  "Recorded history unavailable: {reason}.": "无法读取历史记录：{reason}。",
+  "History workspace does not match the selected owner":
+    "历史工作区与所选执行服务不匹配",
+  "History anchor does not match the selected workspace":
+    "历史链接与所选工作区不匹配",
+  "History identity not confirmed": "未能确认历史工作区的身份",
   "Reading recorded history…": "正在读取历史证据…",
   "The context changed ({code}). Read the current state before trying this action again.":
     "上下文已变化（{code}）。请先读取当前状态，再决定是否重新操作。",
@@ -96,6 +102,7 @@ export const zh = {
   "Started work may still be running. No message is resent.":
     "已开始的工作可能仍在运行，不会重发消息。",
   "Diagnostic details": "诊断详情",
+  "Workbench observation: {code}.": "工作台入口读取：{code}。",
   "Viewer observation: {code}.": "页面状态读取：{code}。",
   "Context changed. Read the current state before confirming a plan.":
     "上下文已变化，请先读取当前状态，再确认计划。",
@@ -289,8 +296,6 @@ export const zh = {
     "输入消息，发送前请选择文件夹…",
   "Choose a folder before sending.": "发送前请选择文件夹。",
   "Returning to your last folder {path}…": "正在返回上次的文件夹 {path}…",
-  "Could not restore {path}. Choose a folder to continue; nothing was started.":
-    "无法恢复 {path}，请选择文件夹以继续；没有启动任何服务。",
   "Choose a folder on the service host. Conversations stay with their folder and running work continues. Nothing starts until you send.":
     "选择服务所在主机上的文件夹。会话保留在原文件夹中，运行中的工作不受影响；仅在发送消息时按需启动执行服务。",
   "Connecting…": "正在连接…",

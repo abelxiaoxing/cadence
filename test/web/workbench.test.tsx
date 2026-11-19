@@ -15,6 +15,7 @@ import {
   rememberProject,
   restorableProject,
 } from "../../web/src/client/last-project";
+import { ObservationAccess } from "../../web/src/client/observer";
 import { recordedTurn } from "../../web/src/client/turn-source";
 import { cadenceInput } from "../../web/src/client/use-workbench";
 import {
@@ -807,7 +808,8 @@ it("restoration and missing-folder guidance stay inside the conversation, withou
   const checking = renderToStaticMarkup(
     <FolderSetup
       ready
-      restore={{ status: "checking", path: "/work/alpha" }}
+      pending
+      restoring="/work/alpha"
       onChooseFolder={open}
       onRefresh={open}
     />,
@@ -817,18 +819,14 @@ it("restoration and missing-folder guidance stay inside the conversation, withou
   expect(checking).not.toContain("Recent folders");
   const unavailable = renderToStaticMarkup(
     <LocaleProvider initial="zh">
-      <FolderSetup
-        ready
-        restore={{ status: "unavailable", path: "/work/alpha" }}
-        onChooseFolder={open}
-        onRefresh={open}
-      />
+      <FolderSetup ready missing onChooseFolder={open} onRefresh={open} />
     </LocaleProvider>,
   );
-  expect(unavailable).toContain("无法恢复 /work/alpha");
-  expect(unavailable).toContain("没有启动任何服务");
+  expect(unavailable).toContain("此文件夹不可用，请选择其他文件夹");
+  expect(unavailable).toContain("没有移动或重建任何目录");
   expect(unavailable).toContain("历史会话");
   expect(unavailable).not.toContain("工作台");
+  expect(unavailable).not.toContain("banner-notice");
   const loading = renderToStaticMarkup(
     <FolderSetup ready={false} onChooseFolder={open} onRefresh={open} />,
   );
@@ -916,17 +914,19 @@ it("restoring observes retained identity even for a stopped owner, without a sca
     kind: "error",
     error: { code: "unavailable", effect: "none", recovery: "operator" },
   };
-  expect(await projectReadable(key("a"), new AbortController().signal)).toBe(
-    false,
-  );
+  await expect(
+    projectReadable(key("a"), new AbortController().signal),
+  ).rejects.toThrow("invalid");
   reply = new Error("network");
-  expect(await projectReadable(key("a"), new AbortController().signal)).toBe(
-    false,
-  );
+  await expect(
+    projectReadable(key("a"), new AbortController().signal),
+  ).rejects.toThrow("network");
   const aborted = new AbortController();
   aborted.abort();
   reply = { kind: "ok", value: { kind: "conversations", entries: [] } };
-  expect(await projectReadable(key("a"), aborted.signal)).toBe(false);
+  await expect(projectReadable(key("a"), aborted.signal)).rejects.toBe(
+    aborted.signal.reason,
+  );
   expect(requests.every((request) => !request.method)).toBe(true);
 });
 
@@ -1046,9 +1046,10 @@ async function projectObservationFixture() {
       }),
   );
   vi.stubGlobal("fetch", fetcher);
+  const access = new ObservationAccess();
   const render = (selectedEpoch: string | null = null, id = key("a")) => {
     cursor = 0;
-    return useProjectObservation(id, selectedEpoch);
+    return useProjectObservation(id, selectedEpoch, access);
   };
   const flushEffect = () => {
     if (!pendingEffect) return;
@@ -1058,7 +1059,7 @@ async function projectObservationFixture() {
     const result = effect();
     cleanup = typeof result === "function" ? result : undefined;
   };
-  return { render, flushEffect, unmount, requests, fetcher, updates };
+  return { access, render, flushEffect, unmount, requests, fetcher, updates };
 }
 
 const projectReply = (value: unknown, association?: string) =>
@@ -1312,9 +1313,12 @@ it.each(["unauthenticated", "forbidden"])(
     expect(requests).toHaveLength(1);
     expect(vi.getTimerCount()).toBe(0);
     revoked.refresh();
-    render();
+    const epoch = crypto.randomUUID();
+    expect(() => revoked.prepared(epoch)).toThrow(code);
+    expect(render(epoch).error).toBe(code);
     flushEffect();
-    expect(requests).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(requests).toHaveLength(1);
   },
 );
 
@@ -1518,3 +1522,28 @@ it.each(["en", "zh"] as const)(
     );
   },
 );
+
+it("a viewer refusal aborts the selected project attempt; its late 200 and an old preparation callback cannot restore readiness", async () => {
+  const { access, render, flushEffect, requests } =
+    await projectObservationFixture();
+  const original = render();
+  flushEffect();
+  const first = runningObservation();
+  requests[0].resolve(projectReply(first, "associated"));
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(render().readiness).toBe("running");
+  expect(requests).toHaveLength(2);
+  access.refuse("viewer", "forbidden");
+  expect(requests[1].signal?.aborted).toBe(true);
+  const replacement = runningObservation();
+  requests[1].resolve(projectReply(replacement, "associated"));
+  original.refresh();
+  expect(() => original.prepared(replacement.epoch)).toThrow("forbidden");
+  const after = render(replacement.epoch);
+  flushEffect();
+  expect(after.readiness).toBe("unknown");
+  expect(after.association).toBe("unknown");
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(requests).toHaveLength(2);
+  expect(vi.getTimerCount()).toBe(0);
+});

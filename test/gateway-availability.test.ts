@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { HistoryFiles } from "../src/history/files.ts";
 import { decodeProjectObservation } from "../src/service/contracts/gateway.ts";
 import {
   decodeProjectAssociation,
@@ -14,7 +15,15 @@ import {
 import { ServiceCoordination } from "../src/service/coordination.ts";
 import { createGateway } from "../src/service/gateway.ts";
 import { hash } from "../src/service/private-files.ts";
-import { request } from "./helpers/service-http-fixture.ts";
+import { ServiceClient } from "../src/service-client.ts";
+import {
+  decodeListRequest,
+  decodeReply,
+  decodeSessionBootstrap,
+  publicError,
+} from "../src/service-contract.ts";
+import { HttpServiceTransport } from "../src/service-http-client.ts";
+import { coverage, request } from "./helpers/service-http-fixture.ts";
 import { sourceBuild } from "./helpers/source-build.ts";
 
 // This gateway is not supervised, even when the test runner itself is. No
@@ -37,6 +46,8 @@ it("separates owner liveness from session association and recovers a failed same
     statusAvailable = true,
     bootstraps = 0;
   const allocations = new Set<string>();
+  const taskId = randomUUID();
+  const forwarded: string[] = [];
   const owner = createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
     const reply = (value: unknown, status = 200) => {
@@ -76,6 +87,62 @@ it("separates owner liveness from session association and recovers a failed same
     }
     expect(req.headers.cookie).toBe("fixture-owner=authenticated");
     expect(req.headers["x-cadence-local"]).toBeUndefined();
+    const target = new URL(req.url ?? "/", endpoint);
+    forwarded.push(`${req.method} ${target.pathname}`);
+    if (target.pathname === "/api/v1/workspace") {
+      expect(req.headers["x-cadence-attachment"]).toBeUndefined();
+      return reply({
+        kind: "ok",
+        value: {
+          storeId,
+          workspaceId,
+          epoch,
+          rootLabel: project,
+          models: [],
+          committedSeq: "12",
+          context: {
+            status: "unavailable",
+            workspaceId,
+            taskId: null,
+            error: publicError("unavailable"),
+          },
+        },
+      });
+    }
+    if (target.pathname === "/api/v1/tasks") {
+      const request = decodeListRequest(
+        JSON.parse(target.searchParams.get("request") ?? "null"),
+      );
+      expect(request).toMatchObject({
+        reader: "tasks",
+        storeId,
+        scope: { kind: "workspace", id: workspaceId },
+        snapshotSeq: "12",
+      });
+      expect(req.headers["x-cadence-attachment"]).toBeUndefined();
+      return reply({
+        kind: "ok",
+        value: {
+          request,
+          coverage,
+          next: null,
+          records: [
+            {
+              kind: "task",
+              version: 1,
+              owner: {
+                taskId,
+                runId: null,
+                childRunId: null,
+                entity: { kind: "task", id: taskId, version: 1 },
+              },
+              goal: "Independent owner retained task",
+              plan: null,
+            },
+          ],
+        },
+      });
+    }
     if (req.url === "/api/v1/session") {
       const id = String(req.headers["x-cadence-attachment"]);
       allocations.add(id);
@@ -84,7 +151,7 @@ it("separates owner liveness from session association and recovers a failed same
         kind: "ok",
         value: {
           protocol: 1,
-          storeId: randomUUID(),
+          storeId,
           epoch,
           accessGeneration: 1,
           authority: "browser",
@@ -98,6 +165,8 @@ it("separates owner liveness from session association and recovers a failed same
       value: { kind: "conversations", entries: [], next: null },
     });
   });
+  const upgrade = vi.fn((_req, socket) => socket.destroy());
+  owner.on("upgrade", upgrade);
   owner.listen(0, "127.0.0.1");
   await once(owner, "listening");
   const address = owner.address();
@@ -108,6 +177,7 @@ it("separates owner liveness from session association and recovers a failed same
     endpoint,
     policyIdentity: hash("fixture"),
   });
+  const { workspaceId, storeId } = HistoryFiles.initialize(lease).format;
   ({ capability, epoch } = c.localAccess());
   // Reserve a gateway port only; no external service or CLI is launched.
   const reserve = createServer();
@@ -189,6 +259,7 @@ it("separates owner liveness from session association and recovers a failed same
     expect(await observe()).toMatchObject({
       status: "running",
       epoch,
+      workspaceId,
       association: "unassociated",
     });
     const refused = await session();
@@ -211,6 +282,61 @@ it("separates owner liveness from session association and recovers a failed same
       value: { kind: "conversations" },
     });
     expect(bootstraps).toBe(2);
+    // Real authenticated gateway routing and protocol decoders; the owner above
+    // serves an injected page, not a claim about a production journal.
+    const reads: string[] = [];
+    const client = new ServiceClient(
+      new HttpServiceTransport({
+        origin: gateway.endpoint,
+        project: selected.id,
+        fetch(url, init) {
+          reads.push(`${init?.method} ${new URL(String(url)).pathname}`);
+          return fetch(url, {
+            ...init,
+            headers: { ...init?.headers, ...headers },
+          });
+        },
+      }),
+    );
+    const workspace = await client.workspace();
+    if (workspace.kind !== "ok") throw new Error(workspace.error.code);
+    expect(workspace.value).toMatchObject({
+      workspaceId,
+      storeId,
+      epoch,
+      committedSeq: "12",
+    });
+    const page = await client.tasks({
+      storeId: workspace.value.storeId,
+      scope: { kind: "workspace", id: workspace.value.workspaceId },
+      snapshotSeq: workspace.value.committedSeq,
+      after: null,
+      limit: 50,
+    });
+    expect(page).toMatchObject({
+      kind: "ok",
+      value: {
+        records: [
+          {
+            kind: "task",
+            owner: { taskId },
+            goal: "Independent owner retained task",
+          },
+        ],
+      },
+    });
+    expect(reads).toEqual(
+      ["workspace", "tasks"].map(
+        (p) => `GET /projects/${selected.id}/api/v1/${p}`,
+      ),
+    );
+    expect(forwarded).toEqual([
+      "GET /api/v1/workbench/read",
+      "GET /api/v1/workspace",
+      "GET /api/v1/tasks",
+    ]);
+    expect(upgrade).not.toHaveBeenCalled();
+    expect(allocations.size).toBe(0);
     const builds: Record<string, string>[] = [
       {},
       { "X-Cadence-Build": "outdated-or-unbuilt" },
@@ -279,7 +405,17 @@ it("separates owner liveness from session association and recovers a failed same
         )
       ).status,
     ).toBe(400);
-    for (let n = 0; n < 3; n++) expect((await session()).status).toBe(200);
+    for (let n = 0; n < 3; n++) {
+      const allocated = await session();
+      expect(allocated.status).toBe(200);
+      expect(allocated.headers["x-cadence-attachment"]).toBe(attachment);
+      expect(
+        decodeReply(JSON.parse(allocated.text), decodeSessionBootstrap),
+      ).toMatchObject({
+        kind: "ok",
+        value: { authority: "browser", epoch, storeId },
+      });
+    }
     expect([...allocations]).toEqual([attachment]);
     expect(bootstraps).toBe(3); // explicit preparation retires the prior routing binding
   } finally {

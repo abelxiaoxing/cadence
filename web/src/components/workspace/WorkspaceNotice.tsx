@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { FiChevronUp } from "react-icons/fi";
 import { LIMITS } from "../../../../src/service-contract.ts";
+import { refusedAccess } from "../../client/observation-read";
 import { type MessageKey, useT } from "../../i18n/locale";
 import { ConnectionStatus } from "../../layout/StatusItem";
 
 const statements = {
+  folder: "Choose a working folder",
   connecting: "Connecting…",
   updating: "Updating state…",
   chat: "Chat ready",
@@ -16,8 +18,7 @@ const statements = {
 
 export function accessRevoked(error?: string) {
   return (
-    error === "unauthenticated" ||
-    error === "forbidden" ||
+    refusedAccess(error) ||
     error === "Access revoked; explicit token re-entry required."
   );
 }
@@ -26,17 +27,21 @@ export function accessRevoked(error?: string) {
  * observes no service and supplies no authority to callers. */
 export function WorkspaceConnection({
   phase,
+  entryError,
   projectStatus,
   projectError,
   viewerError,
+  historyError,
   retained,
   latency,
   onRefresh,
 }: {
   phase: keyof typeof statements;
+  entryError?: string;
   projectStatus?: string;
   projectError?: string;
   viewerError?: string;
+  historyError?: string;
   retained: boolean;
   latency: number | null;
   onRefresh(): void;
@@ -57,15 +62,20 @@ export function WorkspaceConnection({
   const pending = phase === "updating" || phase === "connecting";
   // Keep a diagnosed problem during retry, until a positive observation
   // supersedes it. App keys this display lifetime to the selected view.
-  const failure = useRef<{ projectError?: string; viewerError?: string }>(
-    undefined,
-  );
-  if (projectError || viewerError)
-    failure.current = { projectError, viewerError };
+  const failure = useRef<{
+    entryError?: string;
+    projectError?: string;
+    viewerError?: string;
+    historyError?: string;
+  }>(undefined);
+  if (entryError || projectError || viewerError || historyError)
+    failure.current = { entryError, projectError, viewerError, historyError };
   else if (!pending) failure.current = undefined;
   const cause = failure.current;
   const revoked =
-    accessRevoked(cause?.projectError) || accessRevoked(cause?.viewerError);
+    accessRevoked(cause?.entryError) ||
+    accessRevoked(cause?.projectError) ||
+    accessRevoked(cause?.viewerError);
   // Even repeated quiet reconnects without an error frame cannot stay an
   // initial spinner indefinitely. This changes only the words, not retries.
   const [overdue, setOverdue] = useState(false);
@@ -137,10 +147,24 @@ export function WorkspaceConnection({
         {unavailable && (
           <p>{t("Started work may still be running. No message is resent.")}</p>
         )}
+        {cause?.entryError && (
+          <p>
+            {t("Workbench observation: {code}.", {
+              code: diagnostic(cause.entryError),
+            })}
+          </p>
+        )}
         {cause?.projectError && (
           <p>
             {t("Project observation: {code}.", {
               code: diagnostic(cause.projectError),
+            })}
+          </p>
+        )}
+        {cause?.historyError && (
+          <p>
+            {t("Recorded history unavailable: {reason}.", {
+              reason: diagnostic(cause.historyError),
             })}
           </p>
         )}

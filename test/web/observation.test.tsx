@@ -172,7 +172,7 @@ it("lost attachment acquires fresh readonly session; rotation stops instead of r
   await expect.poll(() => s.state()?.actions).toBe(false);
   await expect
     .poll(() => s.state()?.error, { timeout: 2000 })
-    .toMatch(/re-entry/);
+    .toBe("unauthenticated");
   const count = s.sessions();
   s.observer.refresh();
   expect(s.sessions()).toBe(count);
@@ -320,7 +320,7 @@ it("cookie revocation without a selected task/socket clears private state and st
   expect(s.sockets).toHaveLength(0);
   s.f.material.rotate();
   s.observer.refresh();
-  await expect.poll(() => state?.error).toMatch(/Access revoked/);
+  await expect.poll(() => state?.error).toBe("unauthenticated");
   expect(state?.workspace).toBeUndefined();
   expect(state?.actions).toBe(false);
   const count = s.sessions();
@@ -711,7 +711,8 @@ it.each(["unauthenticated", "forbidden read", "forbidden detach"])(
       });
     }
     await vi.advanceTimersByTimeAsync(1000);
-    await vi.waitFor(() => expect(s.state()?.error).toMatch(/re-entry/));
+    const code = refusal === "unauthenticated" ? refusal : "forbidden";
+    await vi.waitFor(() => expect(s.state()?.error).toBe(code));
     expect(new Set(s.sessionAttachments).size).toBe(1);
     expect(s.writes).toEqual(
       Array(refusal === "forbidden detach" ? 2 : 1).fill("/api/v1/detach"),
@@ -723,6 +724,128 @@ it.each(["unauthenticated", "forbidden read", "forbidden detach"])(
     await vi.advanceTimersByTimeAsync(2 * LIMITS.reconcileMs);
     expect(s.sessions()).toBe(count);
     expect(s.sockets).toHaveLength(1);
-    expect(s.state()?.error).toMatch(/re-entry/);
+    expect(s.state()?.error).toBe(code);
   },
 );
+
+it("a newer resync supersedes a pending snapshot; ticks and repeated requests share one trailing read", async () => {
+  const s = await silentTask();
+  const socket = s.sockets[0];
+  socket.fire("open");
+  socket.fire("message", await s.snapshot());
+  expect(s.state()?.actions).toBe(true);
+  const release = deferred(),
+    followup = deferred();
+  const original = s.transport.snapshot.bind(s.transport);
+  const reads = vi
+    .spyOn(s.transport, "snapshot")
+    .mockImplementationOnce(async (...args) => {
+      const reply = await original(...args);
+      await release.promise;
+      return reply;
+    })
+    .mockImplementationOnce(async (...args) => {
+      await followup.promise;
+      return original(...args);
+    });
+  s.f.setSeq("2");
+  s.observer.refresh();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(1));
+  const heartbeat = (committedSeq: string) =>
+    socket.fire("message", {
+      kind: "event",
+      event: {
+        kind: "heartbeat",
+        committedSeq,
+        epoch: s.f.epoch,
+        storeId: s.f.storeId,
+        scope: s.scope,
+      },
+    });
+  // The owner announces a watermark the view hasn't installed. Neither the
+  // pending read nor a later heartbeat at the old watermark proves it current.
+  heartbeat("3");
+  for (let i = 0; i < 8; ++i) socket.fire("message", { kind: "resync" });
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(reads).toHaveBeenCalledTimes(1);
+  expect(s.state()?.transportStatus).toBe("stale");
+  release.resolve();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+  expect(s.state()?.observation?.snapshot.committedSeq).toBe("1");
+  socket.fire("message", await s.snapshot()); // even a WS snapshot at 2 is behind the gap
+  heartbeat("1");
+  expect(s.state()?.actions).toBe(false);
+  expect(s.state()?.transportStatus).toBe("stale");
+  s.f.setSeq("3");
+  followup.resolve();
+  await vi.waitFor(() =>
+    expect(s.state()?.observation?.snapshot.committedSeq).toBe("3"),
+  );
+  expect(s.state()?.transportStatus).toBe("stale");
+  heartbeat("2");
+  expect(s.state()?.actions).toBe(false);
+  heartbeat("3");
+  expect(s.state()?.actions).toBe(true);
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(reads).toHaveBeenCalledTimes(2);
+  expect(s.sessions()).toBe(3); // acquire and exactly two existing-ID polls
+  expect(new Set(s.sessionAttachments).size).toBe(1);
+  expect(s.sockets).toHaveLength(1);
+  expect(s.writes).toEqual([]);
+});
+
+it("project denial retires an open subscription, a queued resync, a waiting Send and late viewer reads without allocating a replacement", async () => {
+  const s = await silentTask();
+  const socket = s.sockets[0];
+  const frame = await s.snapshot();
+  socket.fire("open");
+  socket.fire("message", frame);
+  const late = deferred();
+  const read = vi
+    .spyOn(s.transport, "snapshot")
+    .mockImplementationOnce(async () => {
+      await late.promise; // Deliberately ignores abort.
+      return { kind: "ok", value: frame.snapshot };
+    });
+  s.observer.refresh();
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  socket.fire("message", { kind: "resync" });
+  const waiting = s.observer.whenReady(s.f.epoch, new AbortController().signal);
+  const sessions = s.sessions();
+  s.observer.access.refuse("project", "forbidden");
+  await expect(waiting).rejects.toThrow("forbidden");
+  expect(read.mock.calls[0][1]?.aborted).toBe(true);
+  expect(socket.close).toHaveBeenCalledOnce();
+  expect(s.state()).toMatchObject({
+    attached: false,
+    actions: false,
+    error: "forbidden",
+  });
+  socket.fire("message", frame);
+  socket.fire("close");
+  late.resolve();
+  s.observer.refresh();
+  s.select(id()); // React can reselect a scope/epoch after its cleanup.
+  await vi.waitFor(() => expect(s.writes).toEqual(["/api/v1/detach"]));
+  await vi.advanceTimersByTimeAsync(2 * LIMITS.reconcileMs);
+  expect(s.sessions()).toBe(sessions);
+  expect(read).toHaveBeenCalledOnce();
+  expect(s.sockets).toHaveLength(1);
+  expect(s.state()?.workspace).toBeUndefined();
+  expect(s.state()?.observation).toBeUndefined();
+  expect(s.state()?.error).toBe("forbidden");
+  expect(s.writes).toEqual(["/api/v1/detach"]);
+});
+
+it("the final detach denial during scope change stops the queued acquisition", async () => {
+  const s = await silentTask();
+  const count = s.sessions();
+  s.f.material.rotate();
+  s.select(id());
+  await vi.waitFor(() => expect(s.state()?.error).toBe("unauthenticated"));
+  s.observer.refresh();
+  await vi.advanceTimersByTimeAsync(2 * LIMITS.reconcileMs);
+  expect(s.sessions()).toBe(count);
+  expect(s.sockets).toHaveLength(1);
+  expect(s.writes).toEqual(["/api/v1/detach"]);
+});

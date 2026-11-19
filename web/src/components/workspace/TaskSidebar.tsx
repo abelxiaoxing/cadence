@@ -17,6 +17,7 @@ import {
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import { useConversationHistory } from "../../client/use-conversation-history";
+import type { RetainedTaskHistory } from "../../client/use-retained-task-workspace";
 import { usePage } from "../../history/use-page";
 import { type MessageKey, useT } from "../../i18n/locale";
 import { buildNavigationRows } from "../../navigation/assignment-rows";
@@ -45,7 +46,7 @@ import {
   ConversationRow,
   useConversationCommands,
 } from "./ConversationRow";
-import { workflowActivity } from "./WorkflowPanel";
+import { type CanCancelWorkflow, workflowActivity } from "./WorkflowPanel";
 
 type OpenScope = (scope: Scope, snapshot?: string, label?: string) => void;
 const TIME_GROUPS: Readonly<Record<TimeGroupKey, MessageKey>> = {
@@ -240,6 +241,7 @@ function RetainedConversations({
 export function TaskSidebar({
   client,
   workspace,
+  retained,
   executionStopped = false,
   taskId,
   scope,
@@ -266,10 +268,12 @@ export function TaskSidebar({
   discovery,
   selectedWorkflow,
   onWorkflow,
+  canCancelWorkflow,
   onCancelWorkflow,
 }: {
   client: ServiceClient;
   workspace?: WorkspaceBootstrap;
+  retained?: RetainedTaskHistory;
   executionStopped?: boolean;
   taskId: string | null;
   scope: Scope | null;
@@ -301,6 +305,7 @@ export function TaskSidebar({
   discovery?: ActivityListProps;
   selectedWorkflow?: string;
   onWorkflow?: (run: WorkflowRun, conversationId: string | null) => void;
+  canCancelWorkflow?: CanCancelWorkflow;
   onCancelWorkflow?: (run: WorkflowRun) => Promise<void>;
 }) {
   const { t, tx } = useT();
@@ -314,27 +319,29 @@ export function TaskSidebar({
     refreshArchived();
     onConversationsChanged?.(id);
   });
-  const request: ListRequest | null = workspace
+  const historyWorkspace = retained?.workspace ?? workspace;
+  const historyClient = retained?.client ?? client;
+  const request: ListRequest | null = historyWorkspace
     ? {
         reader: "tasks",
-        storeId: workspace.storeId,
-        scope: { kind: "workspace", id: workspace.workspaceId },
-        snapshotSeq: null,
+        storeId: historyWorkspace.storeId,
+        scope: { kind: "workspace", id: historyWorkspace.workspaceId },
+        snapshotSeq: retained?.workspace.committedSeq ?? null,
         after: null,
         limit: 50,
       }
     : null;
-  const tasks = usePage(client, request);
+  const tasks = usePage(historyClient, request);
   // Keep the retained read/Back stack in one stable owner when the selected task
   // moves from the running group into history, or a section is folded.
   const conversationPager = usePage(
-    client,
-    taskId && request && workspace
+    historyClient,
+    taskId && request && historyWorkspace
       ? {
           ...request,
           reader: "runs",
           scope: { kind: "task", id: taskId },
-          snapshotSeq: snapshot ?? workspace.committedSeq,
+          snapshotSeq: snapshot ?? historyWorkspace.committedSeq,
         }
       : null,
   );
@@ -386,8 +393,9 @@ export function TaskSidebar({
           <button
             type="button"
             className="conversation-stop"
-            disabled={stopping.has(run.id)}
+            disabled={stopping.has(run.id) || !canCancelWorkflow?.(run)}
             onClick={() => {
+              if (stopping.has(run.id) || !canCancelWorkflow?.(run)) return;
               setStopping((value) => new Set(value).add(run.id));
               void onCancelWorkflow(run).finally(() =>
                 setStopping((value) => {
@@ -587,7 +595,7 @@ export function TaskSidebar({
             ? archived.value
               ? `${archived.value.entries.length}${archived.value.next || archived.canPrevious ? "+" : ""}`
               : t("Not observed")
-            : !workspace
+            : !historyWorkspace
               ? `${pastChats.length}${chatHistoryPartial ? "+" : ""}`
               : tasks.page && !("kind" in tasks.page)
                 ? `${pastChats.length + history.length}${tasks.page.next || tasks.canPrevious || chatHistoryPartial ? "+" : ""}`
@@ -698,7 +706,7 @@ export function TaskSidebar({
               <p className="panel-hint">{t("No conversations yet.")}</p>
             )}
           {chatHistoryControls}
-          {workspace && <PageControls pager={tasks} compact />}
+          {historyWorkspace && <PageControls pager={tasks} compact />}
         </nav>
         {!archivedOpen &&
           !shownTasks.some((r) => r.owner.taskId === taskId) &&
