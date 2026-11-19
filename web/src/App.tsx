@@ -799,12 +799,12 @@ export function App({
               progress,
             );
             access.check();
-            if (departed()) throw new Error("stale");
+            if (departed()) throw access.waitError(signal, "stale");
             execution.prepared(epoch);
             const observation = workspace.reconnect();
             await workspace.whenReady(epoch, signal, observation);
             access.check();
-            if (departed()) throw new Error("stale");
+            if (departed()) throw access.waitError(signal, "stale");
             // whenReady observes service data, not a React commit. Release
             // the handoff in finally and wait within the same caller deadline.
             return new Promise<ViewerTicket>((resolve, reject) => {
@@ -815,7 +815,7 @@ export function App({
               };
               const stop = () => {
                 clear();
-                reject(new Error("stale"));
+                reject(access.waitError(signal, "stale"));
               };
               signal.addEventListener("abort", stop, { once: true });
               access.signal.addEventListener("abort", stop, { once: true });
@@ -829,9 +829,11 @@ export function App({
               };
             }).then(async (next) => {
               // Pin the committed allocation through the final observer check.
-              if (departed() || !next.current()) throw new Error("stale");
+              if (departed() || !next.current())
+                throw access.waitError(signal, "stale");
               await workspace.whenReady(epoch, signal, observation);
-              if (departed() || !next.current()) throw new Error("stale");
+              if (departed() || !next.current())
+                throw access.waitError(signal, "stale");
               return next;
             });
           } finally {

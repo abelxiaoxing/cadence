@@ -323,7 +323,9 @@ At sign-out or shutdown Windows ends the owner without orderly Stop: running wor
 
 - `alive` requires an authenticated exact-epoch reply.
   It is not a PID probe.
-  `actions:false` can describe the unscoped owner model slot; conversation model readiness is separate, not permission to execute a plan.
+  In `status` and `diagnose`, `actions:false` can describe an empty unscoped owner model slot.
+  It does not disable conversation Send; the WebUI session reports workbench availability independently and each Send checks its own conversation model.
+  Neither flag is permission to execute a plan.
 - Disconnect this page (the WebUI More menu), browser close and Pi quit detach clients; admitted work continues.
   Use the client's **Cancel** for a run or management **stop** for the service.
 - Stop closes admission and waits original processes, credential writes, history writes, already-started publication continuations, owned networking and listener closure before releasing fences.

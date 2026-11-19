@@ -484,7 +484,9 @@ export async function createServiceHost(
           authority: "local",
           csrf: null,
           capabilities: {
-            actions: !!workbench && !!choice.snapshot().selected,
+            // A conversation may need its first action to restore or choose
+            // its own model. The unscoped model slot is not a prerequisite.
+            actions: ready && heldOwner.state === "idle" && !!workbench,
             manualChecks: false,
             history: true,
           },
