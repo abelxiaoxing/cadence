@@ -6372,6 +6372,7 @@ function decodeWorkflowDiagnostics(v) {
 }
 
 // src/service/contracts/workbench.ts
+var PROJECT_ASSOCIATION_HEADER = "x-cadence-project-association";
 function decodeCadenceConversation(v) {
   const degraded = v !== null && typeof v === "object" && Object.hasOwn(v, "notice");
   const o = closed(v, [
@@ -17465,6 +17466,7 @@ Content-Length: 0\r
       sentBytes: 0,
       sentMessages: 0,
       reading: false,
+      resyncPending: false,
       closed: false,
       lastPing: Date.now(),
       lastReconcile: Date.now()
@@ -17485,10 +17487,12 @@ Content-Length: 0\r
         viewer.lastPing = Date.now();
         if (command.kind === "ping")
           this.heartbeatViewer(viewer);
-        else if (viewer.reading)
-          this.closeViewer(viewer);
-        else
+        else if (!viewer.reading)
           this.subscribe(viewer, command.scope);
+        else if (command.kind === "resync" && viewer.scope?.kind === command.scope.kind && viewer.scope.id === command.scope.id)
+          viewer.resyncPending = true;
+        else
+          this.closeViewer(viewer);
       } catch {
         this.closeViewer(viewer);
       }
@@ -17571,23 +17575,26 @@ Content-Length: 0\r
         viewer.unsubscribe();
         return;
       }
-      const snapshot = decodeSnapshot(await p.snapshot(scope));
-      if (viewer.closed || viewer.subscription !== generation)
-        return;
-      this.attachment(viewer.attachment.caller);
-      if (snapshot.epoch !== this.options.auth.epoch || canonicalJson(snapshot.scope) !== canonicalJson(scope))
-        throw new ContractError("stale");
-      viewer.snapshot = snapshot;
-      if (!this.sendViewer(viewer, { kind: "snapshot", snapshot }))
-        return;
-      viewer.reading = false;
-      viewer.lastReconcile = Date.now();
-      for (const event of viewer.pending.splice(0)) {
-        viewer.bytes -= Buffer.byteLength(canonicalJson(event));
-        this.deliver(viewer, event);
+      do {
+        viewer.resyncPending = false;
+        const snapshot = decodeSnapshot(await p.snapshot(scope));
         if (viewer.closed || viewer.subscription !== generation)
-          break;
-      }
+          return;
+        this.attachment(viewer.attachment.caller);
+        if (snapshot.epoch !== this.options.auth.epoch || canonicalJson(snapshot.scope) !== canonicalJson(scope))
+          throw new ContractError("stale");
+        viewer.snapshot = snapshot;
+        if (!this.sendViewer(viewer, { kind: "snapshot", snapshot }))
+          return;
+        viewer.lastReconcile = Date.now();
+        for (const event of viewer.pending.splice(0)) {
+          viewer.bytes -= Buffer.byteLength(canonicalJson(event));
+          if (!this.deliver(viewer, event)) {
+            viewer.bytes = 0;
+            break;
+          }
+        }
+      } while (!viewer.closed && viewer.resyncPending);
     } catch {
       this.closeViewer(viewer);
     } finally {
@@ -17599,26 +17606,30 @@ Content-Length: 0\r
   deliver(viewer, event) {
     const snapshot = viewer.snapshot;
     if (!snapshot || viewer.closed)
-      return;
+      return false;
     if (event.epoch !== snapshot.epoch || event.storeId !== snapshot.storeId || canonicalJson(event.scope) !== canonicalJson(snapshot.scope)) {
       this.resync(viewer);
-      return;
+      return false;
     }
     const cmp = compareSequence(event.committedSeq, snapshot.committedSeq);
     if (cmp < 0 || cmp === 0 && event.kind !== "heartbeat")
-      return;
+      return true;
     if (event.kind === "update" && event.previousSeq !== snapshot.committedSeq || event.kind === "heartbeat" && cmp > 0) {
       this.resync(viewer);
-      return;
+      return false;
     }
-    if (this.sendViewer(viewer, { kind: "event", event }))
-      snapshot.committedSeq = event.committedSeq;
+    if (!this.sendViewer(viewer, { kind: "event", event }))
+      return false;
+    snapshot.committedSeq = event.committedSeq;
+    return true;
   }
   resync(viewer) {
-    if (!viewer.reading && viewer.scope) {
-      this.sendViewer(viewer, { kind: "resync" });
+    if (!viewer.scope || !this.sendViewer(viewer, { kind: "resync" }))
+      return;
+    if (viewer.reading)
+      viewer.resyncPending = true;
+    else
       this.subscribe(viewer, viewer.scope);
-    }
   }
   heartbeatViewer(viewer) {
     if (!viewer.scope || viewer.reading)
@@ -17636,7 +17647,7 @@ Content-Length: 0\r
     for (const viewer of this.viewers) {
       if (Date.now() - viewer.lastPing >= LIMITS.staleMs)
         this.closeViewer(viewer);
-      else if (Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs)
+      else if (!viewer.reading && Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs)
         this.resync(viewer);
       else
         this.heartbeatViewer(viewer);
@@ -17850,7 +17861,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "4229be698d525c0b5d53c9399971a8044927173f384650e558d1b9245a7a5b17",
+    contractHash: "19fd0c2865c6c7dd75a2e8c76d45558366c029db000f150306f80b5beea12abd",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -18218,6 +18229,9 @@ Content-Length: 0\r
     });
     return result;
   }
+  function isAssociated(id) {
+    return store.associatedProjects().some((project) => project.id === id);
+  }
   function binding(id) {
     let project = store.projects().find((p) => p.id === id);
     if (!project)
@@ -18227,7 +18241,7 @@ Content-Length: 0\r
       throw new ContractError("stale");
     if (local.epoch !== project.epoch) {
       project = { ...project, epoch: local.epoch };
-      if (store.associatedProjects().some((p) => p.id === id))
+      if (isAssociated(id))
         store.saveProject(project);
     }
     const previous = bindings.get(id);
@@ -18511,7 +18525,7 @@ Content-Length: 0\r
             return;
           }
         }
-        if (route2.operation === "session" && !store.associatedProjects().some((p) => p.id === project.id))
+        if (route2.operation === "session" && !isAssociated(project.id))
           throw new ContractError("unavailable");
         const attachment = boundary.headers.get("x-cadence-attachment");
         if (attachment && (attachments.has(attachment) ? attachments.get(attachment)?.projectId !== project.id : route2.operation !== "session") || req.method === "POST" && !attachment)
@@ -18647,12 +18661,14 @@ Content-Length: 0\r
         auth.current(caller);
         assert();
         const status = observed && typeof observed === "object" && "status" in observed ? observed.status : "unavailable";
-        reply(res, 200, {
+        const value2 = {
           kind: "project-observation",
           status: status === "alive" ? "running" : status === "stopped" ? "stopped" : unpreparedDirectory(c, project2) ? "not-started" : "unavailable",
           epoch: observed && typeof observed === "object" && "epoch" in observed ? observed.epoch : null,
           workspaceId: HistoryFiles.open(c)?.format.workspaceId ?? null
-        });
+        };
+        res.setHeader(PROJECT_ASSOCIATION_HEADER, isAssociated(project2.id) ? "associated" : "unassociated");
+        reply(res, 200, value2);
         return;
       }
       if (url.pathname === "/workbench/v1/models" && req.method === "GET") {
@@ -35774,7 +35790,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.2.0",
-  build: "54061f924162265c24464be1d6b7f694027357bf1f4ae4028acd23a766029f76",
+  build: "08175d388709580f3ac2d172e0738f81c235355959eb36e6ef813c83eb58af78",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -38794,7 +38810,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "4229be698d525c0b5d53c9399971a8044927173f384650e558d1b9245a7a5b17";
+  const embedded = "19fd0c2865c6c7dd75a2e8c76d45558366c029db000f150306f80b5beea12abd";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
