@@ -27,18 +27,30 @@ export const modeHints = {
 export function CadenceModeButton({
   disabled,
   onClick,
+  disabledReason,
+  ordinaryLabel,
   ...facts
-}: ModeFacts & { disabled: boolean; onClick(): void }) {
+}: ModeFacts & {
+  disabled: boolean;
+  disabledReason?: string;
+  ordinaryLabel?: string;
+  onClick(): void;
+}) {
   const { t } = useT();
   const state = composerMode(facts);
-  const label = t(labels[state]);
+  const label =
+    state === "off" && ordinaryLabel ? ordinaryLabel : t(labels[state]);
   return (
     <button
       type="button"
       className={`mode-toggle ${state}`}
-      aria-label={label}
+      aria-label={
+        state === "off" && ordinaryLabel
+          ? `${ordinaryLabel} · ${t(labels.off)}`
+          : label
+      }
       disabled={disabled || state === "unknown"}
-      title={t(titles[state])}
+      title={(disabled && disabledReason) || t(titles[state])}
       onClick={onClick}
     >
       <span className="mode-switch" aria-hidden="true" />
