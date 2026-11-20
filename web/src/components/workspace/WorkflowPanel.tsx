@@ -34,6 +34,7 @@ import { Markdown } from "../rich/Markdown";
 import type { WorkflowAgent } from "./AgentDock";
 import { HalfRingSpinner } from "./ChatSteps";
 import { RetainedStepResult } from "./RetainedStepResult";
+import "./plan-proposal.css";
 
 export type CanCancelWorkflow = (run: WorkflowRun) => boolean;
 
@@ -265,7 +266,6 @@ export function WorkflowLine({
     </article>
   );
 }
-/** The plan awaiting approval: the conversation's one pending decision. */
 /** A local paint-only highlight: never route pointer movement into React
  * state or treat a click on the context as an approval. */
 function highlight(event: import("react").PointerEvent<HTMLElement>) {
@@ -279,6 +279,120 @@ function highlight(event: import("react").PointerEvent<HTMLElement>) {
   el.style.setProperty("--spot-x", `${event.clientX - rect.left}px`);
   el.style.setProperty("--spot-y", `${event.clientY - rect.top}px`);
 }
+/** Technical evidence for one immutable binding. The comparison shows fields,
+ * not another copy of the agreement or another set of actions. */
+function ProposalContext({ proposal }: { proposal: WorkflowProposal }) {
+  const { t } = useT();
+  const { display } = proposal;
+  return (
+    <div className="plan-binding">
+      <p>
+        {t("Conversation folder:")} <code>{proposal.cwd}</code>
+      </p>
+      <p>
+        {t("Declared write paths use the checkout root:")}{" "}
+        <code>{proposal.checkoutRoot ?? proposal.cwd}</code>
+      </p>
+      {display && (
+        <>
+          <p>{t("Model: {model}", { model: display.model })}</p>
+          {(display.branch || display.baseCommit) && (
+            <p>
+              <code>
+                {[display.branch, display.baseCommit]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </code>
+            </p>
+          )}
+          {display.runtime && <p>{display.runtime}</p>}
+        </>
+      )}
+      <details>
+        <summary>{t("Plan identity")}</summary>
+        <pre>
+          {JSON.stringify(
+            {
+              id: proposal.id,
+              digest: proposal.digest,
+              epoch: proposal.epoch,
+              observation: proposal.observation,
+              revalidatedFrom: proposal.revalidatedFrom,
+              model: proposal.model,
+              delivery: proposal.delivery,
+            },
+            null,
+            2,
+          )}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+/** A summary of this agreement's effects, not the permissions of the plan
+ * that happened to introduce the card. Retained plans have no v3 policy. */
+function ApprovalScope({ proposal }: { proposal: WorkflowProposal }) {
+  const { t } = useT();
+  const { plan } = proposal;
+  const local = plan.delivery === "local-merge";
+  const target = local ? proposal.delivery?.target : undefined;
+  const checkout = local
+    ? target?.checkoutRoot
+    : (proposal.checkoutRoot ?? proposal.cwd);
+  const branch = (local ? target?.branch : proposal.display?.branch)?.replace(
+    /^refs\/heads\//,
+    "",
+  );
+  return (
+    <section className="plan-scope">
+      <h4>{t("What approval allows")}</h4>
+      {checkout && (
+        <p>
+          <strong>{t("Delivery target")}: </strong>
+          <code>{checkout}</code>
+          {branch && (
+            <>
+              {" "}
+              · <code>{branch}</code>
+            </>
+          )}
+        </p>
+      )}
+      <p>{t("Tools and checks run on the service host, not in a sandbox.")}</p>
+      <ul>
+        <li>
+          {t(
+            !local
+              ? "Edit the working copy directly; keep edits on failure. No commit or merge."
+              : target
+                ? "Create a task branch and isolated worktrees. Commit locally and fast-forward the target after checks and automatic Agent review. No source, profile or dependency copying."
+                : "This plan requests local branch delivery but has no bound target.",
+          )}
+        </li>
+        <li>
+          {t(
+            plan.version === 3
+              ? "Approval confirms the goal, decisions, acceptance and assumptions. The service then finishes on its own: it may adjust the route and repository write scope, record reviewed deviations and update project knowledge."
+              : "This retained agreement is read-only. Its declared paths and commands are fixed.",
+          )}
+        </li>
+        <li>
+          {t(
+            plan.version === 3 && plan.policy?.installs
+              ? "Revisions may add dependency installs with the project’s package manager."
+              : plan.setup.length
+                ? "Dependency installs are limited to the listed setup commands."
+                : "No dependency installation.",
+          )}{" "}
+          {t("No push, publication or deployment.")}
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+/** The plan awaiting approval: the conversation's one pending decision. */
 export function PlanCard({
   proposal,
   canApprove,
@@ -302,86 +416,83 @@ export function PlanCard({
   onApprove(): void;
 }) {
   const { t } = useT();
+  const { plan } = proposal;
+  const statusId = useId();
+  const disabled =
+    validating || (action === "approve" ? !canApprove : !canValidate);
+  const prior =
+    previous?.id === proposal.revalidatedFrom ? previous : undefined;
+  const status = validating
+    ? t("Validating plan…")
+    : disabled
+      ? (approvalHint ??
+        t(
+          action === "approve"
+            ? "Plan approval is currently unavailable."
+            : "Plan validation is currently unavailable.",
+        ))
+      : action === "restore"
+        ? t("Restore execution before approval.")
+        : action === "validate"
+          ? t("Validation required before approval.")
+          : proposal.revalidatedFrom
+            ? t(
+                "The plan content is unchanged. Its execution context was revalidated; review it below and confirm implementation. Nothing was approved.",
+              )
+            : t("Awaiting plan approval");
   return (
     <section
       className="workflow-plan"
+      data-plan-proposal=""
       aria-label={t("Current implementation plan")}
     >
-      <h3>{t("Current implementation plan")}</h3>
-      {proposal.revalidatedFrom && (
-        <p role="status">
-          {t(
-            "The plan content is unchanged. Its execution context was revalidated; review it below and confirm implementation. Nothing was approved.",
-          )}
+      <header>
+        <p id={statusId} className="plan-status" role="status">
+          {status}
         </p>
+        <h3>
+          <span className="sr-only">{t("Goal")}: </span>
+          {plan.goal}
+        </h3>
+      </header>
+      <section>
+        <h4>{t("Proposed changes")}</h4>
+        <Markdown text={plan.design} />
+      </section>
+      {plan.decisions.trim() && (
+        <section>
+          <h4>{t("Decisions and non-goals")}</h4>
+          <Markdown text={plan.decisions} />
+        </section>
       )}
-      {previous && (
-        <details>
-          <summary>{t("Previous execution context")}</summary>
-          <p>
-            <code>{previous.cwd}</code> · {previous.display?.model}
-          </p>
-          <p>
-            <code>{previous.display?.branch}</code> ·{" "}
-            <code>{previous.display?.baseCommit}</code>
-          </p>
-          {previous.display?.runtime && <p>{previous.display.runtime}</p>}
-          {previous.delivery && (
-            <Markdown text={readableDelivery(previous.delivery)} />
-          )}
-        </details>
-      )}
-      {previous && previous.observation !== proposal.observation && (
+      <ApprovalScope proposal={proposal} />
+      {prior && prior.observation !== proposal.observation && (
         <p role="status">
           {t(
             "Repository or execution-environment evidence changed. Review the current context before confirming.",
           )}
         </p>
       )}
-      <p>{t("Tools and checks run on the service host, not in a sandbox.")}</p>
-      <div className="plan-context">
-        <p onPointerMove={highlight}>
-          <code>{proposal.cwd}</code> · {proposal.display?.model}
-        </p>
-        <p onPointerMove={highlight}>
-          {t("Declared write paths use the checkout root:")}{" "}
-          <code>{proposal.checkoutRoot ?? proposal.cwd}</code>
-        </p>
-        {proposal.display?.runtime && (
-          <p onPointerMove={highlight}>{proposal.display.runtime}</p>
+      <details key={proposal.id}>
+        <summary>
+          {t("Technical details")} · {t("Complete delivery agreement")}
+        </summary>
+        <ProposalContext proposal={proposal} />
+        {prior && (
+          <details>
+            <summary>{t("Previous execution context")}</summary>
+            <ProposalContext proposal={prior} />
+          </details>
         )}
-        {proposal.display?.branch && (
-          <p>
-            <code>{proposal.display.branch}</code> ·{" "}
-            <code>{proposal.display.baseCommit}</code>
-          </p>
-        )}
-      </div>
-      <p>
-        {t(
-          "Approval covers this goal, its decisions, acceptance and assumptions. The service then finishes on its own: it may revise the route and write scope inside the repository, and records any deviation from the acceptance for the automatic review and the final report. No push, publication or deployment.",
-        )}
-      </p>
-      <Markdown
-        text={`## ${proposal.plan.goal}\n\n${proposal.plan.acceptance}\n\n${proposal.plan.decisions}`}
-      />
-      <details>
-        <summary>{t("Complete delivery agreement")}</summary>
-        <p>
-          {t("Plan identity")} · <code>{proposal.digest}</code>
-        </p>
-        <Markdown text={readableWorkflowPlan(proposal.plan)} />
+        <pre>{readableWorkflowPlan(plan)}</pre>
+        {proposal.delivery && <pre>{readableDelivery(proposal.delivery)}</pre>}
       </details>
-      {proposal.delivery && (
-        <Markdown text={readableDelivery(proposal.delivery)} />
-      )}
       <button
         type="button"
         className="primary"
+        aria-describedby={statusId}
         aria-busy={validating || undefined}
-        disabled={
-          validating || (action === "approve" ? !canApprove : !canValidate)
-        }
+        disabled={disabled}
         onClick={action === "approve" ? onApprove : onValidate}
       >
         {t(
@@ -397,24 +508,30 @@ export function PlanCard({
         )}
       </button>
       {action === "approve" && onValidate && (
-        <button
-          type="button"
-          disabled={validating || !canValidate}
-          onClick={onValidate}
-        >
-          {t("Validate plan again")}
-        </button>
+        <>
+          {" "}
+          <button
+            type="button"
+            disabled={validating || !canValidate}
+            title={
+              validating
+                ? status
+                : !canValidate
+                  ? (approvalHint ??
+                    t("Plan validation is currently unavailable."))
+                  : undefined
+            }
+            onClick={onValidate}
+          >
+            {t("Validate plan again")}
+          </button>
+        </>
       )}
       {action !== "approve" && (
         <p className="inspector-note">
           {t(
             "Validation may start the execution service and install the displayed model choice. It sends no message and runs no implementation; confirmation comes afterward.",
           )}
-        </p>
-      )}
-      {!canApprove && (action === "approve" || !canValidate) && (
-        <p className="inspector-note" role="status">
-          {approvalHint ?? t("Plan approval is currently unavailable.")}
         </p>
       )}
       <p>
