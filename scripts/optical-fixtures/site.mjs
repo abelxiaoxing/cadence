@@ -44,6 +44,7 @@ export function fixture(root, { actions = false } = {}) {
   const detailReads = [];
   const modelReads = [];
   let historyRoster = false;
+  let projectRead;
   let directoryGate, fileGate, entryGate, readGate;
   let directEntry = false;
   const snapshot = (scope) => ({
@@ -183,7 +184,17 @@ export function fixture(root, { actions = false } = {}) {
         workspaceId,
       });
     }
-    const q = JSON.parse(u.searchParams.get("request") ?? "null");
+    let q;
+    try {
+      q = JSON.parse(u.searchParams.get("request") ?? "null");
+      if (projectRead && p === `/projects/${project}/api/v1/workbench/read`) {
+        const value = projectRead(q);
+        if (value !== null) return ok(value);
+      }
+    } catch (error) {
+      failures.push(`GET ${p} ${JSON.stringify(q)}: ${error}`);
+      return invalid();
+    }
     if (p.endsWith("/session")) {
       res.setHeader(
         "x-cadence-attachment",
@@ -322,6 +333,16 @@ export function fixture(root, { actions = false } = {}) {
     stepReads,
     detailReads,
     modelReads,
+    // A view can supply a synchronous project read; null uses the shared site.
+    async withProjectRead(read, work) {
+      if (projectRead) throw Error("Project read already installed");
+      projectRead = read;
+      try {
+        await work();
+      } finally {
+        projectRead = undefined;
+      }
+    },
     async withHistoryRoster(work) {
       historyRoster = true;
       try {

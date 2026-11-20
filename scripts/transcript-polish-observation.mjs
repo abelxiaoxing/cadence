@@ -20,6 +20,8 @@ const bookId = "polish-reading";
 const pausedId = "polish-paused";
 const windowId = "polish-window";
 const longBookId = "polish-long-index";
+const transcriptIds = [traceId, bookId, pausedId, windowId, longBookId];
+const agentChatId = "live-dock";
 const finalLine = "The last sentence is readable.";
 const pages = Array.from({ length: 8 }, (_, i) => ({
   id: `question-${i}`,
@@ -107,7 +109,6 @@ function readFixture(
     windowGrown,
     windowFork,
     turnReads,
-    detailReads,
   },
 ) {
   const { id, kind } = q;
@@ -143,8 +144,7 @@ function readFixture(
         ),
       },
     };
-  if (![traceId, bookId, pausedId, windowId, longBookId].includes(id))
-    return null;
+  if (!transcriptIds.includes(id)) return null;
   if (id === pausedId && kind === "cadence-conversation") {
     const { proposal } = readRecord({ id: "design", kind }).state;
     return {
@@ -274,15 +274,14 @@ function readFixture(
       },
     };
   }
-  if (kind === "conversation-step" && id === windowId) {
-    detailReads.push(q.step);
-    throw Error("Windowed disclosure read a detail");
-  }
-  if (kind === "conversation-step" && live) {
-    detailReads.push(q.step);
-    const s = traceSteps(revision)[q.step];
+  if (kind === "conversation-step") {
+    assert.ok(live, `Unexpected ${kind} for ${id}`);
+    const s = (
+      id === pausedId ? pausedSteps(settled, growing) : traceSteps(revision)
+    )[q.step];
     assert.ok(
-      s?.role === "tool" &&
+      Number.isInteger(q.step) &&
+        s?.role === "tool" &&
         q.turnId === "trace-question" &&
         q.part === 0 &&
         q.leaf === leaf,
@@ -308,57 +307,36 @@ function readFixture(
   return null;
 }
 
-// Restrict interception to the shared fixture's ephemeral origin, project and
-// read endpoint. Pass unrelated GETs through unchanged. An unexpected request
-// for a detail is evidence even if its lazy component is immediately closed.
-async function installReads({ b, origin }, source) {
+// Count attempts in the browser, not completed HTTP responses: closing a
+// disclosure may cancel its detail read before it reaches the fixture site.
+async function withReads({ b, site, origin }, source, work) {
   assert.match(origin, /^http:\/\/127\.0\.0\.1:\d+$/);
   const route = `${origin}/projects/${project}/api/v1/workbench/read`;
-  const pending = new Set(),
-    errors = [];
-  async function answer({ request, requestId }) {
+  await b.send("Network.enable");
+  b.on("Network.requestWillBeSent", ({ request }) => {
     const url = new URL(request.url);
-    assert.equal(url.origin + url.pathname, route);
-    assert.equal(request.method, "GET");
-    const value = readFixture(
-      JSON.parse(url.searchParams.get("request")),
-      source,
-    );
-    if (!value) return b.send("Fetch.continueRequest", { requestId });
-    return b.send("Fetch.fulfillRequest", {
-      requestId,
-      responseCode: 200,
-      responseHeaders: [
-        { name: "Content-Type", value: "application/json" },
-        { name: "Cache-Control", value: "no-store" },
-      ],
-      body: Buffer.from(JSON.stringify({ kind: "ok", value })).toString(
-        "base64",
-      ),
-    });
+    if (request.method !== "GET" || url.origin + url.pathname !== route) return;
+    try {
+      const q = JSON.parse(url.searchParams.get("request"));
+      if (
+        q.kind === "conversation-step" &&
+        (transcriptIds.includes(q.id) || q.id === agentChatId)
+      )
+        source.detailReads.push(q);
+    } catch (error) {
+      site.failures.push(`Invalid observed project read: ${error}`);
+    }
+  });
+  try {
+    await site.withProjectRead((q) => readFixture(q, source), work);
+  } finally {
+    try {
+      await b.send("Network.disable");
+    } finally {
+      b.on("Network.requestWillBeSent", null);
+    }
   }
-  b.on("Fetch.requestPaused", (event) => {
-    const work = answer(event).catch(async (error) => {
-      errors.push(String(error));
-      await b
-        .send("Fetch.failRequest", {
-          requestId: event.requestId,
-          errorReason: "Failed",
-        })
-        .catch(() => {});
-    });
-    pending.add(work);
-    work.finally(() => pending.delete(work));
-  });
-  await b.send("Fetch.enable", {
-    patterns: [{ urlPattern: `${route}?*`, resourceType: "Fetch" }],
-  });
-  return async () => {
-    await Promise.all([...pending]);
-    await b.send("Fetch.disable");
-    b.on("Fetch.requestPaused", null);
-    assert.deepEqual(errors, []);
-  };
+  assert.deepEqual(source.detailReads, [], "Unexpected step detail request");
 }
 
 const group = ".trace-summary:first-child .chead-main";
@@ -483,9 +461,8 @@ async function observeTrace(ctx, row, source) {
     await ev(`document.activeElement.matches(${JSON.stringify(firstTool)})`),
     "Focused trace member was displaced by a new result",
   );
-  row.detailReads = [...source.detailReads];
   assert.deepEqual(
-    row.detailReads,
+    source.detailReads,
     [],
     "Expanding a trace fetched step bodies",
   );
@@ -674,7 +651,7 @@ async function observePausedTrace(ctx, row, source) {
 async function observeAgentThreshold(ctx, row, source) {
   const { go, chat, click, clickPoint, ev, wait, run } = ctx;
   const dock = `.agent-dock-run[aria-label="${liveDock.goal}"] > .agent-dock-row`;
-  await go(chat("live-dock"), dock);
+  await go(chat(agentChatId), dock);
   if (
     await ev(
       `document.querySelector('.navigation-toggle').ariaExpanded === 'false'`,
@@ -1342,7 +1319,7 @@ async function observeLongIndex(ctx, row) {
 export async function observeTranscriptPolish(ctx) {
   const { width, theme, layout, ev, rows } = ctx;
   const motion = width === 390 ? "reduce" : "no-preference";
-  const row = { width, theme, motion };
+  const row = { width, theme, motion, detailReads: [] };
   rows.push(row);
   const source = {
     revision: 0,
@@ -1351,24 +1328,24 @@ export async function observeTranscriptPolish(ctx) {
     windowGrown: false,
     windowFork: false,
     turnReads: [],
-    detailReads: [],
+    detailReads: row.detailReads,
   };
-  const stopReads = await installReads(ctx, source);
   try {
-    await layout(width, theme, motion);
-    await observeTrace(ctx, row, source);
-    assert.ok(
-      await ev(
-        `matchMedia('(prefers-color-scheme: ${theme})').matches && matchMedia('(prefers-reduced-motion: ${motion})').matches && innerWidth===${width}`,
-      ),
-    );
-    await observePausedTrace(ctx, row, source);
-    await observeAgentThreshold(ctx, row, source);
-    await observeWindowedTrace(ctx, row, source);
-    await observeReading(ctx, row, source.turnReads);
-    if (width > 900) await observeLongIndex(ctx, row);
+    await withReads(ctx, source, async () => {
+      await layout(width, theme, motion);
+      await observeTrace(ctx, row, source);
+      assert.ok(
+        await ev(
+          `matchMedia('(prefers-color-scheme: ${theme})').matches && matchMedia('(prefers-reduced-motion: ${motion})').matches && innerWidth===${width}`,
+        ),
+      );
+      await observePausedTrace(ctx, row, source);
+      await observeAgentThreshold(ctx, row, source);
+      await observeWindowedTrace(ctx, row, source);
+      await observeReading(ctx, row, source.turnReads);
+      if (width > 900) await observeLongIndex(ctx, row);
+    });
   } finally {
-    await stopReads();
     await layout(width, theme);
   }
 }
