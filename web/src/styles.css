@@ -3141,6 +3141,8 @@ summary:focus-visible,
 }
 /* Holds the transcript and the pill that returns to its end. */
 .chat-messages-wrap {
+  --latest-gap: 12px;
+  --latest-height: 2rem;
   position: relative;
   display: flex;
   flex: 1;
@@ -3157,10 +3159,67 @@ summary:focus-visible,
 .chat-messages:has(.chat-turn) {
   padding-block-start: 20px;
 }
-/* Only fade while reading back. The last lines at rest, a focused control,
-   the jump button and the question rail must never sit inside the mask. */
+/* The scroller ends at the top of the in-flow dock, even as the editor
+   grows. Continue its canvas under the glass and through the bottom gutter.
+   A welcome, loading hint or empty draft alone doesn't need a reading shelf. */
+.chat-workspace:has(
+  > .chat-messages-wrap
+    > .chat-messages
+    > :is(
+      [data-lazy-id],
+      .chat-attempt,
+      .chat-waiting-list,
+      .workflow-line,
+      .workflow-plan
+    )
+) {
+  --dock-platform: var(--bg);
+  background-color: var(--dock-platform);
+
+  & > .chat-messages-wrap {
+    container-type: inline-size;
+  }
+  & > .chat-messages-wrap > .chat-messages {
+    /* Resolve both the reading inset and its full-bleed shelf against the
+       same pane width, not a percentage of the narrower reading column. */
+    --chat-inset: max(var(--chat-pad), (100cqi - var(--chat-max)) / 2);
+    --shelf-fade: 22px;
+    --shelf-height: calc(
+      var(--shelf-fade) +
+      6px +
+      var(--latest-height) +
+      var(--latest-gap)
+    );
+    padding-block-end: 0;
+    scroll-padding-block-end: var(--shelf-height);
+    contain: paint;
+
+    /* Inside the scrollport, not over its scrollbar. In flow this also
+       reserves precisely the space the last line needs to clear the fade. */
+    &::after {
+      content: "";
+      display: block;
+      position: sticky;
+      bottom: 0;
+      z-index: 6; /* Above in-transcript sticky diff headers and copy buttons. */
+      height: var(--shelf-height);
+      margin-inline: calc(-1 * var(--chat-inset));
+      pointer-events: none;
+      background: linear-gradient(transparent, var(--bg) var(--shelf-fade));
+    }
+
+    @media (forced-colors: active) {
+      --shelf-fade: 0px;
+      &::after {
+        background: Canvas;
+      }
+    }
+  }
+}
+/* The independent subagent reader has no input dock. */
 @media (forced-colors: none) and (prefers-contrast: no-preference) {
-  .chat-messages:has(+ .scroll-bottom):not(:has(:focus-visible)) {
+  .workflow-agent
+    > .chat-messages:has(+ .scroll-bottom):not(:has(:focus-visible)) {
     mask-image: linear-gradient(
       to bottom,
       black max(75%, calc(100% - 96px)),
@@ -3533,6 +3592,7 @@ summary:focus-visible,
   position: relative;
   z-index: 1;
   margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 12px;
+  background-color: var(--dock-platform, transparent);
   border-radius: var(--capsule-radius);
   box-shadow:
     0 12px 40px var(--glass-shadow),
@@ -3943,12 +4003,23 @@ summary:focus-visible,
 }
 /* The transcript's pill (pi .scroll-bottom) sits just above the composer. */
 .chat-messages-wrap > .scroll-bottom {
-  bottom: 14px;
-  border-color: var(--glass-border);
-  background: var(--menu-bg);
-  color: var(--text-primary);
-  backdrop-filter: var(--glass-filter);
-  box-shadow: 0 4px 16px var(--shadow-2);
+  bottom: var(--latest-gap);
+  height: var(--latest-height);
+  --pill-face: light-dark(var(--text-primary), var(--bg-elev2));
+  border-color: color-mix(in srgb, var(--on-action) 24%, transparent);
+  background: color-mix(in srgb, var(--pill-face) 97%, transparent);
+  color: var(--on-action);
+  backdrop-filter: var(--card-filter);
+  box-shadow: 0 4px 14px var(--shadow-3);
+}
+.chat-messages-wrap > .scroll-bottom:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--pill-face);
+  color: var(--on-action);
+}
+.chat-messages-wrap > .scroll-bottom:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -4px;
 }
 /* A jump to a turn not shown yet reads back to it first. */
 .chat-jump-status {
