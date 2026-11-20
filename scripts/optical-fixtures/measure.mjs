@@ -557,11 +557,10 @@ export function readingPosition() {
 
 // Sample the center of the copy glyph's straight rectangular stroke, not its
 // anti-aliased corners. The pixel immediately inside the rect is its material.
-export function restingCopySample(selector) {
+export function revealedCopySample(selector) {
   const button = document.querySelector(selector);
-  const card = button.closest(".toolcall,.msg-text");
-  if (card.matches(":hover,:focus-within") || button.matches(":hover,:focus"))
-    throw Error(`Not at rest: ${selector}`);
+  if (!button.matches(":hover") || getComputedStyle(button).opacity !== "1")
+    throw Error(`Not revealed: ${selector}`);
   const rect = button.querySelector("svg rect");
   const box = rect.getBBox();
   const point = new DOMPoint(box.x, box.y + box.height / 2).matrixTransform(
@@ -572,7 +571,7 @@ export function restingCopySample(selector) {
   if (!button.contains(document.elementFromPoint(x, y)))
     throw Error(`Hidden glyph: ${selector}`);
   return {
-    name: `${selector} resting stroke`,
+    name: `${selector} revealed stroke`,
     ink: [x, y],
     x: x + 2,
     y,

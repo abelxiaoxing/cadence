@@ -1276,3 +1276,9 @@ Failed acceptance checks now go to recovery before Agent review.
 When a review names an in-scope blocker and how to verify its fix, the owner can send it directly to repair.
 The WebUI removes the animated welcome background and keeps rename and archive controls stable during transcript reads.
 Disabled controls explain why the action is unavailable without shifting the history list.
+
+## 2.2.6 release candidate
+
+The WebUI connects adjacent tool calls and thinking steps with a fine rail and shows a glass card only when its details are opened.
+The reply's copy action sits in its byline; the running Stop button and active trace nodes respect reduced motion.
+Local Chromium fixture checks at 320px and 1440px measured 32px folded rows and aligned labels in both themes, without a live provider or service deployment.

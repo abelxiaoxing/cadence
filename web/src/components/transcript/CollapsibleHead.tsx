@@ -23,6 +23,7 @@ export function CollapsibleHead({
   toggle,
   onHeadContextMenu,
   children,
+  summary,
   after,
 }: {
   /** 展开态（驱动 aria-expanded 与默认 chevron 方向；通常是 expanded || forceOpen） */
@@ -47,6 +48,8 @@ export function CollapsibleHead({
   onHeadContextMenu?: MouseEventHandler<HTMLButtonElement>;
   /** .chead-title 内容 */
   children: ReactNode;
+  /** Non-interactive summary (e.g. status and path) inside the disclosure hit area. */
+  summary?: ReactNode;
   /** .chead-title 之后的头内尾部（status / path / copy 键等），ToolCallBlock 头尾一长串都在这里 */
   after?: ReactNode;
 }) {
@@ -87,6 +90,7 @@ export function CollapsibleHead({
         >
           {children}
         </span>
+        {summary}
       </button>
       {after}
     </div>

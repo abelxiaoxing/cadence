@@ -1,6 +1,6 @@
 /* A conversation turn in pi-web-ui's Message composition: a meta line (speaker,
  * model, time) over a body of message text, thinking blocks and tool cards in
- * recorded order, then the message's action bar. MIT (c) 2026 xing-shuyin.
+ * recorded order, with the reply's action bar in its byline. MIT (c) 2026 xing-shuyin.
  * Cadence: where the session forks, the user's message also carries a version
  * pager; its actions and the pager only choose what is read or where the next
  * message will continue, never send. */
@@ -204,6 +204,14 @@ export const ChatTurnView = memo(function ChatTurnView({
               </button>
             )}
             {user.length === 0 && time}
+            {!live && (answer.length > 0 || continueAction) && (
+              <MessageActions label={t("Message actions")}>
+                {answer.length > 0 && (
+                  <CopyMessageAction turn={turn} parts={answer} />
+                )}
+                {continueAction}
+              </MessageActions>
+            )}
           </div>
           {execution && context && (
             <p className="msg-context">
@@ -231,6 +239,7 @@ export const ChatTurnView = memo(function ChatTurnView({
                     turn={turn}
                     index={index}
                     step={step}
+                    copy={live || step.error || answer.length !== 1}
                     render={(text) => (
                       <StreamMarkdown
                         text={text}
@@ -255,15 +264,6 @@ export const ChatTurnView = memo(function ChatTurnView({
               </p>
             ))}
           </div>
-          {/* Nothing to act on while the reply is still being written. */}
-          {!live && (answer.length > 0 || continueAction) && (
-            <MessageActions label={t("Message actions")}>
-              {answer.length > 0 && (
-                <CopyMessageAction turn={turn} parts={answer} />
-              )}
-              {continueAction}
-            </MessageActions>
-          )}
         </article>
       )}
       {header.status === "running" && header.retry && (

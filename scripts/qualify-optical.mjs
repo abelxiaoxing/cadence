@@ -34,7 +34,7 @@ import {
   glyphSample,
   questionMarkSample,
   readingPosition,
-  restingCopySample,
+  revealedCopySample,
   stableFrames,
   textSamples,
 } from "./optical-fixtures/measure.mjs";
@@ -364,11 +364,22 @@ try {
     return row;
   };
   const copyIndicators = async (selector) => {
-    // No hover/focus reveal: move the real pointer outside the card, and
-    // sample before Tab reaches the control. Require both screenshot samples.
-    await run(controlGeometry, selector);
+    // Measure the quiet rest state, then the actual revealed stroke and Tab ring.
+    await ev("document.activeElement.blur()");
+    const { hit } = await run(controlGeometry, selector);
+    const opacity = `Number(getComputedStyle(document.querySelector(${q(selector)})).opacity)`;
     await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
-    const point = await run(restingCopySample, selector);
+    const mouse = await ev(
+      `matchMedia('(hover: hover) and (pointer: fine)').matches`,
+    );
+    await wait(mouse ? `${opacity} < 0.6` : `${opacity} === 1`);
+    await send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: hit.center.x,
+      y: hit.center.y,
+    });
+    await wait(`${opacity} === 1`);
+    const point = await run(revealedCopySample, selector);
     const capture = async (point) => {
       assert.ok(point, `Missing ${selector} indicator sample`);
       const png = await send("Page.captureScreenshot", {
@@ -380,7 +391,8 @@ try {
       assert.deepEqual(observed.failures, []);
     };
     await capture(point);
-    assert.deepEqual(await run(restingCopySample, selector), point);
+    assert.deepEqual(await run(revealedCopySample, selector), point);
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
     const control = await observeButton("copy indicator focus", selector);
     assert.equal(control.keyboardFocus, true);
     const focusPoint = (await run(textSamples)).find(
@@ -1078,7 +1090,7 @@ try {
       await go(chat("edit"), ".toolcall-head");
       if (width === 1440) {
         await copyIndicators(".toolcall-head .chead-copy");
-        await copyIndicators(".msg-part:last-child .msg-text-copy");
+        await copyIndicators(".msg-assistant .msg-meta .msg-action");
       }
       await expand("edit", "edit", "material.ts");
       await scrollTo("[data-optical-tool] .file-diff-body .char-add");

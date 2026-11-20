@@ -123,8 +123,10 @@ For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds 
 
 ### Stable rendering and details
 
-An ordinary turn shows the user's message, then one speaker label over the reply in recorded order: message text, one block per readable thinking step and one card per tool call, with nothing folded behind a summary.
-A card names the tool and what it acted on, and reads its arguments and output only while opened.
+An ordinary turn shows the user's message, then one speaker label over the reply in recorded order: message text, one compact trace row per thinking step or tool call, with nothing folded behind a summary.
+A fine rail joins adjacent rows but stops at prose.
+A body-free observation shares the icon slot without offering a disclosure; only an opened detail has a glass backing.
+A tool row names the tool and what it acted on, and reads its arguments and output only while opened.
 Opened details refresh when their full-content version, coordinates or execution state changes, even with the same parts count; reply termination makes a final read.
 Closing a detail or leaving its conversation retires pending reads, and stale results cannot replace the current selection.
 A thinking block starts folded and reads its text through the step-detail read when opened, shown as recorded; a live body-free activity placeholder is not expandable and hands off in place to readable Pi thinking under the same identity.
@@ -644,7 +646,9 @@ Streaming identity, Markdown and detail reads follow [Stable rendering and detai
 The line "Thinking that could not be read is not shown" appears only for the `omitted.thinking` flag: thinking Pi stored unreadable, or in a workflow subagent's transcript thinking its capture did not keep.
 A failed or incomplete assistant attempt is its own labelled block, never joined to the answer.
 The turn's meta line gives its recorded start time and the model fixed at admission; the admitted directory opens from that model label, and a record without a snapshot shows neither.
-Each message has an action bar, revealed on hover or focus and always shown on touch screens: it copies the message (for a reply, its answer text in recorded order, without thinking blocks, tool cards or failed attempts); the user's message also offers "Edit and resend" where the entry it continued is known, and the last message of an earlier settled turn (the reply when there is one) offers "Continue from here".
+The reply's action bar sits in its byline, the user's below its bubble; hover and focus reveal the controls and touch screens always show them.
+A single settled answer needs no duplicate part-copy button; live, failed and multipart text keep their individual copies.
+The action bar copies the message (for a reply, its answer text in recorded order, without thinking blocks, tool cards or failed attempts); the user's message also offers "Edit and resend" where the entry it continued is known, and the last message of an earlier settled turn (the reply when there is one) offers "Continue from here".
 Neither anchor action is offered while a reply is active or a Send is in flight, and a reply still being written has no bar.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.
 Runs puts the current snapshot's owner projection above the retained run pages.

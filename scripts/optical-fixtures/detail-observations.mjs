@@ -464,7 +464,10 @@ function surfaceMaterial(selector, headingSelector) {
     y = rect.top + rect.height / 2;
   if (!heading.contains(document.elementFromPoint(x, y)))
     throw Error(`Obscured ${selector} heading`);
-  const css = getComputedStyle(card);
+  const css = getComputedStyle(
+    card,
+    card.matches(".toolcall.open,.thinking.open") ? "::before" : null,
+  );
   return {
     heading: heading.textContent,
     point: { x, y },
@@ -613,7 +616,7 @@ export async function observeCardMaterial(
     return material;
   };
   const rest = await capture("rest");
-  if (selector === ".toolcall" || selector === ".thinking")
+  if (selector === ".toolcall.open" || selector === ".thinking.open")
     await checkTier(run, rest, false);
   if (selector === ".scm-file") {
     await send("Input.dispatchMouseEvent", {
@@ -667,8 +670,8 @@ async function observeSurfaceContrast(probe, surface, button, label, text) {
         return {
           ...(focusedCard && {
             focusedMaterial: {
-              fill: getComputedStyle(plate).backgroundColor,
-              grain: getComputedStyle(plate).backgroundImage,
+              fill: underlay.backgroundColor,
+              grain: underlay.backgroundImage,
               shellFilter: getComputedStyle(plate).backdropFilter,
               filter: underlay.backdropFilter,
               behind: underlay.zIndex,
@@ -696,7 +699,7 @@ async function observeSurfaceContrast(probe, surface, button, label, text) {
       text,
     ),
   );
-  if (surface === ".toolcall" || surface === ".thinking") {
+  if (surface === ".toolcall.open" || surface === ".thinking.open") {
     const { fill, grain, filter } = await run(expectedMaterial, false);
     assert.deepEqual(row.frames.at(-1).focusedMaterial, {
       fill,
@@ -721,10 +724,20 @@ export async function observeChatMaterials(probe, report) {
     [".toolcall", "read"],
     [".thinking", "Thinking"],
   ]) {
-    const button = `.chat-turn ${selector} .chead-main[aria-expanded="false"]`;
+    const button = `.chat-turn ${selector} .chead-main`;
     const label = `${button} .chead-title`;
-    await observeCardMaterial(probe, selector, label);
-    await observeSurfaceContrast(contrast, selector, button, label, text);
+    await probe.scrollTo(label);
+    await probe.parkPointer();
+    const flat = await probe.run(surfaceMaterial, selector, label);
+    assert.equal(alpha(flat.fill), 0);
+    assert.equal(flat.grain, "none");
+    assert.ok(flat.edges.every((edge) => edge.width === "0px"));
+    assert.ok(flat.rect.height >= 30 && flat.rect.height <= 34);
+    await click(`${button}[aria-expanded="false"]`);
+    const open = `${selector}.open`;
+    await observeCardMaterial(probe, open, label);
+    await observeSurfaceContrast(contrast, open, button, label, text);
+    await click(`${button}[aria-expanded="true"]`);
   }
   await observeThinkingBody(probe, report);
   if (width > 900) return;
