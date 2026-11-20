@@ -38,9 +38,9 @@ import type {
 } from "../../types";
 import { PageControls } from "../history/PageControls";
 import {
-  ActivityButton,
   ActivityList,
   type ActivityListProps,
+  ActivityRow,
   activityKey,
 } from "./ActivityList";
 import { ConversationActions } from "./ConversationActions";
@@ -376,6 +376,7 @@ export function TaskSidebar({
   }
   const project = discovery?.project;
   const discovered = new Map<string, Activity[]>();
+  const unlinkedReports: Activity[] = [];
   const represented = new Set<string>();
   if (project) {
     for (const run of roster)
@@ -399,8 +400,14 @@ export function TaskSidebar({
     // An independent owner can appear here before we have its viewer roster.
     const local = discovery.value?.projects.find((p) => p.path === project);
     for (const a of local?.activities ?? []) {
+      const key = activityKey(project, a);
+      if (represented.has(key)) continue;
+      if (a.source === "workflow" && !a.sessionId) {
+        unlinkedReports.push(a);
+        represented.add(key);
+        continue;
+      }
       if (
-        represented.has(activityKey(project, a)) ||
         !(a.source === "terminal" ? a.instance : a.epoch) ||
         a.history !== "shared" ||
         !a.sessionId
@@ -409,13 +416,18 @@ export function TaskSidebar({
       const group = discovered.get(a.sessionId) ?? [];
       group.push(a);
       discovered.set(a.sessionId, group);
-      represented.add(activityKey(project, a));
+      represented.add(key);
     }
-    for (const group of discovered.values())
+    for (const group of [...discovered.values(), unlinkedReports])
       group.sort((a, b) =>
         activityKey(project, a).localeCompare(activityKey(project, b)),
       );
   }
+  const unlinkedCount = unlinked.length + unlinkedReports.length;
+  const unlinkedCurrent =
+    (unlinked.length > 0 && !workflowError) ||
+    (!discovery?.error &&
+      unlinkedReports.some((a) => a.freshness === "current"));
   const pinned = new Set([...replying, ...linked.keys(), ...discovered.keys()]);
   const pastChats = chats.filter((chat) => !pinned.has(chat.id));
   const activityKnown =
@@ -473,6 +485,26 @@ export function TaskSidebar({
       </div>
     );
   };
+  const reportRow = (a: Activity) =>
+    project &&
+    discovery && (
+      <div
+        key={activityKey(project, a)}
+        className={
+          a.source === "terminal"
+            ? "history-run history-terminal"
+            : "history-run"
+        }
+      >
+        <ActivityRow
+          grouped
+          path={project}
+          activity={a}
+          opening={discovery.opening}
+          onOpen={discovery.onOpen}
+        />
+      </div>
+    );
   const chatRow = (id: string, chat?: ChatSummary) => {
     const flows = linked.get(id);
     const reports = discovered.get(id);
@@ -546,26 +578,7 @@ export function TaskSidebar({
               <FiChevronRight aria-hidden="true" />
             </summary>
             {flows?.map(workflowRow)}
-            {project &&
-              discovery &&
-              reports?.map((a) => (
-                <div
-                  key={activityKey(project, a)}
-                  className={
-                    a.source === "terminal"
-                      ? "history-run history-terminal"
-                      : "history-run"
-                  }
-                >
-                  <ActivityButton
-                    grouped
-                    path={project}
-                    activity={a}
-                    opening={discovery.opening}
-                    onOpen={discovery.onOpen}
-                  />
-                </div>
-              ))}
+            {reports?.map(reportRow)}
           </details>
         )}
       </div>
@@ -623,19 +636,20 @@ export function TaskSidebar({
             </p>
           )}
           {[...pinned].sort().map((id) => chatRow(id, summaries.get(id)))}
-          {unlinked.length > 0 && (
+          {unlinkedCount > 0 && (
             <details className="history-unlinked">
               <summary>
                 <span
                   className="status-dot busy"
                   role="img"
                   aria-label={
-                    workflowError ? t("Stale observation") : t("Working")
+                    unlinkedCurrent ? t("Working") : t("Stale observation")
                   }
                 />
-                {t("Unattributed work")} · {unlinked.length}
+                {t("Unattributed work")} · {unlinkedCount}
               </summary>
               {unlinked.map(workflowRow)}
+              {unlinkedReports.map(reportRow)}
             </details>
           )}
           {active.map((run) => {
@@ -802,7 +816,7 @@ export function TaskSidebar({
               history.length === 0 &&
               pastChats.length === 0 &&
               !pinned.size &&
-              !unlinked.length &&
+              !unlinkedCount &&
               !active.length &&
               !chatHistoryPartial && (
                 <p className="panel-hint">{t("No conversations yet.")}</p>

@@ -279,6 +279,10 @@ function specimen(id) {
           { entry: page.turn.id, index: 0, mimeType: "image/png" },
         ];
       page.steps[1].text = t.answer;
+      if (s.replying) {
+        page.turn.status = "running";
+        page.turn.activity = { kind: "tool", sequence: 1, name: "read" };
+      }
       return page;
     }
     return undefined;
@@ -323,9 +327,13 @@ function specimen(id) {
     )
       return ok({ kind, commandId, imageId: c.imageId, offset: PNG.length });
     if (
-      ["send", "cadence-send"].includes(kind) &&
-      s.permit === kind &&
-      c.conversationId === id
+      c.conversationId === id &&
+      ((["send", "cadence-send"].includes(kind) && s.permit === kind) ||
+        (kind === "conversation-input" &&
+          s.replying &&
+          c.mode === s.permit &&
+          c.turnId === live.commandId &&
+          c.epoch === live.epoch))
     ) {
       s.permit = null;
       const gate = Promise.withResolvers();
@@ -712,6 +720,59 @@ async function observeBootstrap(p, row) {
     );
     const locked = await editor();
     assert.deepEqual(locked, { same: true, draft: "", images: 0 });
+    // The same live turn/tool across every reread. A refused or mismatched
+    // reply keeps its text. Only each matched input receipt adds a pulse.
+    for (const [mode, outcome] of [
+      ["steer", "refused"],
+      ["steer", "unconfirmed"],
+      ["steer", "accepted"],
+      ["queue", "accepted"],
+    ]) {
+      await wait(
+        `!document.querySelector('.conversation-feedback[data-event]')`,
+      );
+      const text = `${mode}: ${outcome}`;
+      await run((sel) => document.querySelector(sel).select(), input);
+      await send("Input.insertText", { text });
+      s.permit = mode;
+      await press("Enter", 13, mode === "queue" ? 1 : 0);
+      await until(() => s.pending, `held ${mode}`);
+      const { command, finish } = s.pending;
+      assert.equal(command.kind, "conversation-input");
+      assert.equal(command.text, text);
+      assert.equal(command.mode, mode);
+      assert.equal(
+        await ev(
+          `!!document.querySelector('.conversation-feedback[data-event]')`,
+        ),
+        false,
+      );
+      finish(
+        outcome === "refused"
+          ? refused()
+          : ok({
+              kind: "accepted",
+              commandId:
+                outcome === "accepted" ? command.commandId : randomUUID(),
+            }),
+      );
+      s.pending = null;
+      await wait(
+        `!opticalProbe.editor.readOnly && !opticalProbe.editor.disabled`,
+      );
+      assert.equal((await editor()).draft, outcome === "accepted" ? "" : text);
+      if (outcome === "accepted")
+        await wait(
+          `document.querySelector('.conversation-feedback')?.innerText==='Message received'`,
+        );
+      else
+        assert.equal(
+          await ev(
+            `!!document.querySelector('.conversation-feedback[data-event]')`,
+          ),
+          false,
+        );
+    }
     s.replying = false;
     await wait(`document.querySelector('${add}:enabled')`);
     await pasteFixtureImage(run);
@@ -729,10 +790,12 @@ async function observeBootstrap(p, row) {
     );
     assert.deepEqual(
       feedback.filter((e) => e.text).map((e) => e.text),
-      ["Message received"],
+      Array(3).fill("Message received"),
     );
     assert.ok(
-      feedback.some((e) => e.text && e.rect.width > 0 && e.rect.height > 0),
+      feedback
+        .filter((e) => e.text)
+        .every((e) => e.rect.width > 0 && e.rect.height > 0),
     );
     if (row.motion === "reduce")
       assert.ok(
@@ -743,11 +806,17 @@ async function observeBootstrap(p, row) {
     )
       assert.deepEqual(
         feedback.filter((e) => e.animation).map((e) => e.animation),
-        ["entry-received"],
+        Array(3).fill("entry-received"),
       );
     assert.deepEqual(
       s.commands.map((c) => c.kind),
-      ["image-upload", "send", "image-upload", "send"],
+      [
+        "image-upload",
+        "send",
+        "image-upload",
+        "send",
+        ...Array(4).fill("conversation-input"),
+      ],
     );
     row.bootstrap = {
       feedback,
@@ -1173,6 +1242,21 @@ async function observeProposal(p, s, row, shot) {
   );
   await click(input);
   await refuseDraft("openedWithoutEditing");
+  // Restoring A's parked text from a real history walk is not entering B's
+  // phrase. Exercise both ways out of the history cursor.
+  for (const [key, code] of [
+    ["Escape", 27],
+    ["ArrowDown", 40],
+  ]) {
+    await click(input);
+    await press("ArrowUp", 38);
+    await wait(
+      `document.querySelector(${q(input)}).value === ${q(discussion)}`,
+    );
+    await press(key, code);
+    await wait(`document.querySelector(${q(input)}).value === ${q(phrase)}`);
+    await refuseDraft(`historyRestored${key}`);
+  }
   const next = s.makeProposal("stale");
   await collapsed(next.plan.goal);
   await open();

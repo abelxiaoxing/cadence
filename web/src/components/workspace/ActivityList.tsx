@@ -25,7 +25,7 @@ export function activityKey(
   ]);
 }
 
-export function ActivityButton({
+export function ActivityRow({
   path,
   activity,
   opening,
@@ -53,6 +53,16 @@ export function ActivityButton({
   // producer, not just the session (or a terminal leaf shared by two turns).
   const producer =
     activity.source === "terminal" ? activity.instance : activity.epoch;
+  // Discovery carries identity and location, not access to this owner's run.
+  if (grouped && !activity.sessionId)
+    return (
+      <p className="panel-hint">
+        {source} · <code>{activity.id}</code>
+        <br />
+        {tx(activity.phase)} · {fresh} · {activity.cwd}
+        {activity.executionCwd ? ` → ${activity.executionCwd}` : ""}
+      </p>
+    );
   return (
     <button
       type="button"
@@ -124,7 +134,7 @@ export function ActivityList({
           <div key={project.path}>
             <p className="panel-hint">{project.path}</p>
             {project.activities.map((activity) => (
-              <ActivityButton
+              <ActivityRow
                 key={activityKey(project.path, activity)}
                 path={project.path}
                 activity={activity}
