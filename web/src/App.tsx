@@ -357,13 +357,7 @@ export function App({
   const activeChats =
     chatActivity.value?.kind === "conversation-active"
       ? chatActivity.value.entries
-      : [];
-  const chatEntries = [
-    ...activeChats,
-    ...(chats.value?.entries ?? []).filter(
-      (row) => !activeChats.some((active) => active.id === row.id),
-    ),
-  ];
+      : undefined;
   const workflowActivity = useWorkbench(
     api.client,
     // Unlike full history, the safety roster is useful as soon as this
@@ -1178,6 +1172,14 @@ export function App({
                     ))}
                   </section>
                 )}
+                {!executionStopped &&
+                  (projectError || viewerError || detached) && (
+                    <p className="panel-hint">
+                      {t(
+                        "Activity observation is partial. Missing work is not known to have finished.",
+                      )}
+                    </p>
+                  )}
                 <p className="panel-empty" role="status">
                   {projectError || viewerError
                     ? t(
@@ -1203,13 +1205,17 @@ export function App({
                 canCancel={attached}
                 canceling={canceling}
                 onCancel={cancel}
-                chats={chatEntries}
+                chats={chats.value?.entries}
+                activeChats={activeChats}
                 chatActivityKnown={
                   chatActivity.value?.kind === "conversation-active" &&
                   !chatActivity.error
                 }
                 chatHistoryPartial={
-                  chats.loading || chats.canPrevious || !!chats.value?.next
+                  !chats.value ||
+                  !!chats.error ||
+                  chats.canPrevious ||
+                  !!chats.value.next
                 }
                 chatHistoryControls={
                   <>
@@ -1262,14 +1268,12 @@ export function App({
                 }}
                 workflows={background?.runs}
                 workflowLinks={background?.links}
-                workflowError={!!workflowActivity.error}
+                workflowError={!background || !!workflowActivity.error}
                 selectedWorkflow={agent?.runId}
                 onWorkflow={(run, conversationId) => {
                   if (conversationId) selectChat(conversationId);
-                  else {
-                    setAgent({ runId: run.id, stepId: null, label: run.goal });
-                    closeDrawer();
-                  }
+                  setAgent({ runId: run.id, stepId: null, label: run.goal });
+                  closeDrawer();
                 }}
                 canCancelWorkflow={canCancelWorkflow}
                 onCancelWorkflow={async (run) => {

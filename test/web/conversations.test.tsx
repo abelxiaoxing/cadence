@@ -1,7 +1,10 @@
 // Readonly navigation/presentation tests. Real DOM and owner lifetimes are covered
 // separately by assets-browser and accepting-browser scenarios.
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
+import type { ChatSummary } from "../../src/service/contracts/workbench.ts";
+import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import {
   decodeRunProjection,
@@ -105,12 +108,9 @@ it("an unavailable roster is not empty or inferred from historical lifecycle", (
       onScope={() => {}}
     />,
   );
-  for (const label of [
-    "Running work",
-    "Conversation history",
-    "Active roster unavailable",
-  ])
+  for (const label of ["Conversation history", "Active roster unavailable"])
     expect(html).toContain(label);
+  expect(html).not.toContain("Running work");
   expect(html).not.toContain("Recent projects");
   expect(html).not.toContain("Open working folder");
   expect(html).not.toContain("No active runs");
@@ -201,7 +201,8 @@ it("conversation rows are a title and a time; origin is the icon's name and a st
       conversationId={chats[1].id}
     />,
   );
-  // Running work is never filtered or grouped; history is grouped by day.
+  // Active and dated rows share one history section; only the latter
+  // participate in date grouping/the filter.
   const [running, history] = html.split("Conversation history");
   expect(running).toContain("Live reply");
   expect(running).not.toContain("lp-time-label");
@@ -231,8 +232,10 @@ it("conversation rows are a title and a time; origin is the icon's name and a st
   );
   // A state that is not plain completion is said in words.
   expect(running).toContain(
-    '<span class="session-sub session-state running">running</span>',
+    'class="status-dot busy history-activity-mark" role="img" aria-label="Working"',
   );
+  expect(running).not.toContain("session-time");
+  expect(html.match(/<section class="lp-section /g)).toHaveLength(1);
   expect(history).toContain(
     '<span class="session-sub session-state failed">failed</span>',
   );
@@ -245,6 +248,155 @@ it("conversation rows are a title and a time; origin is the icon's name and a st
   expect(history).toMatch(
     /Undated<\/span><span class="session-sub session-state unknown">unknown<\/span><\/span><\/button>/,
   );
+});
+const summary = (
+  title: string,
+  status: ChatSummary["status"],
+): ChatSummary => ({
+  id: id(),
+  title,
+  status,
+  updatedAt: 1000,
+  leaf: null,
+  origin: "webui",
+});
+const workflow = (goal: string): WorkflowRun => ({
+  id: id(),
+  epoch: id(),
+  goal,
+  phase: "implementing",
+  status: "running",
+  steps: [],
+  notice: "",
+  mergedCommit: null,
+  humanReviewed: false,
+});
+function historyView(props: Partial<ComponentProps<typeof TaskSidebar>>) {
+  return renderToStaticMarkup(
+    <TaskSidebar
+      client={new ServiceClient(transport())}
+      taskId={null}
+      scope={null}
+      runs={[]}
+      canCancel={false}
+      canceling={new Set()}
+      onCancel={() => {}}
+      onScope={() => {}}
+      onTask={() => {}}
+      activeRuns={{
+        status: "complete",
+        runs: [],
+        epoch: id(),
+        workspaceId: id(),
+        storeId: id(),
+      }}
+      {...props}
+    />,
+  );
+}
+it("pins one session until its last independent reply or linked run leaves the roster", () => {
+  const listed = summary("Pinned session", "completed");
+  const idle = summary("Earlier discussion", "completed");
+  const reply = { ...listed, status: "running" as const };
+  const a = workflow("Patch"),
+    b = workflow("Patch"); // Even identical goals have distinct Stop targets.
+  const draw = (
+    workflows: WorkflowRun[],
+    activeChats: ChatSummary[],
+    chats = [idle, listed],
+  ) =>
+    historyView({
+      chats,
+      activeChats,
+      workflows,
+      conversationId: listed.id,
+      workflowLinks: workflows.map((run) => ({
+        runId: run.id,
+        conversationId: listed.id,
+      })),
+      onCancelWorkflow: async () => {},
+      canCancelWorkflow: (run) => run.id === b.id,
+    });
+  const first = draw([a, b], [reply]);
+  expect(first.match(/class="session-title">Pinned session</g)).toHaveLength(1);
+  expect(first).toContain(
+    'aria-label="Open workflow details · Pinned session (2)"',
+  );
+  expect(first).toContain(
+    `aria-label="Cancel workflow — request stop · Patch · ${a.id}" disabled=""`,
+  );
+  expect(first).toContain(
+    `aria-label="Cancel workflow — request stop · Patch · ${b.id}">`,
+  );
+  expect(first.match(/class="lp-count">2</g)).toHaveLength(1); // sessions, not work items
+  // Changing roster order, phase and the session write clock changes no row.
+  const updated = draw(
+    [
+      { ...b, phase: "recovering" },
+      { ...a, phase: "verifying" },
+    ],
+    [{ ...reply, updatedAt: reply.updatedAt + 60_000 }],
+    [listed, idle],
+  );
+  expect(updated).toBe(first);
+  for (const html of [draw([a, b], []), draw([b], []), draw([], [reply])]) {
+    expect(html.indexOf('title="Pinned session"')).toBeLessThan(
+      html.indexOf('title="Earlier discussion"'),
+    );
+    expect(html).toContain(
+      'class="session-item active" aria-current="true" title="Pinned session"><span class="status-dot busy',
+    );
+  }
+  const settled = draw([], []);
+  expect(settled.indexOf('title="Pinned session"')).toBeGreaterThan(
+    settled.indexOf('title="Earlier discussion"'),
+  );
+  expect(settled).not.toMatch(/history-activity-mark|history-workflows/);
+  expect(settled).toContain(
+    'class="session-item active" aria-current="true" title="Pinned session"',
+  );
+});
+it("keeps off-page, archived, unwritten and unlinked activity discoverable without inventing a session summary", () => {
+  const fresh = summary("First send", "starting");
+  const archived = {
+    ...summary("Archived reply", "running"),
+    archived: true as const,
+  };
+  const offPage = id();
+  const linked = workflow("Background delivery"),
+    orphan = workflow("Outside a conversation");
+  const props = {
+    chats: [],
+    activeChats: [fresh, archived],
+    workflows: [linked, orphan],
+    workflowLinks: [{ runId: linked.id, conversationId: offPage }],
+  };
+  const html = historyView(props);
+  for (const title of [
+    fresh.title,
+    archived.title,
+    `Conversation ${offPage}`,
+    linked.goal,
+    orphan.goal,
+  ])
+    expect(html).toContain(`class="session-title">${title}</span>`);
+  expect(html).toContain('class="history-unlinked"');
+  expect(html).toContain(
+    `title="Open workflow details · ${orphan.goal} · ${orphan.id}"`,
+  );
+  expect(html.match(/aria-label="Started in the WebUI"/g)).toHaveLength(2);
+  expect(html).not.toMatch(/aria-label="(Archive|Rename) Conversation/);
+  expect(html).not.toContain("No conversations yet.");
+  const stale = historyView({
+    ...props,
+    workflowError: true,
+    chatActivityKnown: false,
+  });
+  expect(stale).toContain("retained work may still be running");
+  expect(stale).toContain("Conversation activity unavailable.");
+  expect(stale).toContain('aria-label="Stale observation"');
+  expect(stale).toContain('class="lp-count">Not observed');
+  expect(stale).toContain(orphan.goal);
 });
 it("message text has a default field viewer without first expanding inspection", () => {
   const taskId = id(),

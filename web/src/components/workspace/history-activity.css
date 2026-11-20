@@ -1,0 +1,55 @@
+/* The observed activity dot and the selected background have independent
+ * meanings. Neither the elapsed clock nor the workflow phase animates a row. */
+.history-activity-mark {
+  margin: 0;
+}
+.history-entry {
+  position: relative;
+}
+.history-entry .session-item.active::before {
+  content: none;
+}
+.history-entry.has-workflows > .conversation-row {
+  margin-inline-end: 36px;
+}
+.history-workflows > summary,
+.history-unlinked > summary {
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+}
+.history-workflows > summary {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 0;
+  width: 34px;
+  min-height: 28px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.history-workflows > summary::-webkit-details-marker {
+  display: none;
+}
+.history-workflows[open] > summary svg {
+  transform: rotate(90deg);
+}
+.history-unlinked > summary {
+  padding: 6px 8px;
+}
+.history-workflows > summary:hover,
+.history-unlinked > summary:hover {
+  background: var(--bg-elev2);
+  color: var(--text);
+}
+.history-run {
+  margin-inline-start: 14px;
+  border-inline-start: 1px solid var(--border-soft);
+}
+.history-run .conversation-stop {
+  margin-inline-start: 8px;
+}
+.history-workflows {
+  margin: 0;
+}

@@ -141,17 +141,22 @@ export function ConversationRow({
   selected,
   state = "",
   tone = "",
+  activityLabel,
   onOpen,
   row,
   unavailable = "",
   onRename,
   onArchive,
 }: {
-  chat: ChatSummary;
+  // A roster link can identify a conversation outside either history page.
+  // Without a summary there is no observed origin, modification time or action.
+  chat: Pick<ChatSummary, "id" | "title"> &
+    Partial<Pick<ChatSummary, "origin" | "archived" | "updatedAt">>;
   selected: boolean;
-  /** A live workflow's phase or a reply that is not simply completed. */
+  /** Preserve an independently observed reply outcome. */
   state?: string;
   tone?: string;
+  activityLabel?: string;
   onOpen(): void;
   row?: RowState;
   unavailable?: string;
@@ -192,11 +197,14 @@ export function ConversationRow({
   const origin =
     chat.origin === "terminal"
       ? t("Started in the terminal")
-      : t("Started in the WebUI");
+      : chat.origin === "webui"
+        ? t("Started in the WebUI")
+        : undefined;
   const icon = (
     <span
       className="session-icon"
       role="img"
+      aria-hidden={origin ? undefined : true}
       aria-label={origin}
       title={origin}
     >
@@ -296,6 +304,14 @@ export function ConversationRow({
         onClick={onOpen}
         title={chat.title}
       >
+        {activityLabel && (
+          <span
+            className="status-dot busy history-activity-mark"
+            role="img"
+            aria-label={activityLabel}
+            title={activityLabel}
+          />
+        )}
         {icon}
         <span className="session-info">
           <span className="session-title">{chat.title}</span>
@@ -303,15 +319,17 @@ export function ConversationRow({
             <span className={`session-sub session-state ${tone}`}>{state}</span>
           )}
         </span>
-        {chat.updatedAt > 0 && (
-          <time
-            className="session-time"
-            dateTime={new Date(chat.updatedAt).toISOString()}
-            title={new Date(chat.updatedAt).toLocaleString(tag)}
-          >
-            {rowTime(chat.updatedAt, tag)}
-          </time>
-        )}
+        {!activityLabel &&
+          chat.updatedAt !== undefined &&
+          chat.updatedAt > 0 && (
+            <time
+              className="session-time"
+              dateTime={new Date(chat.updatedAt).toISOString()}
+              title={new Date(chat.updatedAt).toLocaleString(tag)}
+            >
+              {rowTime(chat.updatedAt, tag)}
+            </time>
+          )}
       </button>
       {onArchive && (
         <span className="session-actions">
