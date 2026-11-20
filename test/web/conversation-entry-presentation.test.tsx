@@ -1,5 +1,6 @@
 // Controlled workspace renders and the real Send handler. No DOM, owner,
 // browser storage, installation or approval. Geometry belongs to the browser.
+import { Children, isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ChatSummary } from "../../src/service/contracts/workbench.ts";
@@ -7,6 +8,7 @@ import { ServiceClient } from "../../src/service-client.ts";
 import { publicError } from "../../src/service-contract.ts";
 import type { ChatComposerProps } from "../../web/src/components/workspace/ChatComposer";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
+import { LocaleProvider } from "../../web/src/i18n/locale";
 import { currentToasts } from "../../web/src/layout/toasts";
 import { transport } from "./fixtures";
 
@@ -14,6 +16,7 @@ const f = vi.hoisted(() => ({
   cursor: -1,
   cells: [] as { value: unknown }[],
   composer: undefined as ChatComposerProps | undefined,
+  keyDown: undefined as ((event: unknown) => void) | undefined,
   start: undefined as ((text: string) => void) | undefined,
   summary: null as ChatSummary | null | undefined,
   error: "",
@@ -54,7 +57,14 @@ vi.mock("../../web/src/components/workspace/ChatComposer", async (load) => {
     ...actual,
     ChatComposer(props: ChatComposerProps) {
       f.composer = props;
-      return <actual.ChatComposer {...props} />;
+      const form = actual.ChatComposer(props);
+      const field = Children.toArray(form.props.children).find(
+        (el) => isValidElement(el) && el.type === "textarea",
+      );
+      if (!isValidElement<{ onKeyDown(event: unknown): void }>(field))
+        throw Error("missing textarea");
+      f.keyDown = field.props.onKeyDown;
+      return form;
     },
   };
 });
@@ -116,8 +126,8 @@ afterEach(() => {
   f.error = "";
 });
 
-function workspace() {
-  const client = new ServiceClient(transport());
+function workspace(wire = transport()) {
+  const client = new ServiceClient(wire);
   const command = vi.spyOn(client, "workbenchCommand");
   const epoch = crypto.randomUUID();
   vi.spyOn(client, "models").mockResolvedValue({
@@ -143,7 +153,7 @@ function workspace() {
       withheld: 0,
     },
   });
-  function Probe() {
+  function Probe({ actionsReady }: { actionsReady: boolean }) {
     f.cursor = 0;
     try {
       return ChatWorkspace({
@@ -152,6 +162,12 @@ function workspace() {
         workspaceId: "workspace",
         initialCwd: "/fixture",
         enabled: true,
+        actionsReady,
+        viewer: {
+          epoch,
+          attached: (value) => epoch === value,
+          current: () => true,
+        },
         modelAvailability: { status: "ready", epoch, attachmentVersion: 1 },
         onModelChanged: f.no,
         onChanged: f.no,
@@ -161,13 +177,17 @@ function workspace() {
       f.cursor = -1;
     }
   }
-  const draw = () => {
+  const draw = (actionsReady = true, locale: "en" | "zh" = "en") => {
     f.start = undefined;
-    const html = renderToStaticMarkup(<Probe />);
+    const html = renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <Probe actionsReady={actionsReady} />
+      </LocaleProvider>,
+    );
     if (!f.composer) throw Error("composer missing");
     return { html, input: f.composer };
   };
-  return { draw, command };
+  return { draw, command, epoch };
 }
 
 it("only an observed new session offers local starters; they never replace text or attachments", () => {
@@ -275,3 +295,73 @@ it("explains the running reply's image lock and refuses pasted files without cha
   expect(w.draw().input.images).toEqual([photo]);
   expect(w.command).not.toHaveBeenCalled();
 });
+
+it.each(["steer", "queue"])(
+  "%s needs a fresh key after action context returns, even though Stop stayed available",
+  async (mode) => {
+    const w = workspace(
+      transport({
+        workbenchCommand: async (cmd) => ({
+          kind: "ok",
+          value: { kind: "accepted", commandId: cmd.commandId },
+        }),
+      }),
+    );
+    const live = { epoch: w.epoch, commandId: crypto.randomUUID() };
+    f.summary = {
+      id: "chat",
+      title: "Live reply",
+      origin: "webui",
+      leaf: null,
+      updatedAt: 1,
+      status: "running",
+      live,
+    };
+    const text = "some more context";
+    const blocked = () => w.draw(false, "zh");
+    const enter = (altKey: boolean) => {
+      if (!f.keyDown) throw Error("missing Enter handler");
+      const preventDefault = vi.fn();
+      f.keyDown({ key: "Enter", altKey, nativeEvent: {}, preventDefault });
+      expect(preventDefault).toHaveBeenCalledOnce();
+    };
+    const empty = blocked();
+    expect(empty.input.status).toBeUndefined();
+    empty.input.onDraft(text);
+    const reason = "暂时无法插队或排队：当前操作上下文不可用；请重新观察。";
+    for (const alt of [false, true]) {
+      const { input, html } = blocked();
+      expect(input.canStop).toBe(true);
+      expect(input.input?.enabled).toBe(false);
+      expect(input.draft).toBe(text);
+      expect(html).toContain(
+        `class="composer-status" role="status">${reason}</p>`,
+      );
+      expect(html.match(/<textarea\b[^>]*>/)?.[0]).toContain(
+        `aria-description="${reason}"`,
+      );
+      expect(html).not.toContain("composer-split");
+      enter(alt);
+      expect(w.command).not.toHaveBeenCalled();
+    }
+    const restored = w.draw(true, "zh");
+    expect(restored.input.draft).toBe(text);
+    expect(restored.input.canStop).toBe(true);
+    expect(restored.html).toContain("composer-split");
+    expect(restored.html).not.toContain(reason);
+    expect(w.command).not.toHaveBeenCalled();
+    enter(mode === "queue");
+    await vi.waitFor(() => expect(w.draw().input.draft).toBe(""));
+    expect(w.command.mock.calls.map(([c]) => c)).toEqual([
+      {
+        kind: "conversation-input",
+        commandId: expect.any(String),
+        conversationId: "chat",
+        turnId: live.commandId,
+        epoch: w.epoch,
+        mode,
+        text,
+      },
+    ]);
+  },
+);

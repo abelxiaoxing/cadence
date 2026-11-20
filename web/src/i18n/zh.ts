@@ -581,6 +581,7 @@ export const zh = {
   "Steer this reply": "插队到这条回复",
   "Steer: read at the model's next step (Enter)":
     "插队：模型下一步就会读到（Enter）",
+  "Cannot steer or queue: {reason}": "暂时无法插队或排队：{reason}",
   "Enter steers this reply · Alt+Enter queues behind it":
     "Enter 插队 · Alt+Enter 排队",
   "The running reply did not take the message ({reason}). Your text stays here.":

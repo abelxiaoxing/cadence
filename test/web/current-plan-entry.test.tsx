@@ -754,12 +754,14 @@ it.each([2, undefined] as const)(
 const phrase = "按计划实施";
 const discussionText = "Discuss another option.";
 
-function historyFixture(prompt: string) {
+function historyFixture(prompt: string, coldDraft?: string) {
   vi.stubGlobal("sessionStorage", {
     getItem: (key: string) =>
       key === "cadence:prompt-history:workspace"
         ? JSON.stringify([prompt])
-        : null,
+        : key === "cadence:draft:workspace:chat"
+          ? (coldDraft ?? null)
+          : null,
   });
 }
 
@@ -804,12 +806,27 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown"])(
           break;
         case 3:
           expect(edit.draft).toBe(discussionText);
-          f.state = { ...state, revision: 2, proposal: b };
+          if (native) field.change(phrase, restore);
           break;
         case 4:
-          toggleTitle(tree);
+          if (native) {
+            // A is still displayed and actionable: native history can
+            // restore text, but never the source of a plan confirmation.
+            expect(edit.draft).toBe(phrase);
+            const before = currentToasts().at(-1)?.id;
+            field.key("Enter");
+            expect(currentToasts().at(-1)?.id).not.toBe(before);
+            expect(currentToasts().at(-1)?.text).toContain(
+              "Review it from the conversation title",
+            );
+            field.change(discussionText, "insertText", discussionText);
+          }
+          f.state = { ...state, revision: 2, proposal: b };
           break;
         case 5:
+          toggleTitle(tree);
+          break;
+        case 6:
           expect(titleButton(tree)).toMatchObject({
             title: b.plan.goal,
             "aria-expanded": true,
@@ -817,7 +834,7 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown"])(
           if (native) field.change(phrase, restore);
           else field.key(restore);
           break;
-        case 6:
+        case 7:
           expect(edit.canSend).toBe(true);
           expect(edit.draft).toBe(phrase);
           field.key("Enter");
@@ -830,10 +847,10 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown"])(
             field.change(discussionText, "insertText", discussionText);
           f.state = { ...state, revision: 3, enabled: false, proposal: null };
           break;
-        case 7:
+        case 8:
           if (native) field.change(phrase, restore);
           break;
-        case 8:
+        case 9:
           expect(edit.draft).toBe(phrase);
           field.key("Enter");
           expect(currentToasts().at(-1)?.text).toBe(
@@ -859,7 +876,14 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown"])(
   },
 );
 
-it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown", "remove image"])(
+it.each([
+  "historyUndo",
+  "historyRedo",
+  "complete restored prefix",
+  "Escape",
+  "ArrowDown",
+  "remove image",
+])(
   "%s: a phrase typed as ordinary discussion sends once as its original text",
   async (restore) => {
     f.state = {
@@ -889,6 +913,15 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown", "remove image"])(
           field.change(phrase);
         }
         if (step === 2) edit.onRemoveImage(image);
+      } else if (restore === "complete restored prefix") {
+        if (step === 0) field.change("按计划", "insertText", "按计划");
+        if (step === 1)
+          field.change(discussionText, "insertText", discussionText);
+        if (step === 2) field.change("按计划", "historyUndo");
+        if (step === 3) {
+          expect(edit.draft).toBe("按计划");
+          field.change(phrase, "insertText", "实施");
+        }
       } else if (restore === "historyUndo" || restore === "historyRedo") {
         const redo = restore === "historyRedo";
         if (step === 0) field.change(redo ? discussionText : phrase);
@@ -914,7 +947,12 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown", "remove image"])(
           field.key(restore);
         }
       }
-      if (step === (restore === "historyRedo" ? 4 : 3)) {
+      if (
+        step ===
+        (restore === "historyRedo" || restore === "complete restored prefix"
+          ? 4
+          : 3)
+      ) {
         expect(edit.canSend).toBe(true);
         expect(edit.images).toEqual([]);
         expect(edit.draft).toBe(phrase);
@@ -945,7 +983,7 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown", "remove image"])(
   },
 );
 
-it.each(["identical recalled prompt", "mode round trip"])(
+it.each(["identical recalled prompt", "mode round trip", "cold prefix"])(
   "%s: native history cannot borrow an ordinary origin for ambiguous or obsolete text",
   (conflict) => {
     const state = {
@@ -957,7 +995,8 @@ it.each(["identical recalled prompt", "mode round trip"])(
       proposal: null,
     };
     f.state = state;
-    historyFixture(phrase);
+    const cold = conflict === "cold prefix";
+    historyFixture(phrase, cold ? "按计划" : undefined);
     const { client, command, prepare, model } = discussionFixture(
       proposal("").model,
     );
@@ -967,25 +1006,27 @@ it.each(["identical recalled prompt", "mode round trip"])(
         field = useField(edit);
       switch (step) {
         case 0:
-          field.change(phrase);
+          if (cold) expect(edit.draft).toBe("按计划");
+          field.change(phrase, "insertText", phrase);
           break;
         case 1:
           if (conflict === "identical recalled prompt") field.key("ArrowUp");
-          else f.state = { ...state, enabled: true, revision: 2 };
+          else if (!cold) f.state = { ...state, enabled: true, revision: 2 };
           break;
         case 2:
           field.change(discussionText, "insertText", discussionText);
           f.state = { ...state, revision: 3 };
           break;
         case 3:
-          field.change(phrase, "historyUndo");
+          field.change(cold ? "按计划" : phrase, "historyUndo");
           break;
         case 4:
-          field.change(` ${phrase}`, "insertText", " ");
+          if (cold) field.change(phrase, "insertText", "实施");
+          else field.change(` ${phrase}`, "insertText", " ");
           break;
         default:
           expect(edit.canSend).toBe(true);
-          expect(edit.draft).toBe(` ${phrase}`);
+          expect(edit.draft).toBe(cold ? phrase : ` ${phrase}`);
           field.key("Enter");
           expect(currentToasts().at(-1)?.text).toBe(
             "No plan is awaiting approval.",
@@ -1002,6 +1043,87 @@ it.each(["identical recalled prompt", "mode round trip"])(
       expect(model).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
+    }
+  },
+);
+
+it.each([
+  { mode: "steer", change: "poll" },
+  { mode: "queue", change: "poll" },
+  { mode: "steer", change: "commandId" },
+  { mode: "queue", change: "epoch" },
+])(
+  "$mode after native undo and a new $change snapshot belongs only to the original live reply",
+  async ({ mode, change }) => {
+    f.state = {
+      id: "chat",
+      head: "turn-1",
+      enabled: false,
+      revision: 1,
+      runs: [],
+      proposal: null,
+    };
+    const live = { commandId: crypto.randomUUID(), epoch: crypto.randomUUID() };
+    f.live = live;
+    const { client, command, prepare } = discussionFixture(proposal("").model);
+    let submit: (() => void) | undefined;
+    function Probe() {
+      const [step, advance] = useState(0);
+      const edit = composer(usePhraseWorkspace(client, prepare)),
+        field = useField(edit);
+      switch (step) {
+        case 0:
+          field.change(phrase, "insertText", phrase);
+          break;
+        case 1:
+          field.change(discussionText, "insertText", discussionText);
+          f.live =
+            change === "poll"
+              ? { ...live }
+              : { ...live, [change]: crypto.randomUUID() };
+          break;
+        case 2:
+          field.change(phrase, "historyUndo");
+          break;
+        default:
+          expect(edit.draft).toBe(phrase);
+          expect(edit.input?.enabled).toBe(true);
+          submit = () => field.key("Enter", mode === "queue");
+          return null;
+      }
+      advance(step + 1);
+      return null;
+    }
+    try {
+      renderToStaticMarkup(<Probe />);
+      expect(command).not.toHaveBeenCalled();
+      if (!submit) throw Error("missing live input");
+      const before = currentToasts().at(-1)?.id;
+      submit();
+      if (change === "poll") {
+        await vi.waitFor(() =>
+          expect(command.mock.calls.map(([c]) => c)).toEqual([
+            {
+              kind: "conversation-input",
+              commandId: expect.any(String),
+              conversationId: "chat",
+              turnId: live.commandId,
+              epoch: live.epoch,
+              mode,
+              text: phrase,
+            },
+          ]),
+        );
+      } else {
+        expect(currentToasts().at(-1)?.id).not.toBe(before);
+        expect(currentToasts().at(-1)?.text).toBe(
+          "No plan is awaiting approval.",
+        );
+        expect(command).not.toHaveBeenCalled();
+      }
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      f.live = undefined;
     }
   },
 );

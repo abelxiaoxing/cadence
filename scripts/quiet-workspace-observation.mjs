@@ -152,7 +152,15 @@ function specimen(id) {
         kind,
         entries: r.archived
           ? []
-          : [chat("quiet-past", "Earlier material"), chat(background, title)],
+          : [
+              chat("quiet-past", "Earlier material"),
+              {
+                ...chat(background, title),
+                ...(stage?.soloReply && !stage.reply
+                  ? { status: stage.replyResult }
+                  : {}),
+              },
+            ],
         next: null,
       };
     if (kind === "conversation-active") {
@@ -161,7 +169,7 @@ function specimen(id) {
         : [
             {
               ...chat(background, title),
-              status: "running",
+              status: stage.replyResult ?? "running",
               live,
               updatedAt: stage.at,
             },
@@ -174,10 +182,14 @@ function specimen(id) {
               ...chat("quiet-unwritten", "Unwritten reply"),
               status: stage.at === clock ? "starting" : "running",
               leaf: null,
+              ...(stage.cold ? { live: s.unwrittenLive } : {}),
             },
           ];
       if (stage) s.served.add(`${kind}:${stage.name}`);
-      return { kind, entries };
+      return {
+        kind,
+        entries: stage?.soloReply ? entries.slice(0, 1) : entries,
+      };
     }
     if (kind === "workflow-active") {
       const runs = !stage
@@ -264,8 +276,12 @@ function specimen(id) {
               ...head.summary,
               id,
               leaf,
-              title: "Material notes",
-              ...(s.replying ? { status: "running", live } : {}),
+              title: stage?.soloReply ? title : "Material notes",
+              ...(s.replying
+                ? { status: "running", live }
+                : stage?.replyResult
+                  ? { status: stage.replyResult }
+                  : {}),
             }
           : null,
         turns: turns.length,
@@ -287,7 +303,7 @@ function specimen(id) {
         ++s.liveTurnReads;
         page.turn.status = "running";
         page.turn.activity = { kind: "tool", sequence: 1, name: "read" };
-      }
+      } else if (stage?.replyResult) page.turn.status = stage.replyResult;
       return page;
     }
     return undefined;
@@ -386,8 +402,15 @@ function specimen(id) {
 /** Intercept the synthetic owner's or gateway's wire at its loopback origin. GETs not
  * under study use the ordinary optical site. It independently rejects writes;
  * even our only allowed Sends and picker changes are in-memory receipts. */
-async function intercept({ b, site, origin }, s) {
+async function intercept({ b, site, origin, wait }, s) {
   assert.match(origin, /^http:\/\/127\.0\.0\.1:\d+$/);
+  // Each specimen installs a different wire on this origin. Retire the old
+  // polling document before enabling Fetch, not just on go() afterwards:
+  // its cancelled request IDs do not belong to the next handler.
+  await b.send("Page.navigate", { url: "about:blank" });
+  await wait(
+    `location.href === 'about:blank' && document.readyState === 'complete'`,
+  );
   const failures = site.failures.length,
     pending = new Set();
   const handle = async ({ requestId, request }) => {
@@ -530,7 +553,9 @@ async function intercept({ b, site, origin }, s) {
   };
   b.on("Fetch.requestPaused", (event) => {
     const work = handle(event).catch(async (error) => {
-      s.unexpected.push(String(error));
+      s.unexpected.push(
+        `${s.id}: ${event.request.method} ${event.request.url}: ${error}`,
+      );
       await b
         .send("Fetch.failRequest", {
           requestId: event.requestId,
@@ -930,7 +955,7 @@ async function observeBootstrap(p, row) {
 
 // Use the browser's editor and capture the actual input it delivers. An
 // application history prompt or an untrusted input cannot satisfy restore().
-async function nativeEditor({ run, send, wait, ev }) {
+async function nativeEditor({ run, send, wait, ev, press }) {
   await run((sel) => {
     opticalProbe.nativeEdits = [];
     document.querySelector(sel).addEventListener("input", (e) => {
@@ -938,6 +963,7 @@ async function nativeEditor({ run, send, wait, ev }) {
         type: e.inputType,
         text: e.target.value,
         trusted: e.isTrusted,
+        focused: document.activeElement === e.target,
       });
     });
   }, input);
@@ -971,10 +997,23 @@ async function nativeEditor({ run, send, wait, ev }) {
       type,
       text,
       trusted: true,
+      focused: true,
     });
     return event;
   };
-  return { replace, restore };
+  const append = async (suffix, expected) => {
+    await press("End", 35);
+    await send("Input.insertText", { text: suffix });
+    const event = await ev("opticalProbe.nativeEdits.at(-1)");
+    assert.deepEqual(event, {
+      type: "insertText",
+      text: expected,
+      trusted: true,
+      focused: true,
+    });
+    return event;
+  };
+  return { replace, restore, append };
 }
 
 // A new direct session with a known ordinary mode throughout. The prior
@@ -998,8 +1037,13 @@ async function observeOrdinaryPhrase(p, row, paths) {
         await pasteFixtureImage(run);
         await wait(`document.querySelector('.chat-image-draft img')`);
       }
-      let restored;
-      if (via === "historyUndo" || via === "historyRedo") {
+      let restored, continued;
+      if (via === "complete restored prefix") {
+        await editor.replace("按计划");
+        await editor.replace(discussion);
+        restored = await editor.restore(false, "按计划");
+        continued = await editor.append("实施", phrase);
+      } else if (via === "historyUndo" || via === "historyRedo") {
         const redo = via === "historyRedo";
         await editor.replace(redo ? discussion : phrase);
         await editor.replace(redo ? phrase : discussion);
@@ -1027,6 +1071,7 @@ async function observeOrdinaryPhrase(p, row, paths) {
       await until(() => s.pending, `ordinary send after ${via}`);
       const { command, finish } = s.pending;
       assert.equal(command.kind, "send");
+      assert.equal(command.conversationId, s.id);
       assert.equal(command.text, phrase);
       assert.equal(command.images?.length ?? 0, 0);
       s.turns.push({
@@ -1047,15 +1092,20 @@ async function observeOrdinaryPhrase(p, row, paths) {
       row.ordinaryPhrase.push({
         via,
         restored,
+        continued,
         text: command.text,
         commands,
+        focusedAfterReceipt: await ev(
+          `document.activeElement.matches(${q(input)})`,
+        ),
         mode: await ev(`document.querySelector('.mode-toggle.off').innerText`),
       });
     }
     assert.deepEqual(
       s.commands.map((c) => c.kind),
-      ["send", "send"],
+      paths.map(() => "send"),
     );
+    assert.ok(row.ordinaryPhrase.every((trial) => trial.focusedAfterReceipt));
   } finally {
     await stop();
   }
@@ -1654,6 +1704,7 @@ function historyFrame(title) {
       order: rows.map((e) => e.title),
       text: button.innerText,
       working: mark?.getAttribute("aria-label"),
+      result: button.querySelector(".session-state")?.innerText ?? "",
       markAnimations: mark?.getAnimations().length,
       rect: rect.toJSON(),
       hit: button.contains(
@@ -1668,6 +1719,185 @@ function historyFrame(title) {
     };
   }, "background conversation");
 }
+// One ordinary reply, exact turn + epoch throughout. No linked workflow or
+// gateway discovery can mask an early release of this direct owner's row.
+async function observeDirectReply(p, row) {
+  const { go, click, wait, run, ev, press, observeButton } = p;
+  const s = specimen(background);
+  s.firstHead.resolve();
+  s.turns.push({
+    kind: "send",
+    commandId: s.live.commandId,
+    text: "Describe the material.",
+    answer: "Reading the notes.",
+    entry: "00000012",
+  });
+  s.replying = true;
+  s.roster = {
+    name: "solo reply",
+    soloReply: true,
+    at: clock,
+    count: 0,
+    reply: true,
+  };
+  const stop = await intercept(p, s);
+  try {
+    const stopButton = '.chat-composer button[aria-label="Stop response"]';
+    await go(`/app#chat=${s.id}`, input);
+    await wait(
+      `document.querySelector('${stopButton}:enabled') && document.querySelector('.mode-toggle.off')`,
+    );
+    const editor = await nativeEditor(p);
+    const reason =
+      "Cannot steer or queue: Current action context unavailable; observe again.";
+    const frame = () =>
+      run(
+        (sel, stop) =>
+          opticalProbe.stableFrames(() => {
+            const field = document.querySelector(sel),
+              status = document.querySelector(".composer-status");
+            return {
+              draft: field.value,
+              focus: field === document.activeElement,
+              stop: !!document.querySelector(`${stop}:enabled`),
+              steer: !!document.querySelector(".composer-steer:enabled"),
+              queue: !!document.querySelector(".composer-queue:enabled"),
+              reason: status?.innerText ?? null,
+              description: field.getAttribute("aria-description"),
+            };
+          }, "live input"),
+        input,
+        stopButton,
+      );
+    row.directReply = { id: s.id, live: s.live, inputs: [] };
+    for (const mode of ["steer", "queue"]) {
+      await click(input);
+      await editor.replace(phrase);
+      await editor.replace(discussion);
+      const restored = await editor.restore(false, phrase);
+      await wait(`document.querySelector('.composer-steer:enabled')`);
+      if (mode === "steer") {
+        // An explicit readonly refresh retires action context until the
+        // workspace GET returns. The allocation and its safety Stop survive.
+        s.firstWorkspace = Promise.withResolvers();
+        await click(".more-menu > summary");
+        await click('.more-menu [aria-label="Observe current state"]');
+        await until(() => s.workspaceRequested, "held current-state read");
+        await wait(
+          `document.querySelector('${stopButton}:enabled') && document.querySelector('.composer-status')?.innerText===${q(reason)}`,
+        );
+        await click(input);
+        const blocked = [];
+        for (const modifier of [0, 1]) {
+          await press("Enter", 13, modifier);
+          const held = await frame();
+          assert.deepEqual(held, {
+            draft: phrase,
+            focus: true,
+            stop: true,
+            steer: false,
+            queue: false,
+            reason,
+            description: reason,
+          });
+          assert.deepEqual(s.commands, []);
+          blocked.push({
+            key: modifier ? "Alt+Enter" : "Enter",
+            ...held,
+            commands: [...s.commands],
+          });
+        }
+        s.firstWorkspace.resolve();
+        await wait(`document.querySelector('.composer-queue:enabled')`);
+        const recovered = await frame();
+        assert.deepEqual(recovered, {
+          draft: phrase,
+          focus: true,
+          stop: true,
+          steer: true,
+          queue: true,
+          reason: null,
+          description: null,
+        });
+        assert.deepEqual(s.commands, []);
+        row.directReply.context = {
+          blocked,
+          recovered,
+          commandsBeforeFreshKey: [...s.commands],
+        };
+      }
+      s.permit = mode;
+      await press("Enter", 13, mode === "queue" ? 1 : 0);
+      await until(() => s.pending, `explicit ${mode} of restored text`);
+      const { command, finish } = s.pending;
+      assert.deepEqual(command, {
+        kind: "conversation-input",
+        commandId: command.commandId,
+        conversationId: s.id,
+        turnId: s.live.commandId,
+        epoch: s.live.epoch,
+        text: phrase,
+        mode,
+      });
+      finish(ok({ kind: "accepted", commandId: command.commandId }));
+      s.pending = null;
+      await wait(
+        `document.activeElement.matches(${q(input)}) && !document.activeElement.value && document.querySelector('${stopButton}:enabled')`,
+      );
+      row.directReply.inputs.push({ restored, command, after: await frame() });
+    }
+    const button = `.conversation-row > button[title="${title}"]`;
+    if (
+      await ev(
+        `document.querySelector('.navigation-toggle')?.getAttribute('aria-expanded')==='false'`,
+      )
+    )
+      await click(".navigation-toggle");
+    assert.ok(
+      (await observeButton("single direct reply", button)).keyboardFocus,
+    );
+    const active = await run(historyFrame, title);
+    assert.deepEqual(active.order, [title, "Earlier material"]);
+    assert.ok(
+      active.focused && !active.inHistory && active.working === "Working",
+    );
+    assert.equal(active.linked, "0");
+    assert.equal(active.result, "");
+    s.replying = false;
+    s.roster = { ...s.roster, name: "result recorded", replyResult: "failed" };
+    await wait(
+      `document.querySelector(${q(`${button} .session-state.failed`)})`,
+    );
+    const settling = await run(historyFrame, title);
+    assert.deepEqual(settling.order, active.order);
+    assert.ok(
+      settling.focused && !settling.inHistory && settling.working === "Working",
+    );
+    assert.equal(settling.result, "failed");
+    assert.equal(settling.linked, "0");
+    s.roster = { ...s.roster, name: "cleanup finished", reply: false };
+    await wait(
+      `document.querySelector(${q(`.task-list ${button} .session-state.failed`)})`,
+    );
+    const released = await run(historyFrame, title);
+    assert.deepEqual(released.order, ["Earlier material", title]);
+    assert.ok(released.inHistory && !released.working);
+    assert.equal(released.result, "failed");
+    row.directReply.history = { active, settling, released };
+    row.directReply.commands = [...s.commands];
+    assert.deepEqual(
+      s.commands,
+      row.directReply.inputs.map(({ command: { kind, commandId } }) => ({
+        kind,
+        commandId,
+      })),
+    );
+    assert.notEqual(s.commands[0].commandId, s.commands[1].commandId);
+  } finally {
+    await stop();
+  }
+}
+
 async function observeHistory(p, s, row, shot) {
   const { wait, click, ev, observeButton, run } = p;
   const button = `.conversation-row > button[title="${title}"]`,
@@ -1952,6 +2182,16 @@ async function observeTerminalHistory(p, row, shot) {
     phase: "research",
     observedAt: clock,
   }));
+  // Two default-model owner slots have no session link. Match just one to
+  // an unwritten Pi session when the viewer learns its exact turn identity.
+  const turns = [randomUUID(), randomUUID()].map((id) => ({
+    ...orphans[0],
+    id,
+    source: "turn",
+    phase: "turn",
+  }));
+  s.unwrittenLive = { epoch, commandId: turns[0].id };
+  const unattributed = [...orphans, ...turns];
   // These are the SAME identities the two held viewer rosters will later
   // return. A session match alone would neither deduplicate nor grant Stop.
   const shared = [s.live.commandId, ...s.runIds.slice(0, 2)].map((id, i) => ({
@@ -1974,7 +2214,7 @@ async function observeTerminalHistory(p, row, shot) {
         freshness: stage.partial ? "unknown" : "current",
       }));
       const local = stage.cold
-        ? [...shared, ...orphans].map((report) => ({
+        ? [...shared, ...unattributed].map((report) => ({
             ...report,
             observedAt: stage.at,
             phase: stage.reordered ? stage.phase : report.phase,
@@ -2118,6 +2358,7 @@ async function observeTerminalHistory(p, row, shot) {
             summary: details.querySelector("summary").innerText,
             ids: [...details.querySelectorAll("code")].map((e) => ({
               id: e.innerText,
+              text: e.closest(".history-run").innerText,
               visible: e.checkVisibility(),
               rect: e.getBoundingClientRect().toJSON(),
             })),
@@ -2210,10 +2451,29 @@ async function observeTerminalHistory(p, row, shot) {
       "discovery ahead of first project observation",
     );
     const cold = await orphanFrame();
-    const ids = orphans.map((a) => a.id).sort();
-    const readonly = (f) => {
-      assert.match(f.summary, /Unattributed work · 2/);
-      assert.deepEqual(f.ids.map((e) => e.id).sort(), ids);
+    const ids = unattributed.map((a) => a.id).sort();
+    const assertReports = (f, expected, reordered) => {
+      assert.deepEqual(
+        f.ids.map((e) => e.id).sort(),
+        expected.map((a) => a.id).sort(),
+      );
+      for (const { id, source, phase } of expected) {
+        const { text } = f.ids.find((e) => e.id === id);
+        assert.ok(
+          text.includes(
+            `${source === "turn" ? "Owner turn" : "Owner workflow"} · ${id}`,
+          ),
+        );
+        assert.ok(
+          text.includes(
+            `${reordered ? "verifying" : phase} · Current observation · ${cwd}`,
+          ),
+        );
+      }
+    };
+    const readonly = (f, reordered = false) => {
+      assert.equal(f.summary.trim(), "Unattributed work · 4");
+      assertReports(f, unattributed, reordered);
       assert.ok(
         f.ids.every((e) => e.visible && e.rect.width > 0 && e.rect.height > 0),
       );
@@ -2261,7 +2521,7 @@ async function observeTerminalHistory(p, row, shot) {
     s.firstProject.resolve();
     await until(() => s.heldKinds.size === 2, "viewer awaiting cold rosters");
     const awaitingRoster = await orphanFrame();
-    readonly(awaitingRoster);
+    readonly(awaitingRoster, true);
     const awaitingSession = await sessionFrame();
     assertDiscoverySession(awaitingSession);
     s.holdRosters.resolve();
@@ -2272,11 +2532,15 @@ async function observeTerminalHistory(p, row, shot) {
       `document.querySelector(${q(`${unlinked} .conversation-stop:enabled`)}) && document.querySelector('button[title="Unwritten reply"]')`,
     );
     const joined = await orphanFrame();
-    assert.deepEqual(
-      joined.ids.map((e) => e.id),
-      [orphans[1].id],
+    assertReports(joined, [orphans[1], turns[1]], true);
+    assert.equal(joined.summary.trim(), "Unattributed work · 3");
+    const matchedTurn = await run(historyFrame, "Unwritten reply");
+    assert.equal(
+      matchedTurn.order.filter((t) => t === "Unwritten reply").length,
+      1,
     );
-    assert.match(joined.summary, /Unattributed work · 2/);
+    assert.ok(!matchedTurn.inHistory && matchedTurn.working === "Working");
+    assert.equal(matchedTurn.linked, "0");
     assert.deepEqual(joined.actions, [
       {
         label: `Open workflow details · Unlinked specimen · ${orphans[0].id}`,
@@ -2319,6 +2583,9 @@ async function observeTerminalHistory(p, row, shot) {
     assert.ok(rosterSession.stops.every((e) => !e.disabled));
     row.coldDiscovery = {
       ids,
+      reports: unattributed,
+      viewerTurn: s.unwrittenLive,
+      matchedTurn,
       cold,
       primary,
       reordered,
@@ -2445,6 +2712,8 @@ export async function observeQuietWorkspace(p) {
   await observeBootstrap(p, row);
   await observeOrdinaryPhrase(p, row, ["park and restore", "remove image"]);
   await observeOrdinaryPhrase(p, row, ["historyUndo", "historyRedo"]);
+  await observeOrdinaryPhrase(p, row, ["complete restored prefix"]);
+  await observeDirectReply(p, row);
   const stop = await intercept(p, s);
   try {
     await navigate();
