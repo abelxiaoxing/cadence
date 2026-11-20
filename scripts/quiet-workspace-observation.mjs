@@ -1421,6 +1421,48 @@ async function observeDisconnect(p, s, row) {
   );
 }
 
+// aria-expanded changes at the start of the compact drawer's transition.
+// A desktop navigation pane is docked and never needs the overlay's open class.
+function terminalDrawerFrame(selector) {
+  const pane = document.querySelector(".panel-drawer.drawer-left");
+  const rect = pane.getBoundingClientRect(),
+    style = getComputedStyle(pane),
+    offset = new DOMMatrixReadOnly(
+      style.transform === "none" ? undefined : style.transform,
+    ).m41,
+    open = pane.matches(".open");
+  const frame = {
+    rect: rect.toJSON(),
+    offset,
+    open,
+    inert: pane.inert,
+    ready:
+      !pane.inert &&
+      style.visibility === "visible" &&
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.left >= 0 &&
+      rect.right <= innerWidth &&
+      offset === 0 &&
+      (!matchMedia("(max-width: 900px)").matches || open),
+  };
+  if (selector) {
+    const button = document.querySelector(selector)?.getBoundingClientRect();
+    const hit =
+      button &&
+      document.elementFromPoint(
+        button.left + button.width / 2,
+        button.top + button.height / 2,
+      );
+    Object.assign(frame, {
+      selector,
+      button: button?.toJSON() ?? null,
+      hit: hit && [hit.localName, hit.id, hit.getAttribute("class")],
+    });
+  }
+  return frame;
+}
+
 // Unlike direct-owner rosters, native work is observed through the gateway's
 // independent activity GET. Its select POST binds a reader, never a worker.
 async function observeTerminalHistory(p, row, shot) {
@@ -1473,15 +1515,31 @@ async function observeTerminalHistory(p, row, shot) {
   s.gateway = gateway;
   const root = `.history-entry:has(.conversation-row > button[title="${title}"])`,
     button = `${root} .conversation-row > button.session-item`,
-    outside = 'section[aria-label="Active Pi work"]',
-    drawer = async () => {
-      if (
-        await ev(
-          `document.querySelector('.navigation-toggle')?.getAttribute('aria-expanded')==='false'`,
-        )
+    outside = 'section[aria-label="Active Pi work"]';
+  const drawer = async () => {
+    if (
+      await ev(
+        `document.querySelector('.navigation-toggle')?.getAttribute('aria-expanded')==='false'`,
       )
-        await click(".navigation-toggle");
-    };
+    )
+      await click(".navigation-toggle");
+    await wait(`(${terminalDrawerFrame})().ready`);
+    const frame = await ev(
+      `opticalProbe.stableFrames(${terminalDrawerFrame}, 'terminal navigation')`,
+    );
+    assert.ok(
+      frame.ready,
+      `Drawer did not stay open: ${JSON.stringify(frame)}`,
+    );
+  };
+  const clickEntry = async (selector) => {
+    try {
+      await click(selector);
+    } catch (error) {
+      row.terminalHitFailure = await run(terminalDrawerFrame, selector);
+      throw error;
+    }
+  };
   row.terminalHistory = [];
   const stage = (
     name,
@@ -1594,7 +1652,7 @@ async function observeTerminalHistory(p, row, shot) {
         local &&
         !(await ev(`document.querySelector('${root} details').open`))
       )
-        await click(`${root} summary`);
+        await clickEntry(`${root} summary`);
       const selector = local
         ? `${root} .history-terminal button[title*="${terminal.leaf}"]`
         : `${outside} button`;
@@ -1612,7 +1670,7 @@ async function observeTerminalHistory(p, row, shot) {
       );
       if (terminal === a) await shot("terminal-branches");
       gateway.select = terminal.cwd;
-      await click(selector);
+      await clickEntry(selector);
       const target = `/app?project=${local ? project : otherProject}#chat=${background}&activity=1&leaf=${terminal.leaf}`;
       await wait(
         `location.pathname + location.search + location.hash === ${q(target)}`,
