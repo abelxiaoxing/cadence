@@ -1263,3 +1263,9 @@ The release also includes the queued delivery context and coordinator diagnostic
 
 The WebUI Subagents dock follows the open Pi conversation rather than every workflow in the project.
 The regression covers concurrent conversations, copied history IDs, missing attribution and a poll that returns after navigation.
+
+## 2.2.4 release candidate
+
+Source commit `61df9d0` keeps the requesting tab connected to its upgrade across temporary proxy errors and reloads it once the target version answers.
+Routine workspace polls keep confirmed controls usable unless the server withdraws access.
+The release also updates the light and dark WebUI themes.
