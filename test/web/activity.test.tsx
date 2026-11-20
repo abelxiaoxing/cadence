@@ -5,6 +5,7 @@ import type {
   Activity,
   ActivityDiscovery,
 } from "../../src/service/contracts/activity.ts";
+import { ServiceClient } from "../../src/service-client.ts";
 import { App } from "../../web/src/App";
 import { observeActivity, staleActivity } from "../../web/src/client/activity";
 import {
@@ -16,7 +17,10 @@ import {
   ActivityList,
   activityKey,
 } from "../../web/src/components/workspace/ActivityList";
+import { TaskSidebar } from "../../web/src/components/workspace/TaskSidebar";
 import { LocaleProvider } from "../../web/src/i18n/locale";
+
+import { transport } from "./fixtures";
 
 const epoch = randomUUID();
 function activity(overrides: Partial<Activity> = {}): Activity {
@@ -210,7 +214,6 @@ it("requires shared history and the matching kind of producer identity to group 
   const second = { ...terminal, instance: randomUUID() };
   const raw = [
     { ...terminal, instance: null, epoch },
-    { ...terminal, instance: randomUUID(), history: "unavailable" as const },
     { ...terminal, source: "workflow" as const }, // Instance, but no epoch.
   ];
   const html = renderToStaticMarkup(
@@ -230,7 +233,89 @@ it("requires shared history and the matching kind of producer identity to group 
   expect(html.match(/class="session-title">pi-session</g)).toHaveLength(
     raw.length,
   );
-  expect(html).toContain("History configuration differs");
+});
+it("keeps same-session terminals with unshared history in exact, read-only details before and after history loads", () => {
+  const a = activity({
+    instance: "instance-one",
+    id: "activity-one",
+    history: "unavailable",
+  });
+  const b = {
+    ...a,
+    instance: "instance-two",
+    id: "activity-two",
+    leaf: "abcd1234",
+  };
+  const onOpen = vi.fn(),
+    command = vi.fn();
+  const client = new ServiceClient(transport({ workbenchCommand: command }));
+  const draw = (loaded: boolean, reports: Activity[]) => {
+    const props = {
+      project: a.cwd,
+      value: discovery(reports),
+      error: "",
+      opening: false,
+      onOpen,
+    };
+    return renderToStaticMarkup(
+      loaded ? (
+        <TaskSidebar
+          client={client}
+          taskId={null}
+          scope={null}
+          runs={[]}
+          canCancel={false}
+          canceling={new Set()}
+          onCancel={command}
+          onTask={onOpen}
+          onScope={onOpen}
+          onConversation={onOpen}
+          discovery={props}
+          chats={[
+            {
+              id: "pi-session",
+              title: "Local namesake",
+              origin: "webui",
+              status: "completed",
+              leaf: null,
+              updatedAt: 1000,
+            },
+          ]}
+        />
+      ) : (
+        <ActivityList {...props} awaitingHistory />
+      ),
+    );
+  };
+  for (const loaded of [false, true]) {
+    const html = draw(loaded, [a, b, a]);
+    const details = (source: string) =>
+      source.match(/<details class="history-unlinked">(.*?)<\/details>/s)?.[1];
+    expect(details(draw(loaded, [b, b, a]))).toBe(details(html));
+    expect(details(html)).toContain("Unattributed work · 2");
+    expect(details(html)).not.toMatch(/<button|<a |Stop|Cancel/);
+    const rows =
+      details(html)?.match(/<p class="panel-hint"[^>]*>.*?<\/p>/gs) ?? [];
+    expect(rows).toHaveLength(2);
+    for (const report of [a, b]) {
+      const row = rows.find((r) =>
+        r.includes(`<code>instance: ${report.instance}</code>`),
+      );
+      expect(row).toContain(`<code>id: ${report.id}</code>`);
+      expect(row).toContain(`<code>leaf: ${report.leaf}</code>`);
+      expect(row).toContain(
+        "History configuration differs. Activity remains observe-only.",
+      );
+    }
+    expect(html).not.toContain("history-activity-mark");
+    expect(html).not.toContain('title="Conversation pi-session"');
+    if (loaded)
+      expect(html.split('class="task-list"')[1]).toContain(
+        'title="Local namesake"',
+      );
+  }
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(command).not.toHaveBeenCalled();
 });
 it("partial empty observation never claims everything finished; Chinese text and unattributed rows stay explicit", () => {
   const value = {

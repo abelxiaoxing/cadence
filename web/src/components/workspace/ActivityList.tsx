@@ -35,6 +35,7 @@ export function activityKey(
 export function groupProjectActivity(
   project: ActivityProject | undefined,
   seen: Set<string>,
+  surface: "history" | "discovery" = "history",
 ) {
   const sessions = new Map<string, Activity[]>();
   const unlinked: Activity[] = [];
@@ -42,7 +43,17 @@ export function groupProjectActivity(
     for (const a of project.activities) {
       const key = activityKey(project.path, a);
       if (seen.has(key)) continue;
-      if (a.source !== "terminal" && a.sessionId === null) unlinked.push(a);
+      // An incompatible reader scope belongs to discovery, even when the
+      // local history has a session of exactly the same name.
+      if (
+        a.source === "terminal" &&
+        a.instance &&
+        a.history === "unavailable"
+      ) {
+        if (surface !== "discovery") continue;
+        unlinked.push(a);
+      } else if (a.source !== "terminal" && a.sessionId === null)
+        unlinked.push(a);
       else if (
         a.sessionId &&
         a.history === "shared" &&
@@ -116,7 +127,28 @@ export function ActivityRow({
     activity.source === "terminal" ? activity.instance : activity.epoch;
   // Discovery carries identity and location, not access to this owner's run.
   const item =
-    grouped && !activity.sessionId ? (
+    grouped &&
+    activity.source === "terminal" &&
+    activity.history === "unavailable" ? (
+      <p className="panel-hint" style={{ overflowWrap: "anywhere" }}>
+        {source} · {tx(activity.phase)} · {fresh}
+        <br />
+        {activity.cwd}
+        {activity.sessionId && ` · ${activity.sessionId}`}
+        <br />
+        <code>instance: {activity.instance}</code>
+        <br />
+        <code>id: {activity.id}</code>
+        {activity.leaf && (
+          <>
+            <br />
+            <code>leaf: {activity.leaf}</code>
+          </>
+        )}
+        <br />
+        {t("History configuration differs. Activity remains observe-only.")}
+      </p>
+    ) : grouped && !activity.sessionId ? (
       <p className="panel-hint">
         {source} · <code>{activity.id}</code>
         <br />
@@ -195,8 +227,9 @@ export function ActivityList({
   const visible = value?.projects
     .map((p) => {
       const { sessions, unlinked } = groupProjectActivity(
-        awaitingHistory && p.path === project ? p : undefined,
+        p.path === project ? p : undefined,
         seen,
+        "discovery",
       );
       const rows = p.activities.filter(
         (a) => !seen.has(activityKey(p.path, a)),

@@ -224,6 +224,14 @@ export interface ChatDiagnostics {
   runs?: string;
   retry(): void;
 }
+function liveInputOutcome(
+  reply: Awaited<ReturnType<ServiceClient["workbenchCommand"]>>,
+) {
+  // ServiceClient correlates commandId; only the input receipt settles this action.
+  return reply.kind === "ok" && reply.value.kind !== "accepted"
+    ? { kind: "unknown" as const, code: "unavailable" }
+    : inputOutcome(reply);
+}
 type Draft = { text: string; source?: string | symbol };
 type DraftEntry = Draft & { parked?: Draft };
 // Native history exposes the restored text, not which edit it came from.
@@ -251,7 +259,10 @@ function phraseFragment(key: string) {
 const MAX_ORIGIN_KEYS = 512;
 const MAX_ORIGIN_TEXT = 32;
 type PhraseOrigins = ReadonlyMap<string, symbol | null>;
-function rememberPhrase(origins: PhraseOrigins, entry: Draft): PhraseOrigins {
+function rememberPhrase(
+  origins: PhraseOrigins,
+  entry: DraftEntry,
+): PhraseOrigins {
   const key = entry.text.trim();
   if (!key || key.length > MAX_ORIGIN_TEXT) return origins;
   const previous = origins.get(key);
@@ -262,6 +273,8 @@ function rememberPhrase(origins: PhraseOrigins, entry: Draft): PhraseOrigins {
   )
     return origins;
   const source =
+    // Native undo doesn't tell us that the user selected a history entry.
+    !entry.parked &&
     typeof entry.source === "symbol" &&
     (previous === undefined || previous === entry.source)
       ? entry.source
@@ -372,7 +385,7 @@ export function ChatWorkspace({
   const [draftKey] = useState(() =>
     selectDraftKey(workspaceId, id, legacyWorkspaceId, ...directoryNamespaces),
   );
-  // Only text survives storage, recall by the workspace, and branch edits.
+  // Only text survives draft storage and branch edits.
   // A plan confirmation gets its source from an explicit composer edit below.
   const [{ entry }, updateEditor] = useState<{
     entry: DraftEntry;
@@ -920,8 +933,15 @@ export function ChatWorkspace({
       : undefined);
   const editDraft: ChatComposerProps["onDraft"] = (text, origin = "edit") => {
     if (origin === "history") {
-      // Keep the entry we left in memory; the displayed history prompt is text only.
-      setEntry((prior) => ({ text, parked: prior.parked ?? prior }));
+      // Up selects a message this tab actually sent. It may be discussed
+      // again, never used as plan confirmation. Down/Escape return to the
+      // separate draft, even when its spelling is identical.
+      setEntry((prior) => ({
+        text,
+        source:
+          discussionPath === "chat" || liveRun ? discussionSource : undefined,
+        parked: prior.parked ?? prior,
+      }));
     } else if (origin === "restore") {
       setEntry((prior) =>
         prior.parked?.text === text ? prior.parked : { text },
@@ -2021,10 +2041,7 @@ export function ChatWorkspace({
     const text = draft;
     const command = inputCommand(id, liveRun, mode, text);
     const reply = await client.workbenchCommand(command);
-    const outcome =
-      reply.kind === "ok" && reply.value.kind !== "accepted"
-        ? { kind: "unknown" as const, code: "unavailable" }
-        : inputOutcome(reply);
+    const outcome = liveInputOutcome(reply);
     if (!alive.current) return;
     setBusy(false);
     if (outcome.kind === "accepted") {
@@ -2054,18 +2071,23 @@ export function ChatWorkspace({
     )
       return;
     setBusy(true);
-    const outcome = inputOutcome(
-      await client.workbenchCommand(
-        withdrawCommand(id, liveRun, waiting.commandId),
-      ),
+    const whole =
+      sentInputs.current.get(waiting.commandId) ??
+      (wholePendingText(waiting.text) ? waiting.text : undefined);
+    const reply = await client.workbenchCommand(
+      withdrawCommand(id, liveRun, waiting.commandId),
     );
+    const outcome = liveInputOutcome(reply);
     if (!alive.current) return;
     setBusy(false);
     if (outcome.kind === "accepted") {
-      const whole = sentInputs.current.get(waiting.commandId) ?? waiting.text;
       sentInputs.current.delete(waiting.commandId);
-      // Never over text typed since.
-      if (recall) setDraft((current) => (current.trim() ? current : whole));
+      // The source belongs to the live reply we withdrew from, not the one
+      // on screen when its receipt arrives. Never overwrite a newer draft.
+      if (recall && whole !== undefined && !renderedBranch.aborted)
+        setEntry((prior) =>
+          prior.text === "" ? { text: whole, source: discussionSource } : prior,
+        );
     } else if (outcome.kind === "refused")
       refuse(
         outcome.code === "conflict"
