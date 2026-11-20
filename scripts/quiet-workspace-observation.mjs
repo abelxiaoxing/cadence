@@ -18,6 +18,7 @@ import {
   lockedReply,
   readRecord,
   storeId,
+  task,
 } from "./optical-fixtures/records.mjs";
 
 const card = "[data-plan-proposal]",
@@ -65,6 +66,8 @@ function specimen(id) {
     proposal: null,
     roster: null,
     served: new Set(),
+    sessions: new Set(),
+    heldKinds: new Set(),
     unknown: false,
     makeProposal(replacement = false) {
       const base = readRecord({ kind: "cadence-conversation", id: "design" })
@@ -156,7 +159,7 @@ function specimen(id) {
             },
             {
               ...chat("quiet-unwritten", "Unwritten reply"),
-              status: "starting",
+              status: stage.at === clock ? "starting" : "running",
               leaf: null,
             },
           ];
@@ -204,9 +207,10 @@ function specimen(id) {
       return {
         kind,
         runs,
-        links: runs
-          .slice(0, 2)
-          .map((run) => ({ runId: run.id, conversationId: background })),
+        links: runs.slice(0, 2).map((run) => ({
+          runId: run.id,
+          conversationId: stage.offPage ? "off-page" : background,
+        })),
       };
     }
     if ((r.id ?? r.location?.id) !== id) return;
@@ -241,7 +245,13 @@ function specimen(id) {
         ...head,
         leaf,
         summary: leaf
-          ? { ...head.summary, id, leaf, title: "Material notes" }
+          ? {
+              ...head.summary,
+              id,
+              leaf,
+              title: "Material notes",
+              ...(s.replying ? { status: "running", live } : {}),
+            }
           : null,
         turns: turns.length,
         branches: leaf ? 1 : 0,
@@ -356,6 +366,8 @@ async function intercept({ b, site, origin }, s) {
         ([name]) => name.toLowerCase() === "x-cadence-attachment",
       )?.[1];
       assert.ok(attachment);
+      s.sessions.add(attachment);
+      if (s.holdSession) await s.holdSession.promise;
       extra = [{ name: "x-cadence-attachment", value: attachment }];
       body = ok({
         build: { assets: site.build, contractHash: site.build.contractHash },
@@ -367,10 +379,26 @@ async function intercept({ b, site, origin }, s) {
         csrf,
         capabilities: { actions: true, manualChecks: false, history: true },
       });
+    } else if (
+      request.method === "GET" &&
+      path === "/api/v1/workspace" &&
+      s.firstWorkspace
+    ) {
+      s.workspaceRequested = true;
+      await s.firstWorkspace.promise;
     } else if (request.method === "GET" && path === "/api/v1/workbench/read") {
       const r = JSON.parse(url.searchParams.get("request"));
-      const v = await s.read(r);
       if (
+        s.holdRosters &&
+        ["conversation-active", "workflow-active"].includes(r.kind)
+      ) {
+        s.heldKinds.add(r.kind);
+        await s.holdRosters.promise;
+      }
+      const v = await s.read(r);
+      if (s.deny && r.kind === "workflow-active") {
+        body = { kind: "error", error: publicError("forbidden") };
+      } else if (
         s.roster?.stale &&
         ["conversation-active", "workflow-active"].includes(r.kind)
       ) {
@@ -418,6 +446,9 @@ async function intercept({ b, site, origin }, s) {
     patterns: [{ urlPattern: `${origin}/*`, resourceType: "Fetch" }],
   });
   return async () => {
+    s.firstWorkspace?.resolve();
+    s.holdSession?.resolve();
+    s.holdRosters?.resolve();
     s.firstHead.resolve();
     s.pending?.finish(refused());
     await Promise.all([...pending]);
@@ -520,6 +551,105 @@ function watchFeedback() {
   });
   opticalProbe.endFeedback = () => observer.disconnect();
 }
+async function pasteFixtureImage(run) {
+  // A fabricated File is pasted through the ordinary paste listener. No
+  // filesystem picker, profile or system clipboard is touched.
+  await run(
+    (sel, png) => {
+      const dt = new DataTransfer();
+      dt.items.add(
+        new File(
+          [Uint8Array.from(atob(png), (c) => c.charCodeAt(0))],
+          "facet.png",
+          { type: "image/png" },
+        ),
+      );
+      document.querySelector(sel).dispatchEvent(
+        new ClipboardEvent("paste", {
+          clipboardData: dt,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    },
+    input,
+    PNG,
+  );
+}
+
+// Direct entry: the first workspace GET (not just the head) is still in
+// flight. Drive the mounted editor and its actual paste and receipt paths.
+async function observeBootstrap(p, row) {
+  const { go, run, ev, click, send, wait, press } = p;
+  const s = specimen(`bootstrap-${randomUUID()}`);
+  s.firstWorkspace = Promise.withResolvers();
+  s.firstHead.resolve();
+  const stop = await intercept(p, s);
+  try {
+    await go(`/app#chat=${s.id}`, input);
+    await until(() => s.workspaceRequested, "held opening workspace");
+    await ev(`opticalProbe.editor=document.querySelector(${q(input)});void 0`);
+    const text = "Draft before workspace";
+    await click(input);
+    await send("Input.insertText", { text });
+    await pasteFixtureImage(run);
+    await wait(`document.querySelector('.chat-image-draft img')`);
+    const editor = () =>
+      run(() => ({
+        same:
+          document.activeElement === opticalProbe.editor &&
+          opticalProbe.editor ===
+            document.querySelector(".chat-composer textarea"),
+        draft: opticalProbe.editor.value,
+        images: document.querySelectorAll(".chat-image-draft").length,
+      }));
+    const held = await editor();
+    assert.deepEqual(held, { same: true, draft: text, images: 1 });
+    s.firstWorkspace.resolve();
+    await wait(
+      `document.querySelector('.chat-composer button[type="submit"]:enabled') && document.querySelector('.model-trigger-text')?.innerText==='optical'`,
+    );
+    assert.deepEqual(await editor(), held);
+    assert.deepEqual(s.commands, []);
+    s.permit = "send";
+    await press("Enter", 13);
+    await until(() => s.pending, "bootstrap explicit Send");
+    const { command: c, finish } = s.pending;
+    assert.equal(c.text, text);
+    assert.equal(c.images.length, 1);
+    s.turns.push({ ...c, entry: "00000012", answer: "Synthetic reply." });
+    s.replying = true;
+    finish(ok({ kind: "accepted", commandId: c.commandId }));
+    s.pending = null;
+    const add = '.chat-composer button[aria-label="Add images"]';
+    await wait(
+      `document.querySelector('${add}:disabled')?.getAttribute('aria-description')?.includes('reply to finish')`,
+    );
+    await pasteFixtureImage(run);
+    await wait(
+      `document.body.innerText.includes('Wait for the current reply to finish before adding images.')`,
+    );
+    const locked = await editor();
+    assert.deepEqual(locked, { same: true, draft: "", images: 0 });
+    s.replying = false;
+    await wait(`document.querySelector('${add}:enabled')`);
+    await pasteFixtureImage(run);
+    await wait(`document.querySelector('.chat-image-draft img')`);
+    assert.deepEqual(
+      s.commands.map((c) => c.kind),
+      ["image-upload", "send"],
+    );
+    row.bootstrap = {
+      held,
+      locked,
+      settled: await editor(),
+      commands: s.commands,
+    };
+  } finally {
+    await stop();
+  }
+}
+
 async function observeEntry(p, s, row, shot) {
   const { wait, ev, run, press, send, click, observeButton } = p;
   const mode = ".composer-delivery .mode-toggle",
@@ -601,29 +731,7 @@ async function observeEntry(p, s, row, shot) {
   await send("Input.insertText", { text: " — inspect the facet." });
   const draft = await field();
   assert.ok(draft.includes(start) && draft.includes("inspect the facet"));
-  // A fabricated File is pasted through the ordinary paste listener. No
-  // filesystem picker, profile or system clipboard is touched.
-  await run(
-    (sel, png) => {
-      const dt = new DataTransfer();
-      dt.items.add(
-        new File(
-          [Uint8Array.from(atob(png), (c) => c.charCodeAt(0))],
-          "facet.png",
-          { type: "image/png" },
-        ),
-      );
-      document.querySelector(sel).dispatchEvent(
-        new ClipboardEvent("paste", {
-          clipboardData: dt,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    },
-    input,
-    PNG,
-  );
+  await pasteFixtureImage(run);
   await wait(
     `document.querySelector('.chat-image-draft img') && document.querySelector('.chat-composer button[type="submit"]:enabled')`,
   );
@@ -1065,6 +1173,16 @@ async function observeHistory(p, s, row, shot) {
   assert.ok(linked.every((l) => !l.disabled));
   row.linked = linked;
   await click(".history-workflows > summary");
+  const unwritten = '.conversation-row > button[title="Unwritten reply"]';
+  await observeButton("unwritten reply", unwritten);
+  const starting = await run(historyFrame, "Unwritten reply");
+  await change("first reply running", 1, "research", 3, true);
+  await wait(
+    `document.querySelector(${q(unwritten)})?.matches(':focus-visible')`,
+  );
+  const running = await run(historyFrame, "Unwritten reply");
+  assert.deepEqual(running, starting);
+  row.unwritten = { starting, running };
   const g = await observeButton("active background conversation", button);
   assert.equal(g.keyboardFocus, true);
   const record = async (name) => {
@@ -1122,6 +1240,80 @@ async function observeHistory(p, s, row, shot) {
   assert.deepEqual(row.backgroundFeedback, []);
 }
 
+// A task viewer has a real fixture WebSocket. Close that socket (not a
+// failed poll), then gate its replacement session and two independent GETs.
+async function observeDisconnect(p, s, row) {
+  const { run, ev, wait } = p;
+  await run((id) => {
+    window.WebSocket = new Proxy(window.WebSocket, {
+      construct(Type, args) {
+        const socket = new Type(...args);
+        opticalProbe.socket = socket;
+        return socket;
+      },
+    });
+    location.hash = `task=${id}`;
+  }, task);
+  const linked = '.history-entry:has(button[title="Conversation off-page"])';
+  const orphan = ".history-unlinked";
+  const starting = {
+    name: "before loss",
+    offPage: true,
+    at: clock,
+    phase: "research",
+    count: 3,
+    reply: true,
+  };
+  s.roster = starting;
+  await wait(
+    `opticalProbe.socket?.readyState===WebSocket.OPEN && document.querySelector('${linked} .conversation-stop:enabled') && document.querySelector('${orphan} .conversation-stop:enabled')`,
+  );
+  const sessions = s.sessions.size;
+  s.holdSession = Promise.withResolvers();
+  await ev("opticalProbe.socket.close()");
+  const stale = () =>
+    wait(
+      `document.querySelector('${linked} [aria-label="Stale observation"]') && document.querySelector('${orphan} [aria-label="Stale observation"]') && document.querySelector('${linked} .conversation-stop:disabled') && document.querySelector('${orphan} .conversation-stop:disabled') && !document.querySelector('.history-run .conversation-stop:enabled')`,
+    );
+  await stale();
+  await until(() => s.sessions.size > sessions, "retired viewer replaced");
+  s.holdRosters = Promise.withResolvers();
+  s.holdSession.resolve();
+  await until(
+    () => s.heldKinds.size === 2,
+    "replacement attachment awaiting both rosters",
+  );
+  await stale();
+  row.offlineEntries = await run(() =>
+    [...document.querySelectorAll(".history-run button.session-item")].map(
+      (b) => b.title,
+    ),
+  );
+  assert.ok(
+    row.offlineEntries.some((title) => title.includes("Unlinked specimen")),
+  );
+  assert.ok(
+    row.offlineEntries.some((title) => title.includes("Compare facets")),
+  );
+  s.roster = {
+    ...starting,
+    name: "authoritative empty",
+    count: 0,
+    reply: false,
+  };
+  s.holdRosters.resolve();
+  s.holdRosters = null;
+  await wait(
+    `!document.querySelector('${linked}') && !document.querySelector('${orphan}') && !document.querySelector('button[title="Unwritten reply"]')`,
+  );
+  s.roster = starting;
+  await wait(`document.querySelector('${linked} .conversation-stop:enabled')`);
+  s.deny = true;
+  await wait(
+    `document.querySelector('.workspace-connection').innerText.includes('Sign-in required') && !document.querySelector('${linked}') && !document.querySelector('${orphan}')`,
+  );
+}
+
 /** Register as quiet-workspace:<theme>:<width> (one call per group). Uses the
  * entrypoint's helpers directly; b is its CDP browser, rows the report array. */
 export async function observeQuietWorkspace(p) {
@@ -1149,13 +1341,15 @@ export async function observeQuietWorkspace(p) {
   const navigate = async () => {
     await go(`/app#chat=${id}`, input);
   };
+  await layout(width, theme, motion);
+  await observeBootstrap(p, row);
   const stop = await intercept(p, s);
   try {
-    await layout(width, theme, motion);
     await navigate();
     await observeEntry({ ...p, motion }, s, row, shot);
     await observeProposal(p, s, row, shot);
     await observeHistory(p, s, row, shot);
+    await observeDisconnect(p, s, row);
   } finally {
     await stop();
   }

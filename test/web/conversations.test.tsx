@@ -372,6 +372,12 @@ it("keeps off-page, archived, unwritten and unlinked activity discoverable witho
     workflowLinks: [{ runId: linked.id, conversationId: offPage }],
   };
   const html = historyView(props);
+  expect(
+    historyView({
+      ...props,
+      activeChats: [{ ...fresh, status: "running" }, archived],
+    }),
+  ).toBe(html);
   for (const title of [
     fresh.title,
     archived.title,

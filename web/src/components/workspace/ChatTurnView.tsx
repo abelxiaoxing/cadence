@@ -4,7 +4,7 @@
  * Cadence: where the session forks, the user's message also carries a version
  * pager; its actions and the pager only choose what is read or where the next
  * message will continue, never send. */
-import { memo, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import {
   FiChevronLeft,
   FiChevronRight,
@@ -48,6 +48,7 @@ export const ChatTurnView = memo(function ChatTurnView({
   versions = 0,
   onVersion,
   off = false,
+  reading = false,
 }: {
   turn: TurnSource;
   /** Present when the next message may continue from this turn's end: it only
@@ -63,6 +64,8 @@ export const ChatTurnView = memo(function ChatTurnView({
   onVersion?(turnId: string, step: -1 | 1): void;
   /** Shown, but the message being composed will not have it in its context. */
   off?: boolean;
+  /** The transcript reader left follow mode. */
+  reading?: boolean;
 }) {
   const { t, tx, locale } = useT();
   const { header } = turn;
@@ -120,7 +123,44 @@ export const ChatTurnView = memo(function ChatTurnView({
   // join two groups without closing a detail or reparenting its focused row.
   const [kept, setKept] = useState<ReadonlySet<string>>(() => new Set());
   const [focusedHead, setFocusedHead] = useState<string>();
-  function renderPart({ step, index, key }: IndexedStep) {
+  const replyBody = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState<ReadonlySet<string>>(() => new Set());
+  // Watch only individually displayed rows while not following. When a new
+  // result would group them, keep their exact flat layout until they leave
+  // the viewport. This is not an explicit disclosure or a detail read.
+  useLayoutEffect(() => {
+    // Both can replace the set of individually displayed DOM rows.
+    void turn.steps;
+    void kept;
+    const body = replyBody.current;
+    if (!reading || !body || typeof IntersectionObserver === "undefined") {
+      setInView((previous) => (previous.size ? new Set() : previous));
+      return;
+    }
+    const visible = new Set<string>();
+    const observer = new IntersectionObserver(
+      (changes) => {
+        for (const change of changes) {
+          const key = (change.target as HTMLElement).dataset.readingStep;
+          if (key !== undefined) {
+            if (change.isIntersecting) visible.add(key);
+            else visible.delete(key);
+          }
+        }
+        setInView((previous) =>
+          previous.size === visible.size &&
+          [...visible].every((key) => previous.has(key))
+            ? previous
+            : new Set(visible),
+        );
+      },
+      { root: body.closest(".chat-messages") },
+    );
+    for (const row of body.querySelectorAll("[data-reading-step]"))
+      observer.observe(row);
+    return () => observer.disconnect();
+  }, [reading, turn.steps, kept]);
+  function renderPart({ step, index, key }: IndexedStep, grouped = false) {
     if (step.role === "tool" || step.role === "thinking") {
       const keep = () =>
         setKept((prior) => (prior.has(key) ? prior : new Set(prior).add(key)));
@@ -128,6 +168,7 @@ export const ChatTurnView = memo(function ChatTurnView({
       return (
         <div
           className="trace-entry"
+          data-reading-step={grouped ? undefined : key}
           key={key}
           onFocusCapture={keep}
           onPointerDownCapture={keep}
@@ -163,6 +204,8 @@ export const ChatTurnView = memo(function ChatTurnView({
     if ("step" in entry) return [renderPart(entry)];
     const { members, count } = entry;
     const open = members.some(({ key }) => kept.has(key));
+    if (!open && reading && members.some(({ key }) => inView.has(key)))
+      return members.map((part) => renderPart(part));
     const results = members.filter(({ step }) => step.role === "tool").length;
     const breakdown = [
       results > 0 && `${t("Tool result recorded")}: ${results}`,
@@ -201,7 +244,7 @@ export const ChatTurnView = memo(function ChatTurnView({
           {label}
         </CollapsibleHead>
       </div>,
-      ...(open ? members.map(renderPart) : []),
+      ...(open ? members.map((part) => renderPart(part, true)) : []),
     ];
   });
   return (
@@ -315,7 +358,7 @@ export const ChatTurnView = memo(function ChatTurnView({
                 : t("No model")}
             </p>
           )}
-          <div className="msg-body">
+          <div className="msg-body" ref={replyBody}>
             {timeline}
             {waiting && (
               <p className="msg-working" role="status">
