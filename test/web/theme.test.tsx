@@ -482,8 +482,8 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     ".card",
     ".rtr",
     ".workflow-card",
-    ".toolcall",
-    ".thinking",
+    ".tools-body .toolcall",
+    ".chat-turn :is(.toolcall, .thinking).open::before",
   ])(
     "%s keeps its lit top, quieter edges and static grain on a card backing",
     (card) => {
@@ -516,17 +516,14 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     },
   );
   it("leaves the keyboard target above its card's filter plate without resetting the fill or grain", () => {
-    const scope = "@supports (backdrop-filter: blur(1px)) / ";
-    const card = `${scope}.msg-body > :is(.toolcall, .thinking):focus-within`;
-    expect(
-      declaration(
-        `${scope}.msg-body:has(> :is(.toolcall, .thinking):focus-within)`,
-        "isolation",
-      ),
-    ).toBe("isolate");
-    expect(declaration(card, "position")).toBe("relative");
-    expect(declaration(card, "backdrop-filter")).toBe("none");
-    const plate = `${card}::before`;
+    const trace = ".chat-turn :is(.toolcall, .thinking)";
+    expect(declaration(`${trace}.open`, "isolation")).toBe("isolate");
+    expect(declaration(trace, "position")).toBe("relative");
+    for (const base of [trace, ".toolcall", ".thinking"])
+      expect(declarations.has(`${selectorKey(base)} { backdrop-filter }`)).toBe(
+        false,
+      );
+    const plate = `${trace}.open::before`;
     expect(declaration(plate, "inset")).toBe("0");
     expect(declaration(plate, "z-index")).toBe("-1");
     expect(declaration(plate, "pointer-events")).toBe("none");
@@ -711,25 +708,23 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     for (const surface of [wing, over(color("--card-bg", scheme), canvas)])
       expect(contrast(link, surface)).toBeGreaterThanOrEqual(AA);
   });
-  it("keeps the shared resting copy stroke visible on message and tool surfaces", () => {
-    const rule = /\.chead-copy,\s*\.msg-text-copy \{([^}]+)/.exec(
-      source("reference.css"),
-    )?.[1];
-    expect(rule).toBeDefined();
-    expect(rule).toMatch(/background: transparent;/);
-    const ink = /color: var\((--[\w-]+)\);/.exec(rule ?? "")?.[1];
-    if (!ink) throw new Error("Missing shared copy foreground");
-    const opacity = Number(/opacity: ([^;]+);/.exec(rule ?? "")?.[1] ?? 1);
-    const [r, g, b, alpha] = color(ink, scheme);
-    const page = color("--bg", scheme);
-    for (const surface of [
-      page,
-      over(color("--card-bg", scheme), page),
-      color("--bg-elev2", scheme),
+  it("reveals legible neutral trace and part-copy controls on hover or keyboard focus", () => {
+    const mouse =
+      "@media (hover: hover) and (pointer: fine) and (forced-colors: none) / ";
+    for (const [row, button] of [
+      [".chead", ".chead-copy"],
+      [".msg-text", ".msg-text-copy"],
     ]) {
       expect(
-        contrast(over([r, g, b, alpha * opacity], surface), surface),
-      ).toBeGreaterThanOrEqual(GRAPHIC);
+        declaration(
+          `${mouse}.chat-turn ${row}:not(:hover, :focus-within) ${button}:not(.copied)`,
+          "opacity",
+        ),
+      ).toBe("0");
+      const ink = ruleColor(`.chat-turn ${button}`, "color", scheme);
+      const page = color("--bg", scheme);
+      for (const surface of [page, over(color("--card-bg", scheme), page)])
+        expect(contrast(ink, surface)).toBeGreaterThanOrEqual(GRAPHIC);
     }
   });
   it("keeps the requested edit readable from the diff body through each tinted row and changed word", () => {

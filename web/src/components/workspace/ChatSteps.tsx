@@ -14,6 +14,7 @@ import {
   FiFolder,
   FiMinus,
   FiSearch,
+  FiSlash,
   FiTerminal,
   FiTool,
   FiX,
@@ -205,7 +206,7 @@ export function ToolStep({
   );
   const argumentText = args && !change ? (command ?? readableArgs(args)) : "";
   return (
-    <div className={`toolcall ${state}`}>
+    <div className={`toolcall ${state}${open ? " open" : ""}`}>
       <CollapsibleHead
         open={open}
         onToggle={() => setOpen((shown) => !shown)}
@@ -214,7 +215,7 @@ export function ToolStep({
         icon={<Icon aria-hidden="true" />}
         iconClassName={`toolcall-icon tc-tone-${tone}`}
         titleClassName="toolcall-name"
-        after={
+        summary={
           <>
             <span
               className="toolcall-status"
@@ -238,15 +239,16 @@ export function ToolStep({
                 {step.target}
               </span>
             )}
-            <span className="toolcall-spacer" />
-            {step.target && (
-              <CopyButton
-                text={step.target}
-                label={t("Copy tool summary")}
-                className="chead-copy"
-              />
-            )}
           </>
+        }
+        after={
+          step.target && (
+            <CopyButton
+              text={step.target}
+              label={t("Copy tool summary")}
+              className="chead-copy"
+            />
+          )
         }
       >
         {step.name || t("Tool")}
@@ -332,32 +334,37 @@ export function ThinkingStep({
   const [open, setOpen] = useState(false);
   const detail = useStepDetail(turn, index, step, open && step.parts > 0);
   const recording = stepActive(step) && unsettled(turn.header.status);
+  const row = `thinking${recording ? " run" : ""}`;
   if (step.parts === 0)
     return (
-      <div className="thinking">
+      <div className={row}>
         <div
           className="chead thinking-head"
           title={t(
             "Thinking content is not streamed. Readable recorded thinking can be opened after it is saved.",
           )}
         >
-          <FiCpu className="thinking-icon" aria-hidden="true" />
-          <span className="thinking-label" role="status">
-            {t(
-              recording
-                ? "Thinking activity observed"
-                : step.state === "completed"
-                  ? "Thinking activity ended"
-                  : "Thinking content unavailable",
-            )}
+          <span className="chead-main trace-note">
+            <span className="chead-icon thinking-icon" aria-hidden="true">
+              {recording ? <FiCpu /> : <FiSlash />}
+            </span>
+            <span className="chead-title thinking-label" role="status">
+              {t(
+                recording
+                  ? "Thinking activity observed"
+                  : step.state === "completed"
+                    ? "Thinking activity ended"
+                    : "Thinking content unavailable",
+              )}
+            </span>
+            {recording && <HalfRingSpinner />}
           </span>
-          {recording && <HalfRingSpinner />}
         </div>
       </div>
     );
   const text = detail.value?.text.trim() ?? "";
   return (
-    <div className={`thinking${open ? " open" : ""}`}>
+    <div className={`${row}${open ? " open" : ""}`}>
       <CollapsibleHead
         open={open}
         onToggle={() => setOpen((shown) => !shown)}
@@ -366,12 +373,7 @@ export function ThinkingStep({
         icon={<FiCpu aria-hidden="true" />}
         iconClassName="thinking-icon"
         titleClassName="thinking-label"
-        after={
-          <>
-            <span className="toolcall-spacer" />
-            {text && <CopyButton text={text} className="chead-copy" />}
-          </>
-        }
+        after={text && <CopyButton text={text} className="chead-copy" />}
       >
         {t("Thinking")}
       </CollapsibleHead>

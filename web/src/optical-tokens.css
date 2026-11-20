@@ -86,6 +86,7 @@
   --hl-deletion: var(--red);
   --hl-keyword: var(--red);
   --term-bright-red: var(--red);
+  --stop-glass-tint: #f43f5e;
   --stop-red: var(--red);
   --stop-red-hover: var(--red);
   --auth-green: var(--green);

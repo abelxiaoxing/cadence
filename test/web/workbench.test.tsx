@@ -239,6 +239,10 @@ it("a tool card states what was recorded for its call, live or settled", () => {
     items: [user, chatItem("a", "assistant", { text: "Hi" })],
   });
   expect(plain).not.toContain("toolcall");
+  expect(plain).not.toContain("msg-text-copy");
+  expect(plain.split('class="msg msg-assistant"')[1]).toMatch(
+    /class="msg-meta".*aria-label="Copy message".*class="msg-body"/,
+  );
   expect(plain.match(/class="msg-role">Cadence</g)).toHaveLength(1);
   expect(toolTarget('{"path":')).toBe("");
   expect(toolTarget('["path"]')).toBe("");
@@ -1489,6 +1493,7 @@ it.each(["en", "zh"] as const)(
     expect(activity).toContain(
       locale === "en" ? "Thinking activity observed" : "已观察到思考活动",
     );
+    expect(activity).toContain('class="thinking run"');
     expect(activity).not.toContain("aria-expanded");
     expect(activity).not.toContain("thinking-body");
     const ended = {
@@ -1505,6 +1510,9 @@ it.each(["en", "zh"] as const)(
       locale === "en" ? "Thinking content unavailable" : "思考内容不可用",
     );
     expect(unavailable).not.toContain("aria-expanded");
+    expect(unavailable).not.toContain('class="thinking run"');
+    expect(unavailable).toContain('class="chead-icon thinking-icon"');
+    expect(unavailable).toContain('class="chead-title thinking-label"');
     const durable = {
       ...source,
       steps: source.steps.map((s) => ({

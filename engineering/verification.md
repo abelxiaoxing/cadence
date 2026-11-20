@@ -83,7 +83,7 @@ Measure the solid stroke on both adjacent screenshot surfaces, and compare the E
 `toolCards` binds a disclosure to one synthetic route, tool name and target path, waits for a stable hit-tested button, then activates the folded head once with real pointer input.
 It records the event targets, before/after disclosure states and completed conversation-step read coordinates/result category, not the detail payload.
 The requested edit must contain both `opal` and `silver` inside that same card; both compositor word samples must reach 4.5:1 at each viewport/theme, independently of the artifact diff.
-`copyIndicators` measures a straight SVG stroke against the adjacent material with the pointer outside and no hover/focus, then the visible Tab outline for the same control; missing samples or ratios below 3:1 fail.
+`copyIndicators` checks the subdued desktop rest state, measures a straight SVG stroke against the adjacent material after pointer reveal, then checks the visible Tab outline for the same control; missing samples or ratios below 3:1 fail.
 The `expand` conversation does not stream: its folded head is already reachable both at the bottom and after wheeling up past 80px.
 Before activation and after real detail growth and stable frames, record the pane's scrollTop, client/scroll heights, bottom distance and first fully visible reading block/offset, without any corrective scrolling or focus between samples.
 Check Latest only after the up-scroll comparison: shorten the viewport after the click to distinguish resumed follow from a one-time jump.
