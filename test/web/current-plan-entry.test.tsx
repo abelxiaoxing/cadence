@@ -3,6 +3,7 @@
 import {
   act,
   Children,
+  type ComponentProps,
   isValidElement,
   type ReactElement,
   type ReactNode,
@@ -14,6 +15,7 @@ import { expect, it, vi } from "vitest";
 import type { ChoiceVersion } from "../../src/service/contracts/models.ts";
 import type {
   CadenceConversation,
+  ChatAttempt,
   ChatPending,
   WorkbenchCommand,
 } from "../../src/service/contracts/workbench.ts";
@@ -23,11 +25,16 @@ import {
   readableWorkflowPlan,
 } from "../../src/service/contracts/workflow.ts";
 import { ServiceClient } from "../../src/service-client.ts";
+import type { LoadedTurn } from "../../web/src/client/conversation-reader";
 import {
   ChatComposer,
   type ChatComposerProps,
 } from "../../web/src/components/workspace/ChatComposer";
-import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
+import {
+  ChatTurnView,
+  ChatWorkspace,
+} from "../../web/src/components/workspace/ChatWorkspace";
+import { MessageAction } from "../../web/src/components/workspace/MessageActions";
 import { WaitingMessages } from "../../web/src/components/workspace/WaitingMessages";
 import { currentToasts } from "../../web/src/layout/toasts";
 import { plan } from "../helpers/workflow-plan";
@@ -36,7 +43,8 @@ import { transport } from "./fixtures";
 const f = vi.hoisted(() => ({
   state: undefined as CadenceConversation | undefined,
   pinned: false,
-  turns: [],
+  turns: [] as LoadedTurn[],
+  undelivered: [] as ChatAttempt[],
   pending: [] as ChatPending[],
   modeError: false,
   live: undefined as { epoch: string; commandId: string } | undefined,
@@ -88,7 +96,9 @@ vi.mock("../../web/src/client/use-conversation", () => ({
     summary: {
       id: "chat",
       title: "Fixture discussion",
-      status: f.live ? "running" : "completed",
+      status: f.live
+        ? "running"
+        : (f.undelivered.at(-1)?.status ?? "completed"),
       live: f.live,
       origin: "webui",
       leaf: "leaf",
@@ -99,7 +109,7 @@ vi.mock("../../web/src/client/use-conversation", () => ({
     runs: [],
     pending: f.pending,
     choose: f.no,
-    undelivered: [],
+    undelivered: f.undelivered,
     commands: [],
     count: 1,
     refresh: f.no,
@@ -1014,6 +1024,52 @@ function descendant<P>(
   }
 }
 
+function recoveryRoot() {
+  const storage = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+  });
+  vi.stubGlobal("window", {
+    location: new URL("http://localhost/app"),
+    HTMLIFrameElement: class {},
+  });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal("requestAnimationFrame", () => 1);
+  vi.stubGlobal("cancelAnimationFrame", f.no);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = Object.assign(new EventTarget(), {
+    nodeType: 1,
+    tagName: "DIV",
+    ownerDocument: new EventTarget(),
+  });
+  return createRoot(container as unknown as HTMLElement);
+}
+
+function buttonIn(tree: ReactNode, label: string) {
+  const button = descendant<{
+    children?: ReactNode;
+    "aria-label"?: string;
+    title?: string;
+    onClick(): void;
+    disabled?: boolean;
+  }>(
+    tree,
+    (e) =>
+      e.type === "button" &&
+      (e.props["aria-label"] === label ||
+        e.props.title === label ||
+        Children.toArray(e.props.children).includes(label)),
+  );
+  return button && !button.disabled ? button.onClick : undefined;
+}
+
 it.each([
   "send",
   "steer",
@@ -1022,6 +1078,9 @@ it.each([
   "changed epoch",
   "occupied",
   "unmatched receipt",
+  "failed",
+  "canceled",
+  "append to draft",
 ])(
   "%s: explicit message recovery dispatches only the chosen discussion action",
   async (path) => {
@@ -1037,33 +1096,11 @@ it.each([
     f.live = path === "send" ? undefined : live;
     const { client, command, prepare } = discussionFixture(proposal("").model);
     const preparePlan = vi.fn(async () => {});
-    const storage = new Map<string, string>();
-    vi.stubGlobal("sessionStorage", {
-      getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => storage.set(key, value),
-      removeItem: (key: string) => storage.delete(key),
-    });
-    vi.stubGlobal("window", {
-      location: new URL("http://localhost/app"),
-      HTMLIFrameElement: class {},
-    });
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        disconnect() {}
-      },
-    );
-    vi.stubGlobal("cancelAnimationFrame", f.no);
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    const container = Object.assign(new EventTarget(), {
-      nodeType: 1,
-      tagName: "DIV",
-      ownerDocument: new EventTarget(),
-    });
-    const root = createRoot(container as unknown as HTMLElement);
+    const root = recoveryRoot();
     let field!: ReturnType<typeof useField>,
       editor!: ChatComposerProps,
-      recall: (() => void) | undefined;
+      recall: (() => void) | undefined,
+      restore: (() => void) | undefined;
     function Probe() {
       const tree = usePhraseWorkspace(client, prepare, preparePlan);
       editor = composer(tree);
@@ -1073,17 +1110,9 @@ it.each([
         (e) => e.type === WaitingMessages,
       );
       if (!waiting) throw Error("missing waiting list");
-      const button = descendant<{
-        "aria-label": string;
-        onClick(): void;
-        disabled: boolean;
-      }>(
-        WaitingMessages(waiting),
-        (e) =>
-          e.type === "button" &&
-          e.props["aria-label"] === "Withdraw and put back in the message box",
-      );
-      recall = button && !button.disabled ? button.onClick : undefined;
+      const list = WaitingMessages(waiting);
+      recall = buttonIn(list, "Withdraw and put back in the message box");
+      restore = buttonIn(list, "Put back in the message box");
       return null;
     }
     const draw = () => act(async () => root.render(<Probe />));
@@ -1126,6 +1155,50 @@ it.each([
       });
       f.pending = [{ commandId: first.commandId, mode: "queue", text: phrase }];
       await draw();
+      if (
+        path === "failed" ||
+        path === "canceled" ||
+        path === "append to draft"
+      ) {
+        f.live = undefined;
+        f.pending = [];
+        f.undelivered = [
+          {
+            commandId: first.commandId,
+            status: path === "canceled" ? path : "failed",
+            text: phrase,
+            notice: "Not delivered.",
+          },
+        ];
+        await draw();
+        if (path === "append to draft")
+          await act(async () => field.change(discussionText));
+        if (!restore) throw Error("missing undelivered action");
+        await act(async () => restore?.());
+        expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([first]);
+        if (path === "append to draft") {
+          expect(editor.draft).toBe(`${discussionText}\n${phrase}`);
+          await act(async () => field.change(phrase, "deleteContentBackward"));
+          await submit();
+          expect(currentToasts().at(-1)?.text).toBe(
+            "No plan is awaiting approval.",
+          );
+          expect(command).toHaveBeenCalledTimes(1);
+        } else {
+          expect(editor.draft).toBe(phrase);
+          await submit();
+          expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
+            first,
+            expect.objectContaining({
+              kind: "send",
+              conversationId: "chat",
+              head: "leaf",
+              text: phrase,
+            }),
+          ]);
+        }
+        return;
+      }
       let release!: () => void;
       command.mockImplementationOnce(async (c) => {
         await new Promise<void>((resolve) => {
@@ -1191,7 +1264,162 @@ it.each([
       vi.unstubAllGlobals();
       f.live = undefined;
       f.pending = [];
+      f.undelivered = [];
       expect(preparePlan).not.toHaveBeenCalled();
+    }
+  },
+);
+
+it.each([
+  "edit",
+  "clipped edit",
+  "superseded preview",
+  "cancel edit",
+  "cancel edit with image",
+  "cancel unknown draft",
+  "cancel cold edit",
+])(
+  "%s: historical message recovery changes the draft, not the command stream",
+  async (path) => {
+    f.state = {
+      id: "chat",
+      head: "turn-1",
+      enabled: false,
+      revision: 1,
+      runs: [],
+      proposal: null,
+    };
+    const cancel = path.startsWith("cancel"),
+      cold = path === "cancel cold edit",
+      unknown = path === "cancel unknown draft",
+      withImage = path === "cancel edit with image" || cold;
+    const clipped = path === "clipped edit" || path === "superseded preview";
+    const preview = clipped
+      ? "按计划"
+      : cancel && !cold && !unknown
+        ? discussionText
+        : phrase;
+    let resolve!: (result: { text: string; args: string }) => void;
+    const detail = vi.fn(
+      () =>
+        new Promise<{ text: string; args: string }>((done) => {
+          resolve = done;
+        }),
+    );
+    f.turns = [
+      {
+        ordinal: 0,
+        header: {
+          id: "message",
+          status: "completed",
+          steps: 1,
+          stable: 1,
+          notice: "",
+          at: 1,
+          entry: "leaf",
+          parent: "parent",
+          omitted: { thinking: false, media: false, other: false },
+        },
+        steps: [
+          {
+            id: "user",
+            role: "user",
+            text: preview,
+            clipped,
+            name: "",
+            target: "",
+            error: false,
+            parts: 1,
+          },
+        ],
+        detail,
+      },
+    ];
+    const { client, command, prepare } = discussionFixture(proposal("").model);
+    const preparePlan = vi.fn(async () => {});
+    const file = new File(["fixture"], "draft.png", { type: "image/png" });
+    const root = recoveryRoot();
+    let field!: ReturnType<typeof useField>,
+      editor!: ChatComposerProps,
+      edit: (() => void) | undefined;
+    function Probe() {
+      const tree = usePhraseWorkspace(client, prepare, preparePlan);
+      editor = composer(tree);
+      field = useField(editor);
+      const row = descendant<ComponentProps<typeof ChatTurnView>>(
+        tree,
+        (e) => e.type === ChatTurnView,
+      );
+      if (!row) throw Error("missing historical turn");
+      const body = (
+        ChatTurnView as unknown as { type(props: typeof row): ReactNode }
+      ).type(row);
+      const action = descendant<ComponentProps<typeof MessageAction>>(
+        body,
+        (e) => e.type === MessageAction && e.props.label === "Edit and resend",
+      );
+      edit = action && buttonIn(MessageAction(action), "Edit and resend");
+      return null;
+    }
+    const draw = (key: number) =>
+      act(async () => root.render(<Probe key={key} />));
+    try {
+      if (unknown)
+        sessionStorage.setItem("cadence:draft:workspace:chat", phrase);
+      await draw(0);
+      if (cancel && !unknown)
+        await act(async () => field.change(phrase, "insertText", phrase));
+      if (withImage) await act(async () => editor.onAddImages([file]));
+      if (cancel) expect(editor.draft).toBe(phrase);
+      if (!edit) throw Error("missing Edit and resend action");
+      await act(async () => edit?.());
+      expect(editor.draft).toBe(preview);
+      expect(editor.images).toEqual([]);
+      if (clipped) {
+        expect(detail).toHaveBeenCalledTimes(1);
+        if (path === "superseded preview") {
+          // Even an identical user replacement is no longer the loaded preview.
+          await act(async () => field.change(preview, "insertText", preview));
+        }
+        await act(async () => resolve({ text: phrase, args: "" }));
+      }
+      if (cancel) {
+        if (cold) await draw(1); // same persisted anchor and text, no in-memory source
+        const restore = buttonIn(
+          editor.anchor,
+          "Cancel and restore the draft that was here",
+        );
+        if (!restore) throw Error("missing Cancel edit action");
+        await act(async () => restore());
+        expect(editor.images).toEqual(withImage && !cold ? [file] : []);
+        if (withImage && !cold)
+          await act(async () => editor.onRemoveImage(file));
+      }
+      const text = path === "superseded preview" ? preview : phrase;
+      expect(editor.draft).toBe(text);
+      expect(command).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
+      await act(async () => field.key("Enter"));
+      if (cold || unknown) {
+        expect(command).not.toHaveBeenCalled();
+        expect(currentToasts().at(-1)?.text).toBe(
+          "No plan is awaiting approval.",
+        );
+        expect(prepare).not.toHaveBeenCalled();
+      } else
+        expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
+          expect.objectContaining({
+            kind: "send",
+            head: cancel ? "leaf" : "parent",
+            conversationId: "chat",
+            text,
+          }),
+        ]);
+      expect(preparePlan).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+      f.turns = [];
     }
   },
 );
