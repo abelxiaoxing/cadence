@@ -615,7 +615,7 @@
 
 .msg-text {
   position: relative;
-  color: var(--text);
+  color: var(--text-body);
 
   min-width: 0;
   overflow-wrap: anywhere;
@@ -673,13 +673,15 @@
   overflow-wrap: anywhere;
 }
 
-.msg-text code {
+/* Fenced code can sit inside numbered rows under pre, not just directly in pre. */
+:where(.msg-text, .md, .fp-markdown) code:not(:where(pre code)) {
+  padding: 0.08em 0.34em;
+  border-radius: 0.35em;
+  background: var(--inline-code-bg);
+  color: var(--code-text);
   font-family: var(--mono);
-  font-size: 12.5px;
-  background: var(--bg-elev2);
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
-  padding: 1px 5px;
+  font-size: 0.92em;
+  box-decoration-break: clone;
 }
 
 .msg-text .katex {
@@ -901,7 +903,7 @@
 }
 
 .toolcall.ok .toolcall-status {
-  color: var(--green);
+  color: var(--tool-success);
 }
 
 .toolcall.err .toolcall-status {
@@ -1644,7 +1646,7 @@ div.chead[role="button"]:focus-visible,
   white-space: nowrap;
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--code-text);
 }
 
 .toolcall-timeout {
@@ -1837,16 +1839,6 @@ div.chead[role="button"]:focus-visible,
   margin: 0;
 }
 
-.dialog-option .md :not(pre) > code,
-.dialog-body .md :not(pre) > code {
-  padding: 0.12em 0.34em;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--link-soft);
-  font-size: 0.88em;
-}
-
 .dialog-inline .question-head,
 .dialog-inline .question-head .md {
   font-size: 13px;
@@ -1901,16 +1893,6 @@ div.chead[role="button"]:focus-visible,
 
 .dialog-inline .md li {
   margin: 0.15em 0;
-}
-
-.dialog-inline .md :not(pre) > code {
-  padding: 0.12em 0.34em;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--link-soft);
-  font-size: 0.88em;
-  word-break: break-word;
 }
 
 .fp-markdown strong {
@@ -2268,14 +2250,6 @@ div.chead[role="button"]:focus-visible,
   font-family: var(--mono);
   font-size: 0.88em;
   word-break: break-word;
-}
-
-.fp-markdown :not(pre) > code {
-  padding: 0.16em 0.42em;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--link-soft);
 }
 
 .fp-markdown .codeblock {

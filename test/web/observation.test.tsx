@@ -412,6 +412,40 @@ it("ordinary polling renews its existing attachment even with no socket or model
   expect(new Set(s.sessionAttachments).size).toBe(1);
   expect(s.sockets).toHaveLength(0);
 });
+it("routine polls withdraw a lost action capability immediately and only restore it after the whole read", async () => {
+  const s = await setup();
+  const workbench = { read: vi.fn(), command: vi.fn() };
+  s.f.adapters.workbench = workbench;
+  vi.useFakeTimers();
+  s.select(null);
+  await vi.waitFor(() => expect(s.state()?.actions).toBe(true));
+  const activeRuns = s.transport.activeRuns.bind(s.transport);
+  for (const capable of [false, true]) {
+    s.f.adapters.workbench = capable ? workbench : undefined;
+    const previous = s.state()?.workspace;
+    const release = deferred();
+    const roster = vi
+      .spyOn(s.transport, "activeRuns")
+      .mockImplementationOnce(async (signal) => {
+        await release.promise;
+        return activeRuns(signal);
+      });
+    try {
+      await vi.advanceTimersByTimeAsync(LIMITS.reconcileMs);
+      await vi.waitFor(() => expect(roster).toHaveBeenCalled());
+      // The session has replied but the rest of the poll is still pending.
+      expect(s.state()?.actions).toBe(false);
+      expect(s.state()?.workspace).toBe(previous);
+    } finally {
+      release.resolve();
+      roster.mockRestore();
+    }
+    await vi.waitFor(() => expect(s.state()?.workspace).not.toBe(previous));
+    expect(s.state()?.actions).toBe(capable);
+  }
+  expect(new Set(s.sessionAttachments).size).toBe(1);
+  expect(s.writes).toEqual([]);
+});
 it("an explicit chat refresh supersedes an in-flight reconcile; only the newest viewer read satisfies the confirmed project epoch", async () => {
   const s = await setup();
   s.f.adapters.workbench = { read: vi.fn(), command: vi.fn() };
@@ -433,11 +467,14 @@ it("an explicit chat refresh supersedes an in-flight reconcile; only the newest 
       await latest.promise;
       return { ...(await workspace()), rootLabel: "new model selection" };
     });
-  // The healthy timer read isn't an explicit demand; it does not revoke the
-  // previous read's freshness every reconcile interval.
+  // No published state should flash disabled controls during a healthy poll,
+  // even when its final workspace read is slow enough to span a render.
+  const beforePoll = s.states.length;
   await vi.advanceTimersByTimeAsync(LIMITS.reconcileMs);
   await vi.waitFor(() => expect(reads).toHaveBeenCalledOnce());
-  expect(s.state()?.readCurrent).toBe(true);
+  expect(
+    s.states.slice(beforePoll).every((v) => v.readCurrent && v.actions),
+  ).toBe(true);
 
   const start = s.states.length;
   for (let i = 0; i < 10; ++i) s.observer.refresh();

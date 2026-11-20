@@ -152,7 +152,8 @@ The job checks the same list again when it requests Stop, including after downlo
 
 The request runs outside the service, in a transient unit `cadence.maintenance.service` (`cadence-NAME.maintenance.service` for a named service), so closing or reloading the page does not interrupt it and one job runs at a time.
 It runs the same `cadence server restart` or `cadence server upgrade`, then records its outcome.
-After a successful upgrade, the requesting page reloads automatically when the target version is serving.
+Leave the requesting tab open: it waits through temporary disconnections or proxy error pages and reloads the same address automatically once its upgrade is recorded as successful and the target version answers.
+No second click is needed.
 A restart still offers a reload; a failed, rolled-back or unconfirmed upgrade leaves the result on screen.
 If it reports nothing, see `journalctl --user -u cadence.maintenance.service` (without `--user` for a system service) and `cadence server status`.
 

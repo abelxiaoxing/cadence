@@ -1298,16 +1298,16 @@ export const zh = {
   "Cadence is starting again…": "Cadence 正在重新启动…",
   "Downloading {to}, then stopping Cadence…":
     "正在下载 {to}，随后停止 Cadence…",
-  "Installing {to} and starting Cadence…": "正在安装 {to} 并启动 Cadence…",
+  "Waiting for Cadence {to} to reconnect automatically…":
+    "正在等待 Cadence {to} 上线，页面会自动重连…",
   "This runs outside the service: closing or reloading the page does not stop it, and running work is stopped in order.":
     "此操作在服务之外运行：关闭或刷新页面不会中断它，运行中的工作会按顺序停止。",
-  "Reload the page to reconnect to the new service.":
-    "重新加载页面以连接新的服务。",
   "Details in a terminal:": "在终端中查看详情：",
   "Reload page": "重新加载页面",
-  "Cadence did not report back within {minutes} minutes.":
-    "Cadence 在 {minutes} 分钟内没有返回结果。",
-  "Cadence answered with a different version.": "Cadence 以另一个版本响应。",
+  "Could not confirm the result within {minutes} minutes.":
+    "未能在 {minutes} 分钟内确认操作结果。",
+  "The reported result does not match this request.":
+    "服务报告的结果与本次请求不符。",
   "Cadence restarted.": "Cadence 已重启。",
   "Cadence {version} was already installed.": "Cadence {version} 已经安装。",
   "Cadence {version} is running.": "Cadence {version} 正在运行。",

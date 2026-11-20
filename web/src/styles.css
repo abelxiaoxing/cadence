@@ -875,6 +875,10 @@ summary:focus-visible,
   border-inline-start: 3px solid var(--accent);
   pointer-events: none;
 }
+.lp-panel .session-item.active::before {
+  border-inline-start-width: 2px;
+  border-radius: 999px;
+}
 .session-item.active,
 .session-item.active:hover {
   background: var(--accent-soft);
@@ -1161,27 +1165,27 @@ summary:focus-visible,
   min-height: 0;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  background: var(--glow-03);
   color: var(--text-dim);
   font-size: 12.5px;
   text-transform: capitalize;
 }
-.rp-tab:hover:not(:disabled) {
-  border-color: transparent;
+.rp-tab:where(:hover:not(:disabled)) {
   background: var(--bg-elev2);
   color: var(--text);
 }
 .rp-tab:is([aria-pressed="true"], [aria-current="true"]) {
-  background: var(--bg-elev2);
+  background: var(--segment-face);
   color: var(--text);
 }
 .rp-tab:is([aria-pressed="true"], [aria-current="true"])::after {
   content: "";
   position: absolute;
-  inset: auto 7px 2px;
+  inset: auto calc(50% - 6px) 2px;
   border-bottom: 2px solid var(--accent);
+  border-radius: 999px;
   pointer-events: none;
 }
 .rp-tab:focus-visible {
@@ -1423,9 +1427,9 @@ summary:focus-visible,
 }
 .msg-user .msg-body {
   padding: 10px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-  border-radius: 12px;
-  background: var(--accent-soft);
+  border: 0;
+  border-radius: 15px;
+  background: var(--bubble-face);
 }
 .msg-tool-result .msg-body {
   padding: 8px 12px;
@@ -1596,7 +1600,7 @@ summary:focus-visible,
 }
 .msg-user .detail-pane {
   background: transparent;
-  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  border: 0;
 }
 .detail-identity {
   font-size: 11px;
@@ -1659,6 +1663,9 @@ summary:focus-visible,
 }
 .md {
   overflow-wrap: anywhere;
+}
+.md :is(h1, h2, h3, h4, h5, h6, strong) {
+  color: var(--text-primary);
 }
 .md table {
   display: block;
@@ -2487,7 +2494,7 @@ summary:focus-visible,
   .panel-drawer {
     /* The compact wing lies over the scrim and the transcript, not just the
        canvas. Keep its quiet labels legible without opacifying the glass. */
-    --text-secondary: var(--accent);
+    --text-secondary: var(--text-body);
     --text-dim: var(--text-secondary);
     --text-faint: var(--text-secondary);
     --control-fg: var(--text-secondary);
@@ -2750,7 +2757,19 @@ summary:focus-visible,
   width: 100%;
   justify-content: flex-start;
   padding: 9px 12px;
-  background: var(--bg-elev2);
+  border-color: transparent;
+  background: var(--glass-surface);
+  color: var(--text-body);
+  box-shadow:
+    0 2px 8px var(--shadow-1),
+    inset 0 1px var(--glass-border);
+}
+.new-conversation:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  box-shadow:
+    inset 0 1px var(--glass-border-top),
+    0 3px 12px var(--accent-soft);
 }
 .lp-section-heading {
   display: flex;
@@ -3136,6 +3155,17 @@ summary:focus-visible,
   min-width: 0;
   min-height: 0;
   padding: 16px var(--chat-inset) 28px;
+}
+/* Only fade while reading back. The last lines at rest, a focused control,
+   the jump button and the question rail must never sit inside the mask. */
+@media (forced-colors: none) and (prefers-contrast: no-preference) {
+  .chat-messages:has(+ .scroll-bottom):not(:has(:focus-visible)) {
+    mask-image: linear-gradient(
+      to bottom,
+      black max(75%, calc(100% - 96px)),
+      transparent
+    );
+  }
 }
 .chat-messages > .empty-state {
   min-height: 40vh;
@@ -3758,6 +3788,22 @@ summary:focus-visible,
   width: 16px;
   height: 16px;
 }
+.composer-toolbar > .primary:enabled {
+  background: var(--action-fill);
+  border-color: transparent;
+  color: var(--on-action);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--action-fill) 26%, transparent);
+}
+.composer-toolbar > .primary:enabled:hover {
+  background: color-mix(in srgb, var(--action-fill) 93%, black);
+}
+.composer-toolbar > .primary:disabled {
+  background: var(--bg-elev2);
+  border-color: transparent;
+  color: var(--text-faint);
+  box-shadow: none;
+  opacity: 1;
+}
 .composer-toolbar > .danger {
   border-color: var(--red);
   background: var(--red);
@@ -3770,7 +3816,12 @@ summary:focus-visible,
 }
 /* The transcript's pill (pi .scroll-bottom) sits just above the composer. */
 .chat-messages-wrap > .scroll-bottom {
-  bottom: 10px;
+  bottom: 14px;
+  border-color: var(--glass-border);
+  background: var(--menu-bg);
+  color: var(--text-primary);
+  backdrop-filter: var(--glass-filter);
+  box-shadow: 0 4px 16px var(--shadow-2);
 }
 /* A jump to a turn not shown yet reads back to it first. */
 .chat-jump-status {
@@ -3999,6 +4050,9 @@ button.file-item:hover:not(:disabled),
 .file-icon {
   flex-shrink: 0;
   color: var(--text-faint);
+}
+.file-item.dir .file-icon {
+  color: var(--folder-icon);
 }
 
 .file-name {

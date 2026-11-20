@@ -233,6 +233,9 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     expect(declaration(marker, "border-inline-start")).toBe(
       "3px solid var(--accent)",
     );
+    const historyMark = ".lp-panel .session-item.active::before";
+    expect(declaration(historyMark, "border-inline-start-width")).toBe("2px");
+    expect(declaration(historyMark, "border-radius")).toBe("999px");
     const wing = over(color("--glass-surface", scheme), color("--bg", scheme));
     for (const surface of [wing, over(color("--accent-soft", scheme), wing)])
       expect(
@@ -280,8 +283,13 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         );
     },
   );
-  it("underlines only the current panel independently of hover and focus", () => {
+  it("distinguishes the current panel pill independently of hover and focus", () => {
     const current = '.rp-tab:is([aria-pressed="true"], [aria-current="true"])';
+    expect(declaration(".rp-tab", "border")).toBe("0");
+    expect(declaration(".rp-tab", "border-radius")).toBe("999px");
+    expect(declaration(current, "background")).not.toBe(
+      declaration(".rp-tab:where(:hover:not(:disabled))", "background"),
+    );
     expect(declaration(`${current}::after`, "border-bottom")).toBe(
       "2px solid var(--accent)",
     );
@@ -301,6 +309,24 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       expect(
         contrast(color("--accent", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);
+  });
+  it("reserves the cobalt Send face for an enabled action", () => {
+    const idle = ".composer-toolbar > .primary:disabled";
+    const send = ".composer-toolbar > .primary:enabled";
+    const fill = ruleColor(send, "background", scheme);
+    expect(ruleColor(idle, "background", scheme)).not.toEqual(fill);
+    expect(declaration(idle, "box-shadow")).toBe("none");
+    expect(
+      contrast(ruleColor(send, "color", scheme), fill),
+    ).toBeGreaterThanOrEqual(GRAPHIC);
+  });
+  it("separates folder and file strokes while keeping both visible on glass", () => {
+    const wing = over(color("--glass-surface", scheme), color("--bg", scheme));
+    const folder = ruleColor(".file-item.dir .file-icon", "color", scheme);
+    const file = ruleColor(".file-icon", "color", scheme);
+    expect(folder).not.toEqual(file);
+    for (const ink of [folder, file])
+      expect(contrast(ink, wing)).toBeGreaterThanOrEqual(GRAPHIC);
   });
   it("keeps the disabled mode label, model and placeholder readable on the input capsule", () => {
     const disabled = ".mode-toggle:disabled";
@@ -801,9 +827,10 @@ it.each([".chat-attempt-text", ".thinking-body"])(
 it("defines each scheme-dependent colour once, as a light-dark() pair", () => {
   // A parser that silently matched nothing would pass every check above.
   expect(TOKENS.size).toBeGreaterThan(100);
-  expect(color("--bg", "light")).toEqual([244, 245, 247, 1]);
-  expect(color("--bg", "dark")).toEqual([9, 10, 13, 1]);
-  expect(color("--glass-surface", "light")).toEqual([255, 255, 255, 0.72]);
+  expect(color("--bg", "light")).toEqual([247, 249, 252, 1]);
+  expect(color("--bg", "dark")).toEqual([8, 10, 15, 1]);
+  expect(color("--glass-surface", "light")).toEqual([255, 255, 255, 0.8]);
+  expect(color("--glass-surface", "dark")).toEqual([16, 19, 26, 0.78]);
   const [styles, reference] = SHEETS;
   expect(styles).toContain("color-scheme: light dark;");
   expect(styles).toMatch(
