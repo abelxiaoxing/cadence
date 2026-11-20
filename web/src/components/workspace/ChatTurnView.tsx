@@ -10,11 +10,14 @@ import {
   FiChevronRight,
   FiCornerDownRight,
   FiEdit2,
+  FiLayers,
 } from "react-icons/fi";
 import { type TurnSource, unsettled } from "../../client/conversation-reader";
 import { useT } from "../../i18n/locale";
 import { StreamMarkdown } from "../StreamMarkdown";
+import { CollapsibleHead } from "../transcript/CollapsibleHead";
 import {
+  type IndexedStep,
   LEGACY_OMITTED_NOTICE,
   StepText,
   ThinkingStep,
@@ -26,7 +29,9 @@ import {
   MessageAction,
   MessageActions,
 } from "./MessageActions";
+import { traceGroups } from "./trace-groups";
 import { stepActive } from "./turn-source";
+import "./trace-groups.css";
 
 const clock = (at: number, locale: string) =>
   new Date(at).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en-GB", {
@@ -111,6 +116,94 @@ export const ChatTurnView = memo(function ChatTurnView({
     </time>
   );
   const replied = replies.length > 0 || live || omitted.length > 0;
+  // Remember steps, not a group's changing bounds. A newly settled call can
+  // join two groups without closing a detail or reparenting its focused row.
+  const [kept, setKept] = useState<ReadonlySet<string>>(() => new Set());
+  const [focusedHead, setFocusedHead] = useState<string>();
+  function renderPart({ step, index, key }: IndexedStep) {
+    if (step.role === "tool" || step.role === "thinking") {
+      const keep = () =>
+        setKept((prior) => (prior.has(key) ? prior : new Set(prior).add(key)));
+      const Step = step.role === "tool" ? ToolStep : ThinkingStep;
+      return (
+        <div
+          className="trace-entry"
+          key={key}
+          onFocusCapture={keep}
+          onPointerDownCapture={keep}
+          onClickCapture={keep}
+        >
+          <Step key={key} turn={turn} index={index} step={step} />
+        </div>
+      );
+    }
+    return (
+      <div className="msg-part" key={key}>
+        {step.error && (
+          <span className="ep-state failed">
+            {t("Incomplete model response")}
+          </span>
+        )}
+        <StepText
+          turn={turn}
+          index={index}
+          step={step}
+          copy={live || step.error || answer.length !== 1}
+          render={(text) => (
+            <StreamMarkdown
+              text={text}
+              streaming={live && step.state === "streaming"}
+            />
+          )}
+        />
+      </div>
+    );
+  }
+  const timeline = traceGroups(turn, replies).flatMap((entry) => {
+    if ("step" in entry) return [renderPart(entry)];
+    const { members, count } = entry;
+    const open = members.some(({ key }) => kept.has(key));
+    const results = members.filter(({ step }) => step.role === "tool").length;
+    const breakdown = [
+      results > 0 && `${t("Tool result recorded")}: ${results}`,
+      count > results && `${t("Thinking activity ended")}: ${count - results}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const anchor = members.find(({ key }) => key === focusedHead) ?? members[0];
+    const label =
+      locale === "zh"
+        ? `已完成 ${count} 步 · ${open ? "收起过程" : "展开过程"}`
+        : `${count} steps completed · ${open ? "Hide steps" : "Show steps"}`;
+    return [
+      <div
+        className="trace-summary"
+        key={`summary:${anchor.key}`}
+        onFocusCapture={() => setFocusedHead(anchor.key)}
+        onBlurCapture={() => setFocusedHead(undefined)}
+      >
+        <CollapsibleHead
+          open={open}
+          onToggle={() =>
+            setKept((prior) => {
+              const next = new Set(prior);
+              for (const { key } of members) {
+                if (open) next.delete(key);
+                else next.add(key);
+              }
+              return next;
+            })
+          }
+          headClassName="trace-group-head"
+          titleText={breakdown}
+          icon={<FiLayers aria-hidden="true" />}
+        >
+          {label}
+        </CollapsibleHead>
+      </div>,
+      ...(open ? members.map(renderPart) : []),
+    ];
+  });
   return (
     <section
       className={off ? "chat-turn off-branch" : "chat-turn"}
@@ -223,33 +316,7 @@ export const ChatTurnView = memo(function ChatTurnView({
             </p>
           )}
           <div className="msg-body">
-            {replies.map(({ step, index, key }) =>
-              step.role === "tool" ? (
-                <ToolStep key={key} turn={turn} index={index} step={step} />
-              ) : step.role === "thinking" ? (
-                <ThinkingStep key={key} turn={turn} index={index} step={step} />
-              ) : (
-                <div className="msg-part" key={key}>
-                  {step.error && (
-                    <span className="ep-state failed">
-                      {t("Incomplete model response")}
-                    </span>
-                  )}
-                  <StepText
-                    turn={turn}
-                    index={index}
-                    step={step}
-                    copy={live || step.error || answer.length !== 1}
-                    render={(text) => (
-                      <StreamMarkdown
-                        text={text}
-                        streaming={live && step.state === "streaming"}
-                      />
-                    )}
-                  />
-                </div>
-              ),
-            )}
+            {timeline}
             {waiting && (
               <p className="msg-working" role="status">
                 <span className="working-spin" aria-hidden="true" />

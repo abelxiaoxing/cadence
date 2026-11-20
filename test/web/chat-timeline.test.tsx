@@ -2716,13 +2716,23 @@ async function independentViewFixture(
     });
     const tools = elements<ComponentProps<typeof ToolStep>>(tree, ToolStep).map(
       (element) => {
-        const path = `${rowPath}/tool:${element.key}`;
+        const row = required(
+          elements<{ className?: string; onFocusCapture(): void }>(
+            tree,
+            "div",
+          ).find(
+            (el) =>
+              el.props.className === "trace-entry" && el.key === element.key,
+          ),
+        );
+        const path = `${rowPath}/trace:${row.key}/tool:${element.key}`;
         return child(path, () => {
           const body = ToolStep(element.props);
           commit();
           return {
             path,
             step: element.props.step,
+            focus: row.props.onFocusCapture,
             head: required(
               elements<ComponentProps<typeof CollapsibleHead>>(
                 body,
@@ -2794,6 +2804,7 @@ it.each(independentScenarios)(
           expect(tool.head.open).toBe(false);
           expect(f.requests).toHaveLength(0);
           path = tool.path;
+          tool.focus(); // Keyboard focus enters the step before its disclosure.
           tool.head.onToggle();
           tool = f.tool();
         }
@@ -2946,4 +2957,118 @@ it("an independent tool's late revision and retired-conversation replies cannot 
     old.close();
     current?.close();
   }
+});
+
+it("expanding a long trace restores keyed steps, not their payloads; a focused summary survives a backward merge and an open detail follows its new coordinate", async () => {
+  const { turn, step, detail, requests } = fixture();
+  const part = (id: string, fields: Partial<ChatStep> = {}): ChatStep => ({
+    ...step,
+    id,
+    renderId: `block:${id}`,
+    state: "completed",
+    ...fields,
+  });
+  const completed = Array.from({ length: 15 }, (_, i) => part(`tool-${i}`));
+  completed.splice(
+    3,
+    0,
+    part("empty", { role: "thinking", parts: 0, state: "unavailable" }),
+  );
+  turn.steps = [
+    part("live", { state: "running" }),
+    ...completed,
+    part("bad", { state: "failed", error: true }),
+  ];
+  const view = (source = turn) => {
+    const tree = child(`turn:${source.renderId}`, () =>
+      (
+        ChatTurnView as unknown as {
+          type(props: ComponentProps<typeof ChatTurnView>): ReactNode;
+        }
+      ).type({ turn: source }),
+    );
+    const trace = elements<{ className?: string; onFocusCapture(): void }>(
+      tree,
+      "div",
+    );
+    const summary = required(
+      trace.find((el) => el.props.className === "trace-summary"),
+    );
+    const head = elements<ComponentProps<typeof CollapsibleHead>>(
+      summary,
+      CollapsibleHead,
+    )[0].props;
+    const rows = trace.filter((el) => el.props.className === "trace-entry");
+    // Execute every mounted tool, not just the one that will be opened.
+    const tools = rows.flatMap((row) =>
+      elements<ComponentProps<typeof ToolStep>>(row, ToolStep).map((el) =>
+        child(`${source.renderId}/${row.key}/${el.key}`, () => {
+          const card = ToolStep(el.props);
+          commit();
+          return {
+            step: el.props.step,
+            index: el.props.index,
+            head: elements<ComponentProps<typeof CollapsibleHead>>(
+              card,
+              CollapsibleHead,
+            )[0].props,
+          };
+        }),
+      ),
+    );
+    return { summary, head, tools, rowKeys: rows.map((r) => r.key) };
+  };
+  const folded = view();
+  expect(folded.rowKeys).toEqual(["block:live", "block:bad"]);
+  expect(folded.head.open).toBe(false);
+  folded.summary.props.onFocusCapture();
+  folded.head.onToggle();
+  const unfolded = view();
+  expect(unfolded.rowKeys).toEqual(turn.steps.map((s) => s.renderId));
+  expect(unfolded.tools.every((tool) => !tool.head.open)).toBe(true);
+  expect(detail).not.toHaveBeenCalled();
+  const reading = required(
+    unfolded.tools.find((tool) => tool.step.id === "tool-3"),
+  );
+  reading.head.onToggle();
+  view();
+  expect(detail).toHaveBeenCalledExactlyOnceWith(
+    reading.index,
+    1,
+    expect.any(AbortSignal),
+  );
+  requests[0].resolve({ text: "visible output", args: "" });
+  await settle();
+  // New leading record, updated Pi read id, and a formerly running call that
+  // now extends the group to its left. Neither the head nor members reparent.
+  const updated = {
+    ...turn,
+    header: { ...turn.header, id: "durable", status: "completed" as const },
+    steps: [
+      part("new"),
+      part("live"),
+      ...turn.steps.slice(1).map((s) => ({ ...s, id: `pi-${s.id}` })),
+    ],
+  };
+  const merged = view(updated);
+  expect(merged.summary.key).toBe(folded.summary.key);
+  expect(merged.head.open).toBe(true);
+  expect(merged.rowKeys).toEqual(updated.steps.map((s) => s.renderId));
+  expect(
+    merged.tools.filter((tool) => tool.head.open).map((tool) => tool.step.id),
+  ).toEqual(["pi-tool-3"]);
+  expect(detail).toHaveBeenLastCalledWith(
+    reading.index + 1,
+    1,
+    expect.any(AbortSignal),
+  );
+  expect(detail).toHaveBeenCalledTimes(2);
+  expect(
+    view({ ...updated, steps: updated.steps.map((s) => ({ ...s })) }).head.open,
+  ).toBe(true);
+  expect(detail).toHaveBeenCalledTimes(2);
+  // A different turn/branch with equal step labels has its own disclosure lifetime.
+  expect(view({ ...updated, renderId: "other-user" }).head.open).toBe(false);
+  merged.head.onToggle();
+  expect(view(updated).rowKeys).toEqual(["block:bad"]);
 });
