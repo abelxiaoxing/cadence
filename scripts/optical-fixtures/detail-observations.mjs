@@ -95,6 +95,7 @@ function designPosition(selector) {
     scrollHeight,
     clientHeight,
     bottom: scrollHeight - clientHeight - scrollTop,
+    transcriptTop: document.querySelector(".chat-messages").scrollTop,
     latest: !!document.querySelector(".scroll-bottom"),
     focus: {
       tag: active.tagName,
@@ -122,7 +123,7 @@ export async function observeDesign(probe, row, { audit, observeButton }) {
     submit = "dialog[open]:has(.design-card) > footer > button.primary";
   const position = (selector) => run(designPosition, selector);
   await wait(
-    `document.querySelector('${submit}:enabled') && document.querySelector('.plan-context')`,
+    `document.querySelector('${submit}:enabled') && document.querySelector('.conversation-header .current-plan-trigger[aria-expanded="false"]')?.textContent === 'View current plan'`,
   );
   await parkPointer();
   row.positions = [];
@@ -148,10 +149,9 @@ export async function observeDesign(probe, row, { audit, observeButton }) {
       await painted(probe, row, state, async () => {
         const reading = await position(selector);
         sides.push(reading);
-        assert.ok(
-          reading.visible && reading.latest,
-          `Lost ${selector} while reading`,
-        );
+        assert.ok(reading.visible, `Lost ${selector} while reading`);
+        assert.equal(reading.transcriptTop, entry.before.transcriptTop);
+        assert.ok(reading.latest, "Modal displaced the transcript reader");
         assert.equal(reading.scrollTop, entry.after.scrollTop);
         return { reading, ...(await sample()) };
       });
@@ -164,7 +164,12 @@ export async function observeDesign(probe, row, { audit, observeButton }) {
         ["label:has(input:checked)", "Frames"],
         ["label:has(input:not(:checked))", "Everywhere"],
       ].map(([s, name]) => ({
-        ...opticalProbe.glyphSample(`.design-track ${s}`, name, null, "label"),
+        ...opticalProbe.glyphSample(
+          `.design-track ${s} > span`,
+          name,
+          null,
+          "label",
+        ),
         record: true,
       })),
     })),
@@ -651,15 +656,26 @@ async function observeSurfaceContrast(probe, surface, button, label, text) {
           r = target.getBoundingClientRect();
         const w = parseFloat(css.outlineWidth),
           o = parseFloat(css.outlineOffset);
-        const y = Math.floor(r.top + r.height / 2),
-          x = Math.floor(r.right + o + w / 2),
-          bx = x + Math.ceil(w / 2) + 1;
+        // A pill has no straight vertical side. Use the flat top stroke,
+        // not an anti-aliased pixel on its rounded cap at fractional x.
+        const tab = target.matches(".rp-tab");
+        const y = tab
+            ? Math.floor(r.top - o - w / 2)
+            : Math.floor(r.top + r.height / 2),
+          x = tab
+            ? Math.floor(r.left + r.width / 2)
+            : Math.floor(r.right + o + w / 2),
+          bx = tab ? x : x + Math.ceil(w / 2) + 1,
+          by = tab ? y - Math.ceil(w / 2) - 1 : y;
         const plate = target.closest(surface);
         if (
           w < 2 ||
           css.outlineStyle !== "solid" ||
-          ![x, bx].every((px) =>
-            plate.contains(document.elementFromPoint(px, y)),
+          ![
+            [x, y],
+            [bx, by],
+          ].every(([px, py]) =>
+            plate.contains(document.elementFromPoint(px, py)),
           )
         )
           throw Error(
@@ -685,7 +701,7 @@ async function observeSurfaceContrast(probe, surface, button, label, text) {
               name: "Tab focus",
               ink: [x, y],
               x: bx,
-              y,
+              y: by,
               min: 3,
               expectedInk: css.outlineColor,
               record: true,
@@ -741,7 +757,7 @@ export async function observeChatMaterials(probe, report) {
   }
   await observeThinkingBody(probe, report);
   if (width > 900) return;
-  const section = ".running-conversations .lp-section-heading";
+  const section = ".lp-section-body > .lp-section-header .lp-section-heading";
   const tab = ".rp-tabs > button.rp-tab:nth-child(2)";
   for (const [side, toggle, control, heading, text] of [
     [
@@ -749,7 +765,7 @@ export async function observeChatMaterials(probe, report) {
       ".navigation-toggle",
       section,
       `${section} .lp-section-title`,
-      "Running work",
+      "Conversation history",
     ],
     ["right", ".inspector-toggle", tab, tab, "Branches"],
   ]) {

@@ -33,7 +33,7 @@ export const degradedMode = {
   notice: "The mode record for this specimen is unavailable.",
 };
 
-export function fixture(root) {
+export function fixture(root, { actions = false } = {}) {
   const { manifest, assets: members } = loadWebAssets(join(root, "web/dist"));
   const identity = browserIdentity(root);
   if (manifest.buildId !== identity.buildId) throw Error("web-build-stale");
@@ -42,6 +42,8 @@ export function fixture(root) {
   const failures = [];
   const stepReads = [];
   const detailReads = [];
+  const modelReads = [];
+  let historyRoster = false;
   let directoryGate, fileGate, entryGate, readGate;
   let directEntry = false;
   const snapshot = (scope) => ({
@@ -195,7 +197,7 @@ export function fixture(root) {
         accessGeneration: 1,
         authority: "browser",
         csrf,
-        capabilities: { actions: false, manualChecks: false, history: true },
+        capabilities: { actions, manualChecks: false, history: true },
       });
     }
     if (p.endsWith("/workspace"))
@@ -219,6 +221,23 @@ export function fixture(root) {
         flowCase.failTurn
       )
         return json({ kind: "error", error: publicError("stale") });
+      if (historyRoster && q.kind === "workflow-active") {
+        const [{ run }] = readRecord({ kind: "workflow-history" }).entries;
+        return ok({
+          kind: q.kind,
+          runs: [run],
+          links: [
+            {
+              runId: run.id,
+              conversationId: run.execution.version.conversation.id,
+            },
+          ],
+        });
+      }
+      if (
+        ["conversation-models", "reload-conversation-models"].includes(q.kind)
+      )
+        modelReads.push(q);
       if (q.kind === "workflow-detail") detailReads.push(q);
       if (readGate && isDeepStrictEqual(q, readGate.request)) {
         const gate = readGate;
@@ -302,6 +321,15 @@ export function fixture(root) {
     failures,
     stepReads,
     detailReads,
+    modelReads,
+    async withHistoryRoster(work) {
+      historyRoster = true;
+      try {
+        await work();
+      } finally {
+        historyRoster = false;
+      }
+    },
     // Hold exactly one matching GET, before constructing its response. This
     // cannot grant a command. Fail if the UI never actually requests it.
     holdRead(request) {

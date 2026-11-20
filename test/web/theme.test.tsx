@@ -22,9 +22,9 @@ const source = (name: string) =>
 const SHEETS = [
   "optical-tokens.css",
   "reference.css",
+  "components/workspace/design.css",
   "styles.css",
   "timeline/timeline.css",
-  "components/workspace/design.css",
   "components/rich/reading.css",
 ].map(source);
 const withoutComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -191,7 +191,7 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
   });
   it("paints a solid sash and two inset split-button focus indicators", () => {
     const sash = ".resize-handle:focus-visible";
-    expect(declaration(sash, "border-left")).toBe("2px solid var(--accent)");
+    expect(declaration(sash, "border-left")).toBe("2px solid var(--text)");
     expect(declaration(".resize-handle", "background")).toBe("transparent");
     expect(
       declaration(".composer-split > button:focus-visible", "outline"),
@@ -204,10 +204,17 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       ruleColor(".composer-dock::before", "background", scheme),
       canvas,
     );
-    for (const surface of [canvas, composer]) {
-      expect(
-        contrast(color("--accent", scheme), surface),
-      ).toBeGreaterThanOrEqual(GRAPHIC);
+    const wing = over(color("--glass-surface", scheme), canvas);
+    for (const surface of [
+      canvas,
+      composer,
+      wing,
+      color("--scroll-thumb", scheme),
+      color("--scroll-thumb-hover", scheme),
+    ]) {
+      expect(contrast(color("--text", scheme), surface)).toBeGreaterThanOrEqual(
+        GRAPHIC,
+      );
     }
     for (const [selector, surface] of [
       [".composer-split > button", composer],
@@ -794,6 +801,22 @@ it.each(["dark", "light"] as const)(
         ).toBeGreaterThanOrEqual(AA);
   },
 );
+
+it("ships the design input's resting border in the canonical browser stylesheet", () => {
+  const selector = ".design-custom input:not(:focus)";
+  const css = readFileSync(
+    new URL("../../web/dist/assets/cadence.css", import.meta.url),
+    "utf8",
+  );
+  const borders: string[] = [];
+  parse(css).walkRules((rule) => {
+    if (rule.selectors.includes(selector))
+      rule.walkDecls("border-color", (decl) => {
+        borders.push(decl.value);
+      });
+  });
+  expect(borders).toContain(declaration(selector, "border-color"));
+});
 
 it("applies the reading budget to shared Markdown prose, not all controls", () => {
   expect(TOKENS.get("--reading-leading")).toBe("1.65");

@@ -441,7 +441,14 @@ export async function controlGeometry(selector, scroll = true) {
       right = Math.min(r.right, innerWidth),
       bottom = Math.min(r.bottom, innerHeight);
     const clips = [];
-    for (let p = el.parentElement; p; p = p.parentElement) {
+    // showModal() promotes the dialog, not its contents, into the top layer.
+    // Its own scrollport still clips; ancestors behind it no longer do.
+    const behindModal = el.closest("dialog:modal")?.parentElement;
+    for (
+      let p = el.parentElement;
+      p && p !== behindModal;
+      p = p.parentElement
+    ) {
       const css = getComputedStyle(p),
         x = css.overflowX !== "visible",
         y = css.overflowY !== "visible";
@@ -577,4 +584,66 @@ export function revealedCopySample(selector) {
     y,
     min: 3,
   };
+}
+
+// Bind the hit before input. A passive wheel can reach JS after compositor
+// scrolling, with different text already underneath the same screen point.
+export function bindToolWheel({ x, y }) {
+  const pane = document.querySelector(".chat-messages");
+  const head = pane.querySelector(".toolcall-head .chead-main");
+  const hit = document.elementFromPoint(x, y);
+  if (!head.contains(hit)) throw Error(`Wheel center moved: ${x},${y}`);
+  const positions = [];
+  let event, eventScrollTop;
+  pane.addEventListener(
+    "wheel",
+    (e) => {
+      event = e;
+      eventScrollTop = pane.scrollTop;
+    },
+    { once: true, capture: true, passive: true },
+  );
+  pane.addEventListener("scroll", () => positions.push(pane.scrollTop), {
+    passive: true,
+  });
+  opticalProbe.wheel = () => ({
+    hit: { tag: hit.tagName, class: hit.className, text: hit.textContent },
+    event: event && {
+      scrollTop: eventScrollTop,
+      target: event.target.className,
+      x: event.clientX,
+      y: event.clientY,
+      deltaY: event.deltaY,
+      trusted: event.isTrusted,
+      onHead: head.contains(event.target),
+      prevented: event.defaultPrevented,
+    },
+    positions,
+  });
+  opticalProbe.wheelHead = head;
+  return [innerWidth, innerHeight, devicePixelRatio];
+}
+
+export function latestInkTarget(s) {
+  return opticalProbe.stableFrames(() => {
+    const el = opticalProbe.latest;
+    if (!el || document.querySelector(s) !== el)
+      throw Error("Tool output lost Latest");
+    const point = opticalProbe.glyphSample(s, "Latest messages", null);
+    const [l, t, r, b] = point.glyph;
+    return {
+      rect: el.getBoundingClientRect().toJSON(),
+      point,
+      hits: [
+        [l + 1, (t + b) / 2],
+        [(l + r) / 2, (t + b) / 2],
+        [r - 1, (t + b) / 2],
+        [point.x, point.y],
+      ].map(([x, y]) => ({
+        x,
+        y,
+        button: document.elementFromPoint(x, y) === el,
+      })),
+    };
+  }, "Latest button and Range");
 }

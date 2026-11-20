@@ -123,9 +123,14 @@ For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds 
 
 ### Stable rendering and details
 
-An ordinary turn shows the user's message, then one speaker label over the reply in recorded order: message text, one compact trace row per thinking step or tool call, with nothing folded behind a summary.
+An ordinary turn shows the user's message, then one speaker label over the reply in recorded order.
+`traceGroups` folds a continuous stretch of three confirmed completed steps (two after answer prose) behind one disclosure; it never crosses prose or another user turn.
+An inactive thinking placeholder with no body can share a group but does not count as a result.
+Failed, unknown and in-flight calls stay visible.
+Revealing the process restores its keyed rows, not their detail bodies; focused or explicitly opened members stay readable through regrouping.
 A fine rail joins adjacent rows but stops at prose.
 A body-free observation shares the icon slot without offering a disclosure; only an opened detail has a glass backing.
+The disclosure fills the row, keeping the chevron in a fixed end column beside shrinkable text.
 A tool row names the tool and what it acted on, and reads its arguments and output only while opened.
 Opened details refresh when their full-content version, coordinates or execution state changes, even with the same parts count; reply termination makes a final read.
 Closing a detail or leaving its conversation retires pending reads, and stale results cannot replace the current selection.
@@ -173,6 +178,8 @@ The WebUI loads the newest turns first and reads earlier ones as the top of the 
 Content, image and opened-detail growth follows the bottom only while the reader is already following (within the existing 80px boundary); scrolling up keeps that reading position, earlier-page loading retains its anchor, and Latest messages explicitly resumes following.
 In the main conversation, `ChatWorkspace` passes its stable `keepEnd` callback to `useLazyWindow`'s `onContentResize`: the hook observes both the scroll container and registered row elements, so image/detail height changes can follow without a new head read or parent render.
 That callback reads the current `stick` ref and is shared with composer resizing; height changes never turn following back on.
+The in-flow composer ends the scrollport; its protected reading shelf fades to an opaque backing before the Latest button and reserves room for the final line.
+The shelf does not intercept input.
 Row removal unregisters its observation, and hook cleanup disconnects the observer and cancels its pending window sweep.
 
 The subagent view is not windowed: `useFollowResize` observes the mounted transcript body for initial layout and size changes.
@@ -251,7 +258,10 @@ A research call returns one entry per question in the order asked (`status`, the
 It holds no checkout barrier while awaiting research, so the existing worker barrier cannot deadlock its parent and status conversation can proceed during implementation.
 One coordinator turn per conversation is admitted at a time (bounded per owner); separate project owners remain independent.
 While that turn runs it takes further messages like an ordinary reply (see [Ordinary conversations](#ordinary-conversations)): they join the turn the mode names, change no mode or plan state and are never read as approval, exit or mode entry.
-A plan card persists across later messages until a new plan replaces it, the user exits or execution is admitted; a refused approval keeps the card.
+The owner retains one current proposal until replacement, mode exit or admission.
+**View current plan** at the conversation title opens it above the mounted transcript; refresh, further discussion or a new binding starts collapsed.
+No approval control follows later messages down the stream.
+Details disclose the full agreement, execution binding and (after an explicit revalidation in this view) the previous context.
 Plans and research in another conversation may proceed while an implementation runs; a conversation with its own accepted implementation cannot start another implementation or investigation until it settles.
 Research IDs are recorded only once accepted.
 WebUI and native sessions use the same scheduling and isolation rules in [lifetimes](lifetimes.md).
@@ -344,7 +354,8 @@ Without such an entry it states the tokens only; after a compaction, or while th
 Its title states the figures with the percentage (a figure above the window as more than 100%, never clamped), says the figure is as of the last completed model response and leaves out the messages after it; it adds no read or poll of its own.
 The cache item (`web/src/layout/CacheStatus.tsx`) states the share of the session's input tokens read from the provider's prompt cache, from the head read's session totals, green from 70%, amber from 40% and red below; its title gives the read, written and uncached counts, and it is a dash while those totals state no input tokens.
 The current conversation folder stays in the lower-right statusbar, without a duplicate directory line beneath the conversation heading; its chip shows the folder's own name, with the whole path as its title and in the picker.
-The conversation header is one line: the title (the session's name once it has one), a quiet note of the mode and where the session started (left out on phones, where the composer's Cadence control and the sidebar row say the same), an Archived mark for a conversation the history leaves out, the branch count of a forked session (it opens the Branches tab) with the way back to the latest branch, and a status only for a live workflow, a live or badly ended reply or a plan awaiting approval.
+The conversation header holds the title (the session's name once it has one), a quiet note of the mode and where the session started (left out on phones, where the composer's Cadence control and the sidebar row say the same), an Archived mark for a conversation the history leaves out, the branch count of a forked session (it opens the Branches tab) with the way back to the latest branch, and the current plan disclosure when a proposal exists.
+The controls can wrap on a narrow screen.
 The connection item is an always-present keyboard disclosure.
 Its summary names confirmed states; during read recovery it stays neutral.
 Opening it shows per-source diagnostics, a readonly refresh, or a sign-in action when access was revoked.
@@ -358,23 +369,29 @@ A download (`web/src/client/file-download.ts`) reads the file's exact bytes thro
 Its name filter narrows the entries already listed and reads nothing; the readonly/reference statement, which also says that a download is the file's own unredacted bytes, opens from the help crumb, while bounded-listing and limited-preview notes stay in place.
 A previewed file is shown verbatim through the Markdown code renderer: numbered lines, a copy action and, for a known extension, the bundled highlighter.
 The composer's Cadence control names off, armed for the next Send, confirmed on and unobserved states distinctly, including on phones; arming is neither a confirmed mode change nor plan approval.
+Beside Send it shows **Ordinary send** until armed.
 Off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
+In an observed new conversation the welcome and composer share the center.
+The two starters fill an empty draft only; existing records use the dock immediately and a confirmed first receipt moves the same editor there without replaying the command.
+The model and thinking level stay visible on the closed picker.
 The composer (`ChatComposer.tsx`) edits the conversation's draft and holds no message state: its text area grows with the text up to a bound, and a keyboard-operable handle on its top edge sets a fixed height remembered in that browser.
 Up and Down on the first and last visual line recall the prompts this tab sent in the checkout (Escape returns to the draft), and an `@` typed there opens a popup that completes a path one folder at a time from the bounded Files listing and inserts the same path reference as the Files pane; none of these sends, reads a file's contents or starts anything.
-The question rail at the transcript's right edge has one numbered bar per user message of the branch shown, opens on hover or focus, is one arrow-key group and is absent on phones.
+The question rail sits beside, not over, the native scrollbar.
+Its marks reveal labels or the list on hover or keyboard focus; the same arrow-key group jumps to loaded or earlier messages, and phones still hide it.
 Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
-The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike, each row's icon naming where it started; Running work holds only active replies, including ones still starting, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
-A conversation row is its title and last-modified time; a second line appears only for a live workflow's phase or a reply that is not simply completed.
-A history row also offers Rename and Archive (`ConversationRow.tsx`), revealed on hover or focus and always shown on touch screens; a row under Running work offers neither.
+The sidebar lists active conversations before the paged history.
+A reply and its linked active workflows share one conversation row even when it is archived or outside the loaded page.
+A static activity mark is separate from the selected background; changing elapsed time or workflow phase does not rewrite the row.
+A stale observation is not a settled run.
+Eligible history rows offer Rename and Archive (`ConversationRow.tsx`), revealed on hover or focus and always shown on touch screens.
 Rename turns the row into a field: Enter or Save requests the name, Escape or leaving the row keeps the recorded one, an emptied field clears the name so the first message titles the conversation again, and a name over the limit is refused in the browser.
 The history heading's archive control swaps the list for the archived conversations (the `conversations` read with `archived`, read only while shown and never on a timer), each with Unarchive; a failed read there says so and is never an empty list.
 Each request is one command and nothing is changed ahead of it: the row says what is in flight, an accepted or unknown outcome re-reads the lists (and the head of the conversation, when it is the open one), and only those reads change a title or a list.
 A refusal that changed nothing is a toast, and an unknown outcome stays under its row without a retry.
 When the live owner cannot take a history action, the button is disabled and its reason is available on the control and in the footer's connection details; readiness changes never insert a notice into the history or archive list.
-History rows are grouped by this browser's calendar day (today, yesterday, earlier), and a filter box narrows the rows already listed by title and reads nothing: Running work is never filtered, and pages not loaded are not searched.
-Running work counts reply/workflow/run rows, not distinct conversations; an unreadable count is labelled unobserved, never zero.
-There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as one line; an active one is also listed under Running work.
-The lower-left Subagents dock follows the open conversation, not the project-wide Running work list.
+History rows are grouped by this browser's calendar day (today, yesterday, earlier), and a filter box narrows the rows already listed by title and reads nothing: active rows are never filtered, and pages not loaded are not searched.
+A workflow disclosure identifies each linked run; unattributed work has its own compact disclosure rather than a fabricated session.
+The lower-left Subagents dock follows the open conversation, not the whole activity roster.
 Active candidate IDs come from that conversation's owner-issued roster links; retained IDs in Pi or browser history are hints, not ownership (a fork may copy them).
 The chat lines and dock share one workflow reader.
 It admits a run only when the returned ID matches the request and its immutable `execution.version.conversation.id` matches the open session; a foreign or unattributed run supplies no rows, counts, transcript link or further live polling in this conversation.
@@ -633,9 +650,10 @@ These views open in the center over the conversation, which stays mounted (draft
 Subagent transcript polling and lazy details follow [Workflow tool observations](#workflow-tool-observations).
 The chat reads the newest workflows of the terminal's and the browser's lists at first (`RUN_WINDOW` each) and earlier ones while the loaded turns could hold them.
 A run that cannot be read again keeps its last observation with an unavailable note; an ID never read (a terminal attempt the owner refused leaves one) shows nothing and is retried every ten seconds, never taken as settled or absent.
-A live workflow's phase leads the conversation's header and sidebar status in either mode, but a reply that ended badly keeps its own status, beside the phase in the header and in its place in the sidebar row (the workflow is listed under Running work); a plan awaiting approval also stays beside it.
-Running work lists active workflows with their exact-run cancel; one that belongs to a browser conversation opens that conversation, a native-started one opens its run card.
-In Cadence mode a failed, interrupted or unknown turn keeps its actual status in the header and sidebar; approval is available after a failed, canceled or timed-out turn and waits while the turn is live or unknown.
+The transcript line and run detail keep phase and step progress; the history row stays quiet until its last active item settles.
+Workflow details retain exact-run cancel under its existing authority.
+A failed, interrupted or unknown turn retains its recorded status.
+Approval is available after a failed, canceled or timed-out turn and waits while the turn is live or unknown.
 An uncertain approval keeps its original command ID in this tab's sessionStorage where available and observes that exact workflow as well as the conversation's run links.
 It blocks further approval/revalidation until resolved; refresh never repeats the command.
 Only a reliable no-effect refusal clears the attempt for a fresh action, while observed conversation consumption resolves an accepted one.

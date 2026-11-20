@@ -1,6 +1,7 @@
 @import "tailwindcss" source(none);
 @import "./optical-tokens.css";
 @import "./reference.css";
+@import "./components/workspace/design.css";
 @source "./**/*.{ts,tsx}";
 /* Cadence task-workspace chrome restyled from pi-web-ui web/src/styles.css
  * e8bab487af208bc9a1ab60a821652323f598127f (base, topbar/chip/tb-tab/panel-toggle,
@@ -690,7 +691,7 @@ summary:focus-visible,
   opacity: 0.55;
 }
 .resize-handle:focus-visible {
-  border-left: 2px solid var(--accent);
+  border-left: 2px solid var(--text);
   box-shadow: none;
   transition: none;
   outline: none;
@@ -3161,7 +3162,9 @@ summary:focus-visible,
 }
 /* The scroller ends at the top of the in-flow dock, even as the editor
    grows. Continue its canvas under the glass and through the bottom gutter.
-   A welcome, loading hint or empty draft alone doesn't need a reading shelf. */
+   The confirmed receipt can precede the first transcript read. A welcome,
+   loading hint or empty draft alone doesn't need a reading shelf. */
+.chat-workspace[data-entry="received"],
 .chat-workspace:has(
   > .chat-messages-wrap
     > .chat-messages
@@ -4768,14 +4771,12 @@ button.file-item:hover:not(:disabled),
   padding: 0;
   list-style: none;
 }
-.workflow-board > ul,
-.plan-context {
+.workflow-board > ul {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
   gap: 8px;
 }
-.workflow-task,
-.plan-context > p {
+.workflow-task {
   position: relative;
   background: var(--bg-elev);
   border: 1px solid var(--glass-border);
@@ -4786,8 +4787,7 @@ button.file-item:hover:not(:disabled),
   padding: 12px;
 }
 @media (hover: hover) {
-  .workflow-task:hover,
-  .plan-context > p:hover {
+  .workflow-task:hover {
     background-image: radial-gradient(
       ellipse at var(--spot-x, 50%) var(--spot-y, 0%),
       var(--accent-soft),
@@ -4964,6 +4964,16 @@ button.file-item:hover:not(:disabled),
 }
 .workflow-plan .primary {
   margin-top: 12px;
+}
+/* Keep the inline actions themselves above the card's line box for pointer
+   hits all the way to their border, without moving either action. */
+[data-plan-proposal] > button {
+  position: relative;
+}
+/* Preserve the reading rhythm when the exact agreement is disclosed as text
+   (not a second rendered copy of the plan). */
+[data-plan-proposal] > details > pre {
+  line-height: var(--reading-leading);
 }
 .workflow-card {
   padding: 12px;
@@ -5349,6 +5359,10 @@ button.file-item:hover:not(:disabled),
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The small reasoning caption needs primary ink even for a thin em dash. */
+.model-trigger .model-trigger-level {
+  color: var(--text-primary);
+}
 .model-trigger.remembered .model-trigger-text {
   color: var(--text-faint);
 }
@@ -5656,13 +5670,20 @@ button.link:hover:not(:disabled) {
 }
 
 @media (max-width: 900px) {
+  /* The workspace ends above the in-flow status bar, even when it wraps.
+     Make it the compact menu's fixed containing block, not the viewport or
+     the resizable (and sometimes centered) editor. */
+  .chat-workspace:has(.model-popover) {
+    contain: layout;
+  }
   .model-popover {
     position: fixed;
     left: 8px;
     right: 8px;
     bottom: 8px;
     width: auto;
-    max-height: 70vh;
+    max-height: min(460px, calc(100% - 16px));
+    overflow-y: auto;
   }
   .model-trigger {
     max-width: 160px;

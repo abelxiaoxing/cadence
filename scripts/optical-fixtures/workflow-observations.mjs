@@ -5,26 +5,46 @@ import { agentFeed, cwd, liveDock, validatingChat } from "./records.mjs";
 
 export async function observeValidation(probe, row, site) {
   const { go, chat, wait, click, parkPointer, run } = probe;
-  const button = ".workflow-plan > button.primary";
+  const panel = ".current-plan-panel";
+  const plan = `${panel} [data-plan-proposal]`;
+  const button = `${plan} > button.primary`;
   const busy = `${button}:disabled[aria-busy="true"]`;
   const ready = `${button}:enabled:not([aria-busy])`;
   const label = "Validate plan again";
   const readyState = `document.querySelector('${ready}')?.textContent === '${label}'`;
-  await go(chat(validatingChat), button);
+  const trigger =
+    '.conversation-header .current-plan-trigger[aria-expanded="false"]';
+  await go(chat(validatingChat), `.chat-workspace:has(.chat-turn) ${trigger}`);
   await wait(
-    `${readyState} && document.querySelector('.model-trigger:not(.remembered)')?.textContent === 'optical · Medium'`,
+    `document.querySelector('.model-trigger:not(.remembered) .model-trigger-text')?.textContent === 'optical' && document.querySelector('.model-trigger-level')?.textContent === 'Thinking · Medium'`,
   );
-  const start = site.failures.length;
-  const pending = site.holdRead({
+  assert.equal(await run((s) => document.querySelectorAll(s).length, plan), 0);
+  const request = {
     kind: "conversation-models",
     location: { id: validatingChat, cwd },
-  });
+  };
+  const reads = () =>
+    site.modelReads.filter((r) => r.location?.id === validatingChat).length;
+  const before = reads();
+  const start = site.failures.length;
+  await click(trigger, "View current plan");
+  await wait(readyState);
+  assert.equal(await run((s) => document.querySelectorAll(s).length, plan), 1);
+  row.viewReads = reads() - before;
+  assert.equal(row.viewReads, 0, "Viewing the plan requested validation");
+  assert.deepEqual(site.failures.slice(start), []);
+  // Leave the status line space to wrap when the panel reports validation.
+  // Position the ready control once, never correct its busy capture.
+  await run(controlGeometry, ready, true);
+  const pending = site.holdRead(request);
   await click(ready, label);
   const held = await pending();
   try {
     await wait(
       `document.querySelector('${busy}')?.textContent === 'Validating plan…'`,
     );
+    row.validationReads = reads() - before;
+    assert.equal(row.validationReads, 1);
     await parkPointer();
     await painted(probe, row, "busy", async () => {
       const geometry = await run(controlGeometry, busy, false);
@@ -46,11 +66,12 @@ export async function observeValidation(probe, row, site) {
   const error =
     "Plan validation did not finish (invalid). No implementation was approved; observe the plan before trying again.";
   await wait(
-    `${readyState} && [...document.querySelectorAll('.chat-messages [role="alert"]')].some(el => el.textContent === ${JSON.stringify(error)})`,
+    `${readyState} && [...document.querySelectorAll('${panel} [role="alert"]')].some(el => el.textContent === ${JSON.stringify(error)})`,
   );
   row.afterReadFailure = {
     label,
     error,
+    catalogRefreshes: reads() - before - row.validationReads,
     unexpectedRequests: site.failures.slice(start),
   };
   assert.deepEqual(row.afterReadFailure.unexpectedRequests, []);
