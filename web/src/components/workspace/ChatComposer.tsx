@@ -98,6 +98,7 @@ export interface ChatComposerProps {
   running: boolean;
   flow?: boolean;
   canStop: boolean;
+  stopBlocked?: string;
   onStop(): void;
   canSend: boolean;
   onSend(): void;
@@ -135,6 +136,7 @@ export function ChatComposer({
   running,
   flow,
   canStop,
+  stopBlocked,
   onStop,
   canSend,
   onSend,
@@ -281,7 +283,7 @@ export function ChatComposer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.nativeEvent.isComposing) return;
+    if (locked || event.nativeEvent.isComposing) return;
     if (open) {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -334,6 +336,7 @@ export function ChatComposer({
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      if (event.repeat) return;
       // Into the running reply: Enter steers, Alt+Enter queues behind it.
       if (running && input) {
         if (input.enabled) input.onInput(event.altKey ? "queue" : "steer");
@@ -364,7 +367,14 @@ export function ChatComposer({
       }}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!running) onSend();
+        if (running) return;
+        const submitter = (event.nativeEvent as SubmitEvent | undefined)
+          ?.submitter;
+        // Keyboard activation of Send should not strand focus on a button
+        // about to be disabled or replaced by Stop.
+        if (canSend && submitter && document.activeElement === submitter)
+          inputRef.current?.focus({ preventScroll: true });
+        onSend();
       }}
     >
       <input
@@ -510,15 +520,16 @@ export function ChatComposer({
       )}
       <textarea
         ref={inputRef}
-        disabled={locked}
+        // A pending Send freezes its exact draft, but must not blur the
+        // focused editor while the very same form moves to its reading dock.
+        disabled={locked && !focused}
+        readOnly={locked && focused}
         aria-label={t("Message")}
         aria-autocomplete={location ? "list" : undefined}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open ? rowId : undefined}
         value={draft}
-        placeholder={t(
-          "Message, or /cadence to enter continuous Cadence mode…",
-        )}
+        placeholder={t("Message")}
         rows={2}
         onChange={(event) => {
           setCaret(event.target.selectionStart);
@@ -552,53 +563,61 @@ export function ChatComposer({
         >
           <FiImage aria-hidden="true" />
         </button>
-        <CadenceModeButton {...cadence} />
         <ModelPicker {...model} />
-        <span className="composer-hint">{hint}</span>
-        {running && input?.enabled && (
-          <span className="composer-split">
+        <span className="composer-hint">
+          {running && input?.enabled ? hint : null}
+        </span>
+        <div className="composer-toolbar composer-delivery">
+          <CadenceModeButton {...cadence} ordinaryLabel={t("Ordinary send")} />
+          {running && input?.enabled && (
+            <span className="composer-split">
+              <button
+                type="button"
+                className="composer-queue"
+                aria-label={t("Queue behind this reply")}
+                title={t("Queue: sent when this reply ends (Alt+Enter)")}
+                onClick={() => input.onInput("queue")}
+              >
+                <FiList aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="composer-steer"
+                aria-label={t("Steer this reply")}
+                title={t("Steer: read at the model's next step (Enter)")}
+                onClick={() => input.onInput("steer")}
+              >
+                <FiArrowUp aria-hidden="true" />
+              </button>
+            </span>
+          )}
+          {running ? (
             <button
               type="button"
-              className="composer-queue"
-              aria-label={t("Queue behind this reply")}
-              title={t("Queue: sent when this reply ends (Alt+Enter)")}
-              onClick={() => input.onInput("queue")}
+              className="danger"
+              aria-label={t("Stop response")}
+              title={(!canStop && stopBlocked) || t("Stop response")}
+              disabled={!canStop}
+              onClick={onStop}
             >
-              <FiList aria-hidden="true" />
+              <FiSquare aria-hidden="true" />
             </button>
+          ) : (
             <button
-              type="button"
-              className="composer-steer"
-              aria-label={t("Steer this reply")}
-              title={t("Steer: read at the model's next step (Enter)")}
-              onClick={() => input.onInput("steer")}
+              aria-label={t("Send")}
+              title={(!canSend && status) || hint || t("Send")}
+              onMouseDown={(event) => {
+                if (document.activeElement === inputRef.current)
+                  event.preventDefault();
+              }}
+              type="submit"
+              className="primary"
+              disabled={!canSend}
             >
               <FiArrowUp aria-hidden="true" />
             </button>
-          </span>
-        )}
-        {running ? (
-          <button
-            type="button"
-            className="danger"
-            aria-label={t("Stop response")}
-            title={t("Stop response")}
-            disabled={!canStop}
-            onClick={onStop}
-          >
-            <FiSquare aria-hidden="true" />
-          </button>
-        ) : (
-          <button
-            aria-label={t("Send")}
-            title={t("Send")}
-            type="submit"
-            className="primary"
-            disabled={!canSend}
-          >
-            <FiArrowUp aria-hidden="true" />
-          </button>
-        )}
+          )}
+        </div>
       </div>
     </form>
   );

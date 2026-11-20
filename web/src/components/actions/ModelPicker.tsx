@@ -84,6 +84,7 @@ export function ModelPicker({
   draftModel,
   onPreviewChoice,
   locked,
+  lockReason,
   open,
   onOpenChange,
   onChanged,
@@ -101,6 +102,7 @@ export function ModelPicker({
   onPreviewChoice?(choice: ModelSelector): void;
   /** This conversation's reply is live; the owner refuses a change now. */
   locked: boolean;
+  lockReason?: string;
   open: boolean;
   onOpenChange(open: boolean, reason?: "chosen"): void;
   /** An installed choice changed the owner configuration. */
@@ -281,9 +283,10 @@ export function ModelPicker({
                 : catalogError
                   ? t("Model list unavailable")
                   : t("Choose a model");
+  const shown = current ?? history;
   const buttonText = current
     ? label(current)
-    : deferred && history
+    : history
       ? t("Last used: {model}", { model: label(history) })
       : statusText;
   return (
@@ -297,7 +300,8 @@ export function ModelPicker({
         aria-expanded={open}
         title={
           locked
-            ? t("Switch models after the current reply finishes.")
+            ? (lockReason ??
+              t("Switch models after the current reply finishes."))
             : draftModel
               ? t("Choose now; the model is verified when you send.")
               : history
@@ -317,7 +321,15 @@ export function ModelPicker({
         }}
       >
         <FiCpu aria-hidden="true" />
-        <span className="model-trigger-text">{buttonText}</span>
+        <span className="model-trigger-text">
+          {current?.model ??
+            (history
+              ? t("Last used: {model}", { model: history.model })
+              : statusText)}
+        </span>
+        <span className="model-trigger-level" title={t("Thinking")}>
+          {t("Thinking")} · {shown ? t(LEVEL_LABELS[shown.thinking]) : "—"}
+        </span>
         <FiChevronDown aria-hidden="true" />
       </button>
       {open && (
@@ -468,7 +480,11 @@ export function ModelPicker({
                   })}
                   aria-pressed={current?.thinking === level.level}
                   disabled={
-                    !selectionEnabled || !level.selectable || pending || locked
+                    !selectionEnabled ||
+                    currentEntry.eligibility !== "candidate" ||
+                    !level.selectable ||
+                    pending ||
+                    locked
                   }
                   onClick={() => void choose(currentEntry, level.level)}
                 >
@@ -489,7 +505,10 @@ export function ModelPicker({
               </button>
             )}
             {locked && (
-              <p>{t("Switch models after the current reply finishes.")}</p>
+              <p>
+                {lockReason ??
+                  t("Switch models after the current reply finishes.")}
+              </p>
             )}
             {catalog?.status === "capacity" && (
               <p role="alert">

@@ -1,0 +1,135 @@
+/* A fresh, observed conversation uses the same form (and the same textarea)
+ * as its transcript. Equal flexible space above and below centres the group. */
+.chat-workspace[data-entry="new"]::after {
+  content: "";
+  flex: 1 1 0;
+  min-height: 0;
+  pointer-events: none;
+}
+.chat-workspace[data-entry] > .chat-welcome {
+  flex: 0 1 auto;
+  width: 100%;
+  margin: 0 auto;
+  padding: 8px 14px 18px;
+  gap: 8px;
+}
+.chat-workspace[data-entry] > .chat-welcome h2 {
+  margin: 2px 0;
+}
+.entry-starters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.chat-welcome .entry-starters > button {
+  min-height: 30px;
+  margin: 0;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* Keep the two model facts visible in the closed control. A long model can
+ * take a second line instead of truncating the reasoning setting with it. */
+.composer-toolbar > .model-picker {
+  max-width: 100%;
+}
+.composer-toolbar .model-trigger {
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.composer-toolbar .model-trigger-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+.model-trigger-level {
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.composer-toolbar > .composer-delivery {
+  max-width: 100%;
+  margin: 0 0 0 auto;
+  padding: 0;
+  border: 0;
+  justify-content: flex-end;
+}
+.composer-delivery > :is(.primary, .danger) {
+  margin-inline-start: 0;
+}
+@media (min-width: 901px) {
+  .chat-workspace[data-entry="new"] .model-popover {
+    max-height: min(460px, 48dvh);
+  }
+}
+
+/* This disclosure covers just the transcript viewport, without resizing it,
+ * unmounting rows, changing their scroll offset or taking composer focus. */
+.chat-workspace[data-entry] > .conversation-header:has(.current-plan-trigger) {
+  flex-wrap: wrap;
+}
+.conversation-header > .current-plan-trigger {
+  flex: none;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border-color: var(--accent-soft);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 12px;
+}
+.chat-messages-wrap[data-reviewing] > :not(.current-plan-panel) {
+  visibility: hidden;
+}
+.current-plan-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px var(--chat-inset) 24px;
+  background: var(--bg);
+  overflow-wrap: anywhere;
+}
+.current-plan-panel > .workflow-plan {
+  min-width: 0;
+  margin-inline: auto;
+}
+
+/* No idle animation. The scoped event also lights the shell's existing mark;
+ * its text remains available without motion or a visible mark on tiny phones. */
+.conversation-feedback:empty {
+  display: none;
+}
+.conversation-feedback[data-event] {
+  position: absolute;
+  inset-inline-end: var(--chat-inset);
+  top: 100%;
+  z-index: 2;
+  padding: 3px 9px;
+  border-radius: 0 0 8px 8px;
+  background: var(--bg-elev);
+  color: var(--accent-text);
+  font-size: 11px;
+  pointer-events: none;
+}
+.chat-workspace[data-entry] > .conversation-header {
+  position: relative;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .app:has(.chat-workspace:not([hidden]) .conversation-feedback[data-event])
+    .brand-logo
+    svg {
+    animation: entry-received 680ms ease-out;
+  }
+  @keyframes entry-received {
+    42% {
+      transform: scale(1.14) rotate(-6deg);
+    }
+  }
+}
