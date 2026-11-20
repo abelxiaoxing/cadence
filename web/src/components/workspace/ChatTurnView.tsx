@@ -49,6 +49,8 @@ export const ChatTurnView = memo(function ChatTurnView({
   onVersion,
   off = false,
   reading = false,
+  expandedSteps,
+  onExpandSteps,
 }: {
   turn: TurnSource;
   /** Present when the next message may continue from this turn's end: it only
@@ -66,6 +68,9 @@ export const ChatTurnView = memo(function ChatTurnView({
   off?: boolean;
   /** The transcript reader left follow mode. */
   reading?: boolean;
+  /** Only an explicit group disclosure survives a windowed turn's unmount. */
+  expandedSteps?: ReadonlySet<string>;
+  onExpandSteps?(turnId: string, steps: ReadonlySet<string>): void;
 }) {
   const { t, tx, locale } = useT();
   const { header } = turn;
@@ -132,6 +137,7 @@ export const ChatTurnView = memo(function ChatTurnView({
     // Both can replace the set of individually displayed DOM rows.
     void turn.steps;
     void kept;
+    void expandedSteps;
     const body = replyBody.current;
     if (!reading || !body || typeof IntersectionObserver === "undefined") {
       setInView((previous) => (previous.size ? new Set() : previous));
@@ -159,7 +165,7 @@ export const ChatTurnView = memo(function ChatTurnView({
     for (const row of body.querySelectorAll("[data-reading-step]"))
       observer.observe(row);
     return () => observer.disconnect();
-  }, [reading, turn.steps, kept]);
+  }, [reading, turn.steps, kept, expandedSteps]);
   function renderPart({ step, index, key }: IndexedStep, grouped = false) {
     if (step.role === "tool" || step.role === "thinking") {
       const keep = () =>
@@ -203,7 +209,9 @@ export const ChatTurnView = memo(function ChatTurnView({
   const timeline = traceGroups(turn, replies).flatMap((entry) => {
     if ("step" in entry) return [renderPart(entry)];
     const { members, count } = entry;
-    const open = members.some(({ key }) => kept.has(key));
+    const open = members.some(
+      ({ key }) => kept.has(key) || expandedSteps?.has(key),
+    );
     if (!open && reading && members.some(({ key }) => inView.has(key)))
       return members.map((part) => renderPart(part));
     const results = members.filter(({ step }) => step.role === "tool").length;
@@ -227,16 +235,22 @@ export const ChatTurnView = memo(function ChatTurnView({
       >
         <CollapsibleHead
           open={open}
-          onToggle={() =>
-            setKept((prior) => {
+          onToggle={() => {
+            const toggle = (prior?: ReadonlySet<string>) => {
               const next = new Set(prior);
               for (const { key } of members) {
                 if (open) next.delete(key);
                 else next.add(key);
               }
               return next;
-            })
-          }
+            };
+            if (onExpandSteps)
+              onExpandSteps(turn.renderId ?? header.id, toggle(expandedSteps));
+            // Without windowing the choice is local too. Collapse always
+            // releases member interaction/visibility holds in this group.
+            if (!onExpandSteps || open) setKept(toggle);
+            if (open) setInView(toggle);
+          }}
           headClassName="trace-group-head"
           titleText={breakdown}
           icon={<FiLayers aria-hidden="true" />}

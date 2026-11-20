@@ -3,6 +3,10 @@
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
+import type {
+  Activity,
+  ActivityDiscovery,
+} from "../../src/service/contracts/activity.ts";
 import type { ChatSummary } from "../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
 import { ServiceClient } from "../../src/service-client.ts";
@@ -355,6 +359,131 @@ it("pins one session until its last independent reply or linked run leaves the r
   expect(settled).toContain(
     'class="session-item active" aria-current="true" title="Pinned session"',
   );
+});
+it("joins shared terminal reports to their project's history without consuming unrelated discovery or owner controls", () => {
+  const listed = summary("Mineral notes", "completed"),
+    idle = summary("Older notes", "completed");
+  const flow = workflow("Inspect facets"),
+    otherFlow = workflow("Inspect facets");
+  const live = { epoch: flow.epoch, commandId: id() };
+  const project = "/minerals";
+  const terminal: Activity = {
+    source: "terminal",
+    id: flow.id,
+    epoch: null,
+    instance: id(),
+    cwd: `${project}/samples`,
+    sessionId: listed.id,
+    leaf: "0123abcd",
+    history: "shared",
+    observedAt: 1000,
+    phase: "turn",
+    freshness: "current",
+    executionCwd: null,
+  };
+  const second = { ...terminal, instance: id(), leaf: "8765dcba" };
+  const incompatible = {
+    ...terminal,
+    instance: id(),
+    history: "unavailable" as const,
+  };
+  const offPage = { ...terminal, id: id(), sessionId: "unwritten" };
+  const draw = (
+    native: Activity[],
+    reply: boolean,
+    flows: WorkflowRun[],
+    partial = false,
+  ) => {
+    const value: ActivityDiscovery = {
+      kind: "activity-discovery",
+      epoch: flow.epoch,
+      observedAt: 1000,
+      completeness: partial ? "partial" : "complete",
+      unavailable: Number(partial),
+      projects: [
+        { path: "/other", activities: [{ ...terminal, cwd: "/other" }] },
+        {
+          path: project,
+          activities: [
+            ...native,
+            offPage,
+            incompatible,
+            { ...terminal, id: id(), sessionId: null },
+            ...flows.map((r) => ({
+              ...terminal,
+              source: "workflow" as const,
+              id: r.id,
+              epoch: r.epoch,
+              instance: null,
+            })),
+            ...(reply
+              ? [
+                  {
+                    ...terminal,
+                    source: "turn" as const,
+                    id: live.commandId,
+                    epoch: live.epoch,
+                    instance: null,
+                  },
+                ]
+              : []),
+          ],
+        },
+      ],
+    };
+    return historyView({
+      chats: [idle, listed],
+      activeChats: reply ? [{ ...listed, status: "running", live }] : [],
+      workflows: flows,
+      workflowLinks: flows.map((r) => ({
+        runId: r.id,
+        conversationId: listed.id,
+      })),
+      canCancelWorkflow: (r) => r === flow,
+      onCancelWorkflow: async () => {},
+      discovery: {
+        value,
+        project,
+        error: "",
+        opening: false,
+        onOpen: () => {},
+      },
+    });
+  };
+  const [outside, pinned, history] = draw([terminal, second], true, [
+    flow,
+    otherFlow,
+  ]).split(
+    /<section class="lp-section grow"|<header class="lp-section-header"/,
+  );
+  expect(pinned.match(/class="session-title">Mineral notes</g)).toHaveLength(1);
+  expect(history).not.toContain(listed.title);
+  expect(pinned).toContain(`aria-label="Details · ${listed.title} (4)"`);
+  for (const a of [terminal, second])
+    expect(pinned).toContain(`${a.leaf} · ${a.instance} · ${a.id}`);
+  expect(pinned).toContain(
+    `aria-label="Cancel workflow — request stop · ${flow.goal} · ${flow.id}">`,
+  );
+  expect(pinned).toContain(
+    `aria-label="Cancel workflow — request stop · ${otherFlow.goal} · ${otherFlow.id}" disabled`,
+  );
+  expect(pinned.match(/class="conversation-stop"/g)).toHaveLength(2);
+  expect(pinned).toContain('title="Conversation unwritten"');
+  expect(pinned).not.toContain('aria-label="Rename Conversation unwritten');
+  expect(outside).not.toMatch(/Owner workflow|Owner turn/);
+  expect(outside.match(/Terminal turn \(observe only\)/g)).toHaveLength(3);
+  expect(outside).toContain("/other");
+  expect(outside).toContain("History configuration differs");
+  expect(outside).toContain("Unattributed work");
+  const stale = draw([{ ...second, freshness: "unknown" }], false, [], true);
+  expect(stale).toContain("Missing work is not known to have finished");
+  expect(stale).toContain(
+    `title="${listed.title}"><span class="status-dot busy history-activity-mark" role="img" aria-label="Stale observation"`,
+  );
+  expect(stale).toContain('class="lp-count">Not observed');
+  expect(
+    draw([], false, []).split('<header class="lp-section-header"')[1],
+  ).toContain(`title="${listed.title}"`);
 });
 it("keeps off-page, archived, unwritten and unlinked activity discoverable without inventing a session summary", () => {
   const fresh = summary("First send", "starting");

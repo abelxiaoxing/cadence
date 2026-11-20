@@ -1,16 +1,25 @@
-// Drive only the title disclosure and new readonly snapshots. React's own SSR
-// render-phase updates let us examine the next render with the same local state.
+// React's own SSR render-phase updates let us examine the next render with the
+// same workspace state. All command transports below are in-memory fixtures.
 import { Children, isValidElement, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import type { ChoiceVersion } from "../../src/service/contracts/models.ts";
-import type { CadenceConversation } from "../../src/service/contracts/workbench.ts";
+import type {
+  CadenceConversation,
+  WorkbenchCommand,
+} from "../../src/service/contracts/workbench.ts";
 import {
   decodeWorkflowPlan,
+  decodeWorkflowProposal,
   readableWorkflowPlan,
 } from "../../src/service/contracts/workflow.ts";
 import { ServiceClient } from "../../src/service-client.ts";
+import {
+  ChatComposer,
+  type ChatComposerProps,
+} from "../../web/src/components/workspace/ChatComposer";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
+import { currentToasts } from "../../web/src/layout/toasts";
 import { plan } from "../helpers/workflow-plan";
 import { transport } from "./fixtures";
 
@@ -91,8 +100,7 @@ const proposal = (goal: string) => ({
   plan: { ...plan(), goal },
 });
 
-function toggleTitle(tree: ReturnType<typeof ChatWorkspace>) {
-  // Only a header button is driven, never the plan's action controls.
+function titleButton(tree: ReturnType<typeof ChatWorkspace>) {
   const header = Children.toArray(tree.props.children).find(
     (el) => isValidElement(el) && el.type === "header",
   );
@@ -103,9 +111,19 @@ function toggleTitle(tree: ReturnType<typeof ChatWorkspace>) {
       isValidElement<{ className?: string }>(el) &&
       el.props.className === "current-plan-trigger",
   );
-  if (!isValidElement<{ onClick(): void }>(trigger))
+  if (
+    !isValidElement<{
+      onClick(): void;
+      title: string;
+      "aria-expanded": boolean;
+    }>(trigger)
+  )
     throw Error("missing trigger");
-  trigger.props.onClick();
+  return trigger.props;
+}
+
+function toggleTitle(tree: ReturnType<typeof ChatWorkspace>) {
+  titleButton(tree).onClick();
 }
 
 it("opens and closes the current plan at the title, not the stream tail; later discussion, replacement and cold mount start collapsed", () => {
@@ -317,3 +335,191 @@ it.each([2, undefined, 3] as const)(
     expect(prepare).not.toHaveBeenCalled();
   },
 );
+
+function composer(tree: ReturnType<typeof ChatWorkspace>) {
+  const dock = Children.toArray(tree.props.children).find(
+    (el) =>
+      isValidElement<{ className?: string }>(el) &&
+      el.props.className === "composer-dock",
+  );
+  if (!isValidElement<{ children: React.ReactNode }>(dock))
+    throw Error("missing dock");
+  const editor = Children.toArray(dock.props.children).find(
+    (el) => isValidElement(el) && el.type === ChatComposer,
+  );
+  if (!isValidElement<ChatComposerProps>(editor)) throw Error("missing editor");
+  return editor.props;
+}
+
+it("Enter cannot transfer A's phrase to approvable B; a fresh edit after reviewing B names only B", async () => {
+  const model = {
+    ...proposal("").model,
+    epoch: crypto.randomUUID(),
+    catalogId: crypto.randomUUID(),
+  };
+  const first = decodeWorkflowProposal({
+    ...proposal("Ship text export"),
+    epoch: model.epoch,
+    model,
+  });
+  const second = decodeWorkflowProposal({
+    ...first,
+    id: crypto.randomUUID(),
+    digest: "c".repeat(64),
+    plan: { ...first.plan, goal: "Replace export with import" },
+  });
+  const state = {
+    id: "chat",
+    head: "turn-1",
+    revision: 1,
+    enabled: true,
+    proposal: first,
+    runs: [],
+  };
+  f.state = state;
+  f.catalog = model;
+  const commands: WorkbenchCommand[] = [],
+    grant = crypto.randomUUID(),
+    prepare = vi.fn();
+  let allowB = false;
+  const client = new ServiceClient(
+    transport({
+      workbenchCommand: async (cmd) => {
+        commands.push(cmd);
+        if (
+          !allowB ||
+          (cmd.kind !== "cadence-prepare" && cmd.kind !== "cadence-approve") ||
+          cmd.conversationId !== state.id ||
+          cmd.revision !== 2 ||
+          cmd.proposalId !== second.id ||
+          cmd.digest !== second.digest
+        )
+          throw Error("not the reviewed fixture proposal");
+        if (commands.length === 1 && cmd.kind === "cadence-prepare")
+          return {
+            kind: "ok",
+            value: {
+              kind: "cadence-grant",
+              commandId: cmd.commandId,
+              revision: 2,
+              proposal: second,
+              expiresAt: Date.now() + 60_000,
+              grant,
+            },
+          };
+        if (
+          commands.length === 2 &&
+          cmd.kind === "cadence-approve" &&
+          cmd.grant === grant
+        )
+          return {
+            kind: "ok",
+            value: { kind: "accepted", commandId: cmd.commandId },
+          };
+        throw Error("unexpected command");
+      },
+    }),
+  );
+  const phrase = "按计划实施";
+  let fresh: ChatComposerProps | undefined;
+  const reviewed: ReturnType<typeof ChatWorkspace>[] = [];
+  function Probe() {
+    const [step, advance] = useState(0);
+    const tree = ChatWorkspace({
+      client,
+      id: "chat",
+      workspaceId: "workspace",
+      initialCwd: "/fixture",
+      enabled: true,
+      modelAvailability: {
+        status: "ready",
+        epoch: model.epoch,
+        attachmentVersion: 1,
+      },
+      prepareForPlan: prepare,
+      prepareForSend: prepare,
+      onModelChanged: f.no,
+      onChanged: f.no,
+      onReferenceUsed: f.no,
+    });
+    const edit = composer(tree),
+      title = titleButton(tree);
+    switch (step) {
+      case 0:
+        title.onClick();
+        break;
+      case 1:
+        reviewed.push(tree);
+        edit.onDraft(phrase);
+        break;
+      case 2:
+        expect(edit.draft).toBe(phrase);
+        f.state = { ...state, revision: 2, proposal: second };
+        break;
+      case 3:
+      case 4:
+        expect(title.title).toBe(second.plan.goal);
+        expect(title["aria-expanded"]).toBe(step === 4);
+        expect(edit.canSend).toBe(true);
+        expect(edit.draft).toBe(phrase);
+        edit.onSend();
+        expect(currentToasts().at(-1)?.text).toContain(
+          "Review it from the conversation title",
+        );
+        expect(commands).toEqual([]);
+        if (step === 3) title.onClick();
+        else {
+          reviewed.push(tree);
+          edit.onDraft("");
+        }
+        break;
+      case 5:
+        edit.onDraft(phrase);
+        break;
+      case 6:
+        // A poll returns new objects, not a new proposal or grant.
+        f.state = structuredClone(f.state);
+        f.catalog = structuredClone(f.catalog);
+        break;
+      default:
+        fresh = edit;
+        return tree;
+    }
+    advance(step + 1);
+    return tree;
+  }
+  try {
+    renderToStaticMarkup(<Probe />);
+    expect(commands).toEqual([]);
+    expect(reviewed).toHaveLength(2);
+    for (const tree of reviewed)
+      expect(renderToStaticMarkup(tree)).toMatch(
+        /class="primary"(?![^>]*disabled)[^>]*>Implement this plan</,
+      );
+    expect(fresh?.draft).toBe(phrase);
+    allowB = true;
+    fresh?.onSend();
+    await vi.waitFor(() =>
+      expect(commands).toEqual([
+        expect.objectContaining({
+          kind: "cadence-prepare",
+          proposalId: second.id,
+          digest: second.digest,
+          conversationId: "chat",
+          revision: 2,
+        }),
+        expect.objectContaining({
+          kind: "cadence-approve",
+          proposalId: second.id,
+          digest: second.digest,
+          conversationId: "chat",
+          revision: 2,
+          grant,
+        }),
+      ]),
+    );
+    expect(prepare).not.toHaveBeenCalled();
+  } finally {
+    f.catalog = undefined;
+  }
+});

@@ -11,29 +11,98 @@ export interface ActivityListProps {
   opening: boolean;
   onOpen(path: string, activity: Activity): void;
 }
-export const activityKey = (
+/** Session IDs group display rows. Only the producer and work identity can
+ * remove a particular observation from discovery. */
+export function activityKey(
   path: string,
-  source: Activity["source"],
-  id: string,
-  epoch: string | null,
-) => JSON.stringify([path, source, id, epoch]);
+  a: Activity | { source: "turn" | "workflow"; epoch: string; id: string },
+) {
+  return JSON.stringify([
+    path,
+    a.source,
+    a.source === "terminal" ? a.instance : a.epoch,
+    a.id,
+  ]);
+}
+
+export function ActivityButton({
+  path,
+  activity,
+  opening,
+  onOpen,
+  grouped = false,
+}: Pick<ActivityListProps, "onOpen" | "opening"> & {
+  path: string;
+  activity: Activity;
+  grouped?: boolean;
+}) {
+  const { t, tx } = useT();
+  const source =
+    activity.source === "terminal"
+      ? t("Terminal turn (observe only)")
+      : activity.source === "turn"
+        ? t("Owner turn")
+        : t("Owner workflow");
+  const fresh =
+    activity.freshness === "current"
+      ? t("Current observation")
+      : activity.freshness === "stale"
+        ? t("Stale observation")
+        : t("Unknown activity");
+  // A grouped terminal is already under its session title. Instead, identify
+  // this particular reader destination (and distinguish instances on one leaf).
+  const identity = grouped ? `${activity.instance} · ${activity.id}` : "";
+  return (
+    <button
+      type="button"
+      className="session-item"
+      disabled={opening || !activity.sessionId || activity.history !== "shared"}
+      title={
+        grouped
+          ? `${source} · ${activity.cwd} · ${activity.leaf ?? activity.sessionId} · ${identity}`
+          : undefined
+      }
+      onClick={() => onOpen(path, activity)}
+    >
+      <span className="session-info">
+        <span className="session-title">
+          {grouped
+            ? [activity.leaf, source].filter(Boolean).join(" · ")
+            : (activity.sessionId ?? t("Unattributed work"))}
+        </span>
+        <span className="session-sub">
+          {grouped
+            ? `${fresh} · ${activity.instance?.slice(0, 8)} · ${activity.id.slice(0, 8)}`
+            : `${source} · ${tx(activity.phase)} · ${fresh}`}
+        </span>
+        {activity.history === "unavailable" && (
+          <span className="session-sub">
+            {t("History configuration differs. Activity remains observe-only.")}
+          </span>
+        )}
+        <span className="session-sub">
+          {activity.cwd}
+          {activity.executionCwd ? ` → ${activity.executionCwd}` : ""}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 /** One list of working projects/sessions, not a terminal management surface. */
 export function ActivityList({
   value,
   error,
   opening,
   onOpen,
-  represented = [],
-}: ActivityListProps & { represented?: readonly string[] }) {
-  const { t, tx } = useT();
-  // The selected project's managed work already has its authorized controls in
-  // Running work. Discovery must not duplicate those rows or controls.
+  represented,
+}: ActivityListProps & { represented?: ReadonlySet<string> }) {
+  const { t } = useT();
   const visible = value?.projects
     .map((p) => ({
       ...p,
       activities: p.activities.filter(
-        (a) =>
-          !represented.includes(activityKey(p.path, a.source, a.id, a.epoch)),
+        (a) => !represented?.has(activityKey(p.path, a)),
       ),
     }))
     .filter((p) => p.activities.length);
@@ -54,47 +123,13 @@ export function ActivityList({
           <div key={project.path}>
             <p className="panel-hint">{project.path}</p>
             {project.activities.map((activity) => (
-              <button
-                type="button"
-                className="session-item"
-                key={`${activity.epoch ?? activity.instance}:${activity.source}:${activity.id}`}
-                disabled={
-                  opening ||
-                  !activity.sessionId ||
-                  activity.history !== "shared"
-                }
-                onClick={() => onOpen(project.path, activity)}
-              >
-                <span className="session-info">
-                  <span className="session-title">
-                    {activity.sessionId ?? t("Unattributed work")}
-                  </span>
-                  <span className="session-sub">
-                    {activity.source === "terminal"
-                      ? t("Terminal turn (observe only)")
-                      : activity.source === "turn"
-                        ? t("Owner turn")
-                        : t("Owner workflow")}{" "}
-                    · {tx(activity.phase)} ·{" "}
-                    {activity.freshness === "current"
-                      ? t("Current observation")
-                      : activity.freshness === "stale"
-                        ? t("Stale observation")
-                        : t("Unknown activity")}
-                  </span>
-                  {activity.history === "unavailable" && (
-                    <span className="session-sub">
-                      {t(
-                        "History configuration differs. Activity remains observe-only.",
-                      )}
-                    </span>
-                  )}
-                  <span className="session-sub">
-                    {activity.cwd}
-                    {activity.executionCwd ? ` → ${activity.executionCwd}` : ""}
-                  </span>
-                </span>
-              </button>
+              <ActivityButton
+                key={activityKey(project.path, activity)}
+                path={project.path}
+                activity={activity}
+                opening={opening}
+                onOpen={onOpen}
+              />
             ))}
           </div>
         ))}

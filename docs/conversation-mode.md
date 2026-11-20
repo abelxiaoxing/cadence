@@ -22,7 +22,10 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
    If an acceptance item proves impossible it delivers the closest achievable result and records the deviation: what could not be met, why, what was delivered instead and any declared check set aside because of it.
    The automatic review must confirm each deviation, and a run that deviated says so first when it completes; the task branch is kept, so the merge can be undone.
 4. Type `按计划实施` after the plan to authorize those exact bytes.
-   In the browser, click **Implement this plan** or send that exact approval phrase for the currently displayed plan.
+   In the browser, review the proposal from the conversation title, then click **Implement this plan** or enter and send the exact approval phrase.
+   The phrase belongs to the proposal and context you reviewed.
+   If either changes, or a reload restores only the text, the old phrase stays in the editor: it neither approves nor sends a message.
+   Opening the new proposal does not transfer that approval; use its button or enter the phrase anew.
    If execution is stopped or its plan binding is outdated, this first restores and validates the plan instead; review the updated context and choose **Confirm implementation** afterward (see below).
    In Pi, the Start tool can alternatively present one native confirmation of the complete plan.
    Native confirmation retains its raw-terminal guard.
@@ -59,7 +62,7 @@ Validation may start or reuse the selected project's owner and applies the model
 It keeps the plan content, records a fresh execution binding and leaves the original snapshot intact.
 It sends no chat message, calls no model, creates no task branch/worktree and approves no implementation.
 Review the displayed model, runtime and target branch/base; changed environment evidence is labelled, and this tab also shows the previous context for comparison.
-Then click **Confirm implementation** or send the approval phrase again to approve that fresh snapshot.
+Then click **Confirm implementation** or enter a fresh approval phrase for the revalidated proposal.
 A current plan remains directly approvable; validation is not an extra step for every ordinary approval.
 
 An unknown turn outcome, unreadable plan, changed conversation or unavailable selected model still blocks safely.

@@ -10,6 +10,8 @@ export const zh = {
   "Show the latest branch before acting on the current plan.":
     "请先显示最新分支，再验证或批准当前计划。",
   "View current plan": "查看当前计划",
+  "This draft does not confirm the current plan. Review it from the conversation title and enter the approval phrase again.":
+    "这段草稿不能确认当前计划。请从会话标题查看当前计划，审阅后重新输入批准短语。",
   "Hide current plan": "收起当前计划",
   "Wait for the current reply before changing mode.":
     "请等当前回复结束后再切换模式。",

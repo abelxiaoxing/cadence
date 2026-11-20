@@ -328,8 +328,21 @@ export function ChatWorkspace({
   const [draftKey] = useState(() =>
     selectDraftKey(workspaceId, id, legacyWorkspaceId, ...directoryNamespaces),
   );
-  const [draft, setDraft] = useState(() =>
-    stored(draftKey, initialDraft?.text),
+  // Only text survives storage, recall by the workspace, and branch edits.
+  // A plan confirmation gets its source from an explicit composer edit below.
+  const [entry, setEntry] = useState<{ text: string; source?: string }>(() => ({
+    text: stored(draftKey, initialDraft?.text),
+  }));
+  const draft = entry.text;
+  const setDraft = useCallback(
+    (update: string | ((text: string) => string)) => {
+      setEntry((previous) => {
+        if (typeof update === "string") return { text: update };
+        const text = update(previous.text);
+        return text === previous.text ? previous : { text };
+      });
+    },
+    [],
   );
   useEffect(() => {
     if (initialDraft) onDraftApplied?.();
@@ -382,7 +395,10 @@ export function ChatWorkspace({
   // A matched message receipt can arrive before the reader's next head. The
   // layout uses that fact immediately; a preparation/exit/approval is not one.
   const [received, setReceived] = useState("");
-  const [openPlan, setOpenPlan] = useState<string | null>(null);
+  const [review, setReview] = useState<{
+    binding: string;
+    open: boolean;
+  } | null>(null);
   const [modelCommand, setModelCommand] = useState(() =>
     stored(`${draftKey}:model-command`),
   );
@@ -417,6 +433,30 @@ export function ChatWorkspace({
     }
   }, [draftKey, draftModel]);
 
+  // Workspace lifetime is one conversation. Keep only explicit disclosures,
+  // above the window that unmounts turn bodies. Normal latest-leaf growth is
+  // not a branch switch; a non-continuing head is (including a terminal fork).
+  const [expandedTraces, setExpandedTraces] =
+    useState<ReadonlyMap<string, ReadonlySet<string>>>();
+  const replacedHeads = useRef(new WeakSet<ChatSummary>());
+  const [traceBranch, setTraceBranch] = useState(0);
+  const retireTraceChoices = useCallback(() => {
+    setExpandedTraces(undefined);
+    // Retire mounted focus/visibility holds on a shared ancestor too.
+    setTraceBranch((previous) => previous + 1);
+  }, []);
+  const rememberTrace = useCallback(
+    (turn: string, steps: ReadonlySet<string>) => {
+      setExpandedTraces((prior) => {
+        const next = new Map(prior);
+        if (steps.size) next.set(turn, steps);
+        else next.delete(turn);
+        return next.size ? next : undefined;
+      });
+    },
+    [],
+  );
+
   // History GETs do not borrow an execution attachment. Attribute a denial
   // only to the project/conversation that issued this read.
   const reader = useMemo<Pick<ServiceClient, "workbenchRead">>(
@@ -429,6 +469,13 @@ export function ChatWorkspace({
           const reply = await client.workbenchRead(request, wait.signal);
           if (wait.signal.aborted || readSelected?.() === false)
             return { kind: "error", error: publicError("stale") };
+          if (
+            reply.kind === "ok" &&
+            reply.value.kind === "conversation" &&
+            !reply.value.continues &&
+            reply.value.summary
+          )
+            replacedHeads.current.add(reply.value.summary);
           if (reply.kind === "error" && refusedAccess(reply.error.code))
             access?.refuse("viewer", reply.error.code);
           return reply;
@@ -540,6 +587,15 @@ export function ChatWorkspace({
     entryLeaf,
   );
   const { turns } = conversation;
+  // The reader publishes a head only after its turn reads succeed. Keep the
+  // old view's choices until that switch, even if the reads are slow or fail.
+  useLayoutEffect(() => {
+    if (
+      conversation.summary &&
+      replacedHeads.current.delete(conversation.summary)
+    )
+      retireTraceChoices();
+  }, [conversation.summary, retireTraceChoices]);
   // Undefined until observed; null is a conversation not started yet.
   const observed = conversation.summary !== undefined;
   const workflow = useWorkbench(
@@ -761,11 +817,15 @@ export function ChatWorkspace({
         proposal.id,
         proposal.digest,
         state?.head,
-        conversation.pinned ? conversation.leaf : null,
+        state?.revision,
+        conversation.leaf,
+        conversation.pinned,
         conversation.count,
+        sendGeneration.current,
       ])
     : "";
-  const planOpen = !!binding && openPlan === binding;
+  const reviewed = !!binding && review?.binding === binding;
+  const planOpen = reviewed && review.open;
   const planPanelId = `current-plan-${id}`;
   const approvalAction =
     state?.proposal?.plan.version === 3
@@ -776,6 +836,36 @@ export function ChatWorkspace({
           modelPending || invalidatedPlan === state.proposal.id,
         )
       : "readonly";
+  // An exact phrase can also be ordinary discussion (including steering a
+  // live reply). Never reinterpret a draft across these two input paths.
+  const phraseSource = !cadenceKnown
+    ? undefined
+    : running || !cadence
+      ? "discussion"
+      : reviewed && planApprovable && contextKnown && !anchor
+        ? canonicalJson([
+            binding,
+            approvalAction,
+            availability,
+            modelRead.catalog?.version ?? null,
+            context,
+            draftModel,
+          ])
+        : undefined;
+  const latestSource = useRef(phraseSource);
+  latestSource.current = phraseSource;
+  const phraseCurrent = () =>
+    !!entry.source &&
+    entry.source === phraseSource &&
+    phraseSource === latestSource.current;
+  const refusePhrase = () =>
+    refuse(
+      t(
+        proposal
+          ? "This draft does not confirm the current plan. Review it from the conversation title and enter the approval phrase again."
+          : "No plan is awaiting approval.",
+      ),
+    );
   const validationPending =
     !!validation && !!state && state.revision < validation.after.revision;
   const canValidatePlan =
@@ -892,7 +982,7 @@ export function ChatWorkspace({
       onReferenceUsed();
       textarea.current?.focus();
     }
-  }, [reference, onReferenceUsed]);
+  }, [reference, onReferenceUsed, setDraft]);
   useEffect(() => {
     if (attempted.current && state?.runs.includes(attempted.current)) {
       rememberApproval("");
@@ -908,7 +998,7 @@ export function ChatWorkspace({
       setPending("");
       if (modelDraftConsumed(pending, modelCommand)) {
         setReceived(pending);
-        setOpenPlan(null);
+        setReview(null);
         setDraftModel(null);
       }
       setModelCommand("");
@@ -931,6 +1021,7 @@ export function ChatWorkspace({
     removeImages,
     workspaceId,
     rememberApproval,
+    setDraft,
   ]);
   // Turns render lazily: those far outside the viewport keep only their height.
   const rows = useMemo(
@@ -1319,6 +1410,7 @@ export function ChatWorkspace({
           sendGeneration.current === generation &&
           !renderedBranch.aborted &&
           (!viewer || viewer.current()) &&
+          latestSource.current === phraseSource &&
           latestState.current?.revision === observed.revision &&
           latestState.current?.enabled === true,
         submitting: rememberApproval,
@@ -1331,7 +1423,10 @@ export function ChatWorkspace({
           rememberApproval("");
           if (reply.error.code === "stale") setInvalidatedPlan(proposal.id);
         }
-      } else setDraft((value) => (cadenceApproval(value) ? "" : value));
+      } else
+        setEntry((value) =>
+          phraseSource && value.source === phraseSource ? { text: "" } : value,
+        );
     } catch (e) {
       if (alive.current && sendGeneration.current === generation) {
         setError(e instanceof Error ? e.message : "unavailable");
@@ -1411,6 +1506,12 @@ export function ChatWorkspace({
     const exiting = retained
       ? retained.command.kind === "cadence-exit"
       : cadence && cadenceExit(message);
+    const phrase =
+      !images.length && !retained && !override && cadenceApproval(message);
+    if (phrase && !phraseCurrent()) {
+      refusePhrase();
+      return;
+    }
     if (
       (!(exiting ? canExit : canSend) && !canPrepareOnly) ||
       running ||
@@ -1429,13 +1530,7 @@ export function ChatWorkspace({
       refuse(t("Remove images before exiting Cadence."));
       return;
     }
-    if (
-      !images.length &&
-      !retained &&
-      !override &&
-      cadence &&
-      cadenceApproval(message)
-    ) {
+    if (phrase && cadence) {
       await approve();
       return;
     }
@@ -1811,6 +1906,10 @@ export function ChatWorkspace({
   const sendInput = async (mode: InputMode) => {
     if (!liveRun || !canInput || !inputCurrent() || inputBlock || !draft.trim())
       return;
+    if (cadenceApproval(draft) && !phraseCurrent()) {
+      refusePhrase();
+      return;
+    }
     clearError();
     setBusy(true);
     const text = draft;
@@ -1902,7 +2001,7 @@ export function ChatWorkspace({
     decisionBusy.current = false;
     setRevalidating(false);
     setValidation(undefined);
-    setOpenPlan(null);
+    setReview(null);
     wasEmpty.current = false;
     setAwaitingModel(false);
     setResume(false);
@@ -1910,6 +2009,8 @@ export function ChatWorkspace({
     setBusy(false);
     setPreparing(false);
     releaseAnchor();
+    if (leaf !== (conversation.pinned ? conversation.leaf : null))
+      retireTraceChoices();
     conversation.choose(leaf, first);
     rememberBranch(id, leaf);
   };
@@ -2207,7 +2308,7 @@ export function ChatWorkspace({
             aria-controls={planOpen ? planPanelId : undefined}
             aria-expanded={planOpen}
             title={proposal.plan.goal}
-            onClick={() => setOpenPlan(planOpen ? null : binding)}
+            onClick={() => setReview({ binding, open: !planOpen })}
           >
             <FiFileText aria-hidden="true" />
             {t(planOpen ? "Hide current plan" : "View current plan")}
@@ -2366,8 +2467,9 @@ export function ChatWorkspace({
           {placed.start.map(workflowLine)}
           {rows.map(({ id, version, turn }, position) => {
             const forks = versions.get(id);
+            const renderId = turn.renderId ?? turn.header.id;
             return (
-              <Fragment key={turn.renderId ?? turn.header.id}>
+              <Fragment key={renderId}>
                 {id === firstOff && (
                   <p className="chat-anchor-divider">
                     <FiGitBranch aria-hidden="true" />
@@ -2388,7 +2490,10 @@ export function ChatWorkspace({
                       continue from; a message may be rewritten where the
                       entry it continued is known. */}
                   <ChatTurnView
+                    key={traceBranch}
                     reading={away && !hidden && !planOpen}
+                    expandedSteps={expandedTraces?.get(renderId)}
+                    onExpandSteps={rememberTrace}
                     turn={turn}
                     onContinue={
                       canAnchor &&
@@ -2557,7 +2662,15 @@ export function ChatWorkspace({
           flow={flow}
           inputRef={textarea}
           draft={draft}
-          onDraft={setDraft}
+          onDraft={(text) =>
+            setEntry({
+              text,
+              source:
+                cadenceApproval(text) && !imageDraft.files.length
+                  ? phraseSource
+                  : undefined,
+            })
+          }
           locked={busy || !!pending || awaitingModel}
           images={imageDraft.files}
           imageKey={imageDraft.key}

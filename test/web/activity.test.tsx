@@ -96,13 +96,13 @@ it("partial empty observation never claims everything finished; Chinese text and
   );
   expect(empty).toContain("Activity observation is partial");
 });
-it("leaves no sidebar block while loading, when empty or when every row is already in Running work", () => {
+it("leaves no sidebar block while loading, when empty or when every row is represented in history", () => {
   const flow = activity({ source: "workflow", epoch, instance: null });
   for (const value of [undefined, discovery([]), discovery([flow])]) {
     const html = renderToStaticMarkup(
       <ActivityList
         value={value}
-        represented={[activityKey("/project", "workflow", flow.id, epoch)]}
+        represented={new Set([activityKey("/project", flow)])}
         error=""
         opening={false}
         onOpen={() => {}}
@@ -252,7 +252,7 @@ it("R4: deduplication hides only exact owner work actually represented, never un
       <LocaleProvider initial="en">
         <ActivityList
           value={discovery([flow, native])}
-          represented={represented}
+          represented={new Set(represented)}
           error=""
           opening={false}
           onOpen={() => {}}
@@ -260,18 +260,35 @@ it("R4: deduplication hides only exact owner work actually represented, never un
       </LocaleProvider>,
     );
   expect(render([])).toContain("Owner workflow");
-  expect(
-    render([activityKey("/project", "workflow", flow.id, epoch)]),
-  ).not.toContain("Owner workflow");
-  expect(
-    render([activityKey("/project", "workflow", flow.id, epoch)]),
-  ).toContain("Terminal turn (observe only)");
-  expect(
-    render([activityKey("/project", "workflow", flow.id, randomUUID())]),
-  ).toContain("Owner workflow");
-  expect(render([activityKey("/other", "workflow", flow.id, epoch)])).toContain(
+  expect(render([activityKey("/project", flow)])).not.toContain(
     "Owner workflow",
   );
+  expect(render([activityKey("/project", flow)])).toContain(
+    "Terminal turn (observe only)",
+  );
+  expect(
+    render([activityKey("/project", { ...flow, epoch: randomUUID() })]),
+  ).toContain("Owner workflow");
+  expect(render([activityKey("/other", flow)])).toContain("Owner workflow");
+});
+
+it("terminal identity uses the instance, not its absent owner epoch or shared session", () => {
+  const a = activity(),
+    b = { ...a, instance: randomUUID(), history: "unavailable" as const };
+  const html = renderToStaticMarkup(
+    <LocaleProvider initial="en">
+      <ActivityList
+        value={discovery([a, b])}
+        represented={new Set([activityKey("/project", a)])}
+        error=""
+        opening={false}
+        onOpen={() => {}}
+      />
+    </LocaleProvider>,
+  );
+  expect(html.match(/Terminal turn \(observe only\)/g)).toHaveLength(1);
+  expect(html).toContain("History configuration differs");
+  expect(html).toContain("disabled");
 });
 
 it("R6: an incompatible history scope displays the activity and disables transcript navigation", () => {

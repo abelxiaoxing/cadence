@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
+import { decodeActivityDiscovery } from "../src/service/contracts/activity.ts";
 import { decodeWorkbenchResult } from "../src/service/contracts/workbench.ts";
 import {
   readableDelivery,
@@ -16,7 +17,9 @@ import {
   epoch,
   liveDock,
   lockedReply,
+  project,
   readRecord,
+  recentFolder,
   storeId,
   task,
 } from "./optical-fixtures/records.mjs";
@@ -27,6 +30,7 @@ const card = "[data-plan-proposal]",
 const q = JSON.stringify;
 const ok = (value) => ({ kind: "ok", value });
 const refused = () => ({ kind: "error", error: publicError("invalid") });
+const otherProject = "e".repeat(64); // recentFolder in the optical gateway entry
 const clock = 1_700_000_000_000;
 const background = "quiet-background",
   title = "Quartz study",
@@ -69,7 +73,7 @@ function specimen(id) {
     sessions: new Set(),
     heldKinds: new Set(),
     unknown: false,
-    makeProposal(replacement = false) {
+    makeProposal(stage = "original") {
       const base = readRecord({ kind: "cadence-conversation", id: "design" })
         .state.proposal;
       const branch = "refs/heads/optical/reader",
@@ -78,12 +82,16 @@ function specimen(id) {
         ...base,
         id: randomUUID(),
         model: { ...cat.version },
-        digest: (replacement ? "f" : "a").repeat(64),
+        digest: { original: "a", replacement: "c", stale: "f" }[stage].repeat(
+          64,
+        ),
         plan: {
           ...base.plan,
-          goal: replacement
-            ? "Revise the quartz export"
-            : "Add a quartz export",
+          goal: {
+            original: "Add a quartz export",
+            replacement: "Add a quartz import instead",
+            stale: "Revise the quartz export",
+          }[stage],
           design: "Export a plain-text material note.",
           decisions: "Keep the existing JSON output.",
           assumptions: "A local viewer is available.",
@@ -107,7 +115,7 @@ function specimen(id) {
             .trim(),
         },
       };
-      if (replacement) {
+      if (stage === "stale") {
         // Different rights AND a stale execution binding. Reopening is neither
         // permission to reuse the first plan's terms nor implicit validation.
         s.proposal.plan.delivery = "working-copy";
@@ -345,7 +353,7 @@ function specimen(id) {
   return s;
 }
 
-/** Intercept the direct-owner fixture's wire at its ephemeral origin. GETs not
+/** Intercept the synthetic owner's or gateway's wire at its loopback origin. GETs not
  * under study use the ordinary optical site. It independently rejects writes;
  * even our only allowed Sends and picker changes are in-memory receipts. */
 async function intercept({ b, site, origin }, s) {
@@ -354,11 +362,55 @@ async function intercept({ b, site, origin }, s) {
     pending = new Set();
   const handle = async ({ requestId, request }) => {
     const url = new URL(request.url),
-      path = url.pathname;
+      path = s.gateway
+        ? url.pathname.replace(/^\/projects\/[a-f0-9]{64}(?=\/api\/v1\/)/, "")
+        : url.pathname;
     let body,
       extra = [];
     if (url.origin !== origin) throw Error("Unexpected origin");
-    if (request.method === "GET" && path === "/workbench/v1") {
+    if (
+      s.gateway &&
+      path === "/workbench/v1/activity" &&
+      request.method === "GET"
+    ) {
+      body = decodeActivityDiscovery(s.gateway.observe(s.roster));
+      s.served.add(`discovery:${s.roster.name}`);
+    } else if (
+      s.gateway &&
+      path === "/workbench/v1/select" &&
+      request.method === "POST"
+    ) {
+      const selection = JSON.parse(request.postData);
+      assert.deepEqual(selection, { epoch, path: s.gateway.select });
+      assert.ok([cwd, recentFolder].includes(selection.path));
+      s.gateway.select = null;
+      s.gateway.selections.push(selection.path);
+      const local = selection.path === cwd;
+      body = {
+        kind: "project",
+        project: {
+          id: local ? project : otherProject,
+          path: selection.path,
+          cwd: selection.path,
+          epoch: local ? epoch : null,
+        },
+      };
+    } else if (
+      s.gateway &&
+      path === `/workbench/v1/projects/${otherProject}` &&
+      request.method === "GET"
+    ) {
+      body = {
+        kind: "project-observation",
+        status: "not-started",
+        epoch: null,
+        workspaceId: null,
+      };
+    } else if (
+      !s.gateway &&
+      request.method === "GET" &&
+      path === "/workbench/v1"
+    ) {
       // Entry is reread after a model change as well as on cold navigation.
       body = refused();
     } else if (request.method === "GET" && path === "/api/v1/session") {
@@ -395,7 +447,16 @@ async function intercept({ b, site, origin }, s) {
         s.heldKinds.add(r.kind);
         await s.holdRosters.promise;
       }
-      const v = await s.read(r);
+      let v = await s.read(r);
+      if (
+        s.gateway &&
+        r.kind === "conversation" &&
+        r.id === background &&
+        r.leaf
+      ) {
+        s.gateway.reads.add(`${url.pathname}:${r.id}:${r.leaf}`);
+        v = { ...readRecord(r), leaf: r.leaf };
+      }
       if (s.deny && r.kind === "workflow-active") {
         body = { kind: "error", error: publicError("forbidden") };
       } else if (
@@ -1032,7 +1093,37 @@ async function observeProposal(p, s, row, shot) {
   await shot("discussion");
   await open();
   await frame("reopened", first);
-  const next = s.makeProposal(true);
+  const phrase = "按计划实施";
+  await click(input);
+  await send("Input.insertText", { text: phrase });
+  await wait(`document.querySelector(${q(input)}).value === ${q(phrase)}`);
+  const ready = s.makeProposal("replacement");
+  await collapsed(ready.plan.goal);
+  const refuseDraft = async (name, text = phrase) => {
+    const before = s.commands.length;
+    await press("Enter", 13);
+    await wait(
+      `document.querySelector('.notice[role="alert"]')?.textContent.includes('Review it from the conversation title')`,
+    );
+    row.plan[name] = await run((selector) => {
+      const editor = document.querySelector(selector);
+      return { text: editor.value, focused: document.activeElement === editor };
+    }, input);
+    assert.deepEqual(row.plan[name], { text, focused: true });
+    assert.deepEqual(s.commands.slice(before), []);
+    await click('.notice[role="alert"] .notice-close');
+  };
+  // This B can be implemented immediately. A stale-model B would exercise
+  // the validation path instead and miss the unintended approval entirely.
+  await refuseDraft("replacedBeforeEnter");
+  await open();
+  assert.equal(
+    (await frame("readyReplacement", ready)).button,
+    "Implement this plan",
+  );
+  await click(input);
+  await refuseDraft("openedWithoutEditing");
+  const next = s.makeProposal("stale");
   await collapsed(next.plan.goal);
   await open();
   const replacement = await frame("replacement", next);
@@ -1051,15 +1142,29 @@ async function observeProposal(p, s, row, shot) {
     welcome: !!document.querySelector(".chat-welcome"),
     draft: document.querySelector(".chat-composer textarea").value,
   }));
-  assert.deepEqual(history, { entry: "history", welcome: false, draft: "" });
+  assert.deepEqual(history, {
+    entry: "history",
+    welcome: false,
+    draft: phrase,
+  });
   await open();
   assert.equal((await frame("cold", next)).button, "Validate plan again");
+  await click(input);
+  await refuseDraft("restoredTextOnly");
   assert.deepEqual(
     s.commands.slice(prefix).map((c) => c.kind),
     ["cadence-send"],
   );
-  // Explicit validation gets ONE synthetic rebind, never an implementation.
-  // Opening even the rebound plan still requires a separate approval control.
+  // This time the draft really does belong to the displayed stale proposal.
+  // The button validates it once; neither validation nor opening the rebound
+  // proposal may transfer that draft to the new approvable binding.
+  const validationPhrase = "approve and execute";
+  await click(input);
+  await run((selector) => document.querySelector(selector).select(), input);
+  await send("Input.insertText", { text: validationPhrase });
+  await wait(
+    `document.querySelector(${q(input)}).value === ${q(validationPhrase)}`,
+  );
   s.permit = "cadence-revalidate";
   await click(`${card} > button.primary`, "Validate plan again");
   await until(
@@ -1072,6 +1177,8 @@ async function observeProposal(p, s, row, shot) {
   assert.equal(rebound.button, "Confirm implementation");
   assert.match(rebound.status, /Nothing was approved/);
   await shot("revalidated");
+  await click(input);
+  await refuseDraft("revalidatedWithoutEditing", validationPhrase);
   assert.deepEqual(
     s.commands.slice(prefix).map((c) => c.kind),
     ["cadence-send", "cadence-revalidate"],
@@ -1314,6 +1421,222 @@ async function observeDisconnect(p, s, row) {
   );
 }
 
+// Unlike direct-owner rosters, native work is observed through the gateway's
+// independent activity GET. Its select POST binds a reader, never a worker.
+async function observeTerminalHistory(p, row, shot) {
+  const { go, click, ev, run, wait, observeButton } = p;
+  const s = specimen(`discovery-${randomUUID()}`);
+  s.firstHead.resolve();
+  const a = {
+    source: "terminal",
+    sessionId: background,
+    cwd,
+    leaf: "00000021",
+    id: randomUUID(),
+    instance: randomUUID(),
+    epoch: null,
+    history: "shared",
+    phase: "turn",
+    freshness: "current",
+    executionCwd: null,
+  };
+  const b = { ...a, instance: randomUUID(), leaf: "00000022" };
+  const other = { ...a, cwd: recentFolder, leaf: "00000023" };
+  const gateway = {
+    reads: new Set(),
+    selections: [],
+    select: null,
+    observe(stage) {
+      const native = [a, b].slice(0, stage.native);
+      if (stage.phase === "verifying") native.reverse();
+      const activities = native.map((report) => ({
+        ...report,
+        observedAt: stage.at,
+        freshness: stage.partial ? "unknown" : "current",
+      }));
+      return {
+        kind: "activity-discovery",
+        epoch,
+        observedAt: stage.at,
+        completeness: stage.partial ? "partial" : "complete",
+        unavailable: Number(stage.partial),
+        projects: [
+          { path: cwd, activities },
+          {
+            path: recentFolder,
+            activities: [{ ...other, observedAt: stage.at }],
+          },
+        ],
+      };
+    },
+  };
+  s.gateway = gateway;
+  const root = `.history-entry:has(.conversation-row > button[title="${title}"])`,
+    button = `${root} .conversation-row > button.session-item`,
+    outside = 'section[aria-label="Active Pi work"]',
+    drawer = async () => {
+      if (
+        await ev(
+          `document.querySelector('.navigation-toggle')?.getAttribute('aria-expanded')==='false'`,
+        )
+      )
+        await click(".navigation-toggle");
+    };
+  row.terminalHistory = [];
+  const stage = (
+    name,
+    seconds,
+    phase,
+    reply,
+    count,
+    native,
+    partial = false,
+  ) => ({
+    name,
+    at: clock + seconds * 1000,
+    phase,
+    reply,
+    count,
+    native,
+    partial,
+  });
+  s.roster = stage("together", 0, "research", true, 2, 2);
+  const settledFrame = async (focus = false) => {
+    const r = s.roster;
+    await until(
+      () =>
+        ["workflow-active", "conversation-active", "discovery"].every((k) =>
+          s.served.has(`${k}:${r.name}`),
+        ),
+      r.name,
+    );
+    await wait(
+      `document.querySelectorAll('${root} .history-run:not(.history-terminal)').length===${r.count} && document.querySelectorAll('${root} .history-terminal').length===${r.native} && !!document.querySelector('button[title="Unwritten reply"]')===${r.reply}`,
+    );
+    if (focus)
+      assert.ok(
+        (await observeButton("shared terminal history", button)).keyboardFocus,
+      );
+    const f = await run(historyFrame, title);
+    assert.equal(f.order.filter((t) => t === title).length, 1);
+    assert.equal(f.inHistory, !(r.reply || r.count || r.native));
+    assert.equal(f.linked, String(r.count + r.native));
+    assert.equal(
+      f.working,
+      f.inHistory ? undefined : r.partial ? "Stale observation" : "Working",
+    );
+    const additional = await run(
+      (selector) =>
+        [...document.querySelectorAll(`${selector} button`)].map(
+          (e) => e.innerText,
+        ),
+      outside,
+    );
+    assert.equal(additional.length, 1); // The other project's exact same session/instance/activity IDs survive.
+    assert.ok(
+      additional[0].includes(background) &&
+        additional[0].includes(recentFolder),
+    );
+    assert.deepEqual(s.commands, []);
+    const branches = await run(
+      (selector) =>
+        [
+          ...document.querySelectorAll(`${selector} .history-terminal button`),
+        ].map((e) => e.title),
+      root,
+    );
+    const frame = { ...f, branches };
+    row.terminalHistory.push({ ...r, ...frame, additional });
+    return frame;
+  };
+  const stop = await intercept(p, s);
+  try {
+    await go(`/app?project=${project}#chat=${s.id}`, button);
+    await drawer();
+    const first = await settledFrame(true);
+    assert.ok(
+      first.order.indexOf(title) < first.order.indexOf("Earlier material"),
+    );
+    await shot("terminal-history");
+    for (const next of [
+      stage("working", 20, "implementing", true, 2, 2),
+      stage("minute", 60, "verifying", true, 2, 2),
+      stage("reply left", 62, "reviewing", false, 2, 2),
+      stage("one workflow", 65, "reviewing", false, 1, 2),
+      stage("terminals only", 68, "finished", false, 0, 2),
+      stage("one terminal", 72, "finished", false, 0, 1),
+      stage("uncertain", 75, "finished", false, 0, 1, true),
+      stage("last left", 90, "finished", false, 0, 0),
+    ]) {
+      s.roster = next;
+      if (next.partial)
+        await wait(
+          `document.querySelector('${root} [aria-label="Stale observation"]')`,
+        );
+      const f = await settledFrame();
+      if (next.reply) {
+        assert.deepEqual(f.order, first.order);
+        assert.deepEqual(f.branches, first.branches);
+      }
+      if (!f.inHistory) {
+        assert.equal(f.text, first.text);
+        assert.ok(f.focused && f.focusVisible);
+        assert.ok(f.order.indexOf(title) < f.order.indexOf("Earlier material"));
+      } else
+        assert.ok(f.order.indexOf(title) > f.order.indexOf("Earlier material"));
+    }
+    s.roster = stage("navigation", 100, "research", false, 2, 2);
+    await settledFrame();
+    for (const terminal of [a, b, other]) {
+      await drawer();
+      const local = terminal !== other;
+      if (
+        local &&
+        !(await ev(`document.querySelector('${root} details').open`))
+      )
+        await click(`${root} summary`);
+      const selector = local
+        ? `${root} .history-terminal button[title*="${terminal.leaf}"]`
+        : `${outside} button`;
+      assert.equal(
+        await ev(
+          `document.querySelectorAll('${root} .conversation-stop:enabled').length`,
+        ),
+        2,
+      );
+      assert.equal(
+        await ev(
+          `document.querySelectorAll('${root} .history-terminal button').length`,
+        ),
+        2,
+      );
+      if (terminal === a) await shot("terminal-branches");
+      gateway.select = terminal.cwd;
+      await click(selector);
+      const target = `/app?project=${local ? project : otherProject}#chat=${background}&activity=1&leaf=${terminal.leaf}`;
+      await wait(
+        `location.pathname + location.search + location.hash === ${q(target)}`,
+      );
+      await until(
+        () =>
+          gateway.reads.has(
+            `/projects/${local ? project : otherProject}/api/v1/workbench/read:${background}:${terminal.leaf}`,
+          ),
+        `observed exact terminal leaf ${target}`,
+      );
+    }
+    assert.deepEqual(gateway.selections, [cwd, cwd, recentFolder]);
+    assert.deepEqual(s.commands, []);
+    row.terminalNavigation = {
+      directories: gateway.selections,
+      reads: [...gateway.reads],
+      commands: s.commands,
+    };
+  } finally {
+    await stop();
+  }
+}
+
 /** Register as quiet-workspace:<theme>:<width> (one call per group). Uses the
  * entrypoint's helpers directly; b is its CDP browser, rows the report array. */
 export async function observeQuietWorkspace(p) {
@@ -1353,4 +1676,5 @@ export async function observeQuietWorkspace(p) {
   } finally {
     await stop();
   }
+  await observeTerminalHistory(p, row, shot);
 }
