@@ -49,22 +49,29 @@ export function ConversationFeedback({
   semantic,
 }: {
   receipt: string;
-  semantic: string;
+  semantic?: string;
 }) {
   const { t } = useT();
   const prior = useRef({ receipt, semantic });
   const [message, setMessage] = useState<
     "Message received" | "Conversation updated" | null
   >(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => {
     const last = prior.current;
     prior.current = { receipt, semantic };
-    if (last.receipt === receipt && last.semantic === semantic) return;
-    setMessage(
-      last.receipt !== receipt ? "Message received" : "Conversation updated",
-    );
-    const timer = setTimeout(() => setMessage(null), 1400);
-    return () => clearTimeout(timer);
+    // The Send receipt does not depend on the mode read. Losing or regaining
+    // a semantic baseline neither announces an event nor interrupts its timer.
+    const accepted = !!receipt && last.receipt !== receipt;
+    const changed =
+      semantic !== undefined &&
+      last.semantic !== undefined &&
+      semantic !== last.semantic;
+    if (!accepted && !changed) return;
+    setMessage(accepted ? "Message received" : "Conversation updated");
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setMessage(null), 1400);
   }, [receipt, semantic]);
   return (
     <span

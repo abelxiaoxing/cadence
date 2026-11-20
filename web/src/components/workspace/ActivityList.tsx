@@ -49,9 +49,10 @@ export function ActivityButton({
       : activity.freshness === "stale"
         ? t("Stale observation")
         : t("Unknown activity");
-  // A grouped terminal is already under its session title. Instead, identify
-  // this particular reader destination (and distinguish instances on one leaf).
-  const identity = grouped ? `${activity.instance} · ${activity.id}` : "";
+  // Already under the session title: identify the particular work and its
+  // producer, not just the session (or a terminal leaf shared by two turns).
+  const producer =
+    activity.source === "terminal" ? activity.instance : activity.epoch;
   return (
     <button
       type="button"
@@ -59,7 +60,7 @@ export function ActivityButton({
       disabled={opening || !activity.sessionId || activity.history !== "shared"}
       title={
         grouped
-          ? `${source} · ${activity.cwd} · ${activity.leaf ?? activity.sessionId} · ${identity}`
+          ? `${source} · ${activity.cwd} · ${activity.leaf ?? activity.sessionId} · ${producer} · ${activity.id}`
           : undefined
       }
       onClick={() => onOpen(path, activity)}
@@ -72,7 +73,7 @@ export function ActivityButton({
         </span>
         <span className="session-sub">
           {grouped
-            ? `${fresh} · ${activity.instance?.slice(0, 8)} · ${activity.id.slice(0, 8)}`
+            ? `${fresh} · ${producer?.slice(0, 8)} · ${activity.id.slice(0, 8)}`
             : `${source} · ${tx(activity.phase)} · ${fresh}`}
         </span>
         {activity.history === "unavailable" && (

@@ -485,6 +485,90 @@ it("joins shared terminal reports to their project's history without consuming u
     draw([], false, []).split('<header class="lp-section-header"')[1],
   ).toContain(`title="${listed.title}"`);
 });
+it("promotes the session from owner discovery alone; only matching viewer runs add Stop", () => {
+  const listed = summary("Gem log", "completed");
+  const project = "/gem",
+    a = workflow("Inspect"),
+    b = { ...workflow("Inspect"), epoch: a.epoch };
+  const report = (run: WorkflowRun): Activity => ({
+    source: "workflow",
+    epoch: run.epoch,
+    id: run.id,
+    sessionId: listed.id,
+    instance: null,
+    cwd: project,
+    executionCwd: null,
+    leaf: null,
+    history: "shared",
+    phase: "implementing",
+    observedAt: 100,
+    freshness: "current",
+  });
+  const draw = (local: Activity[], roster?: WorkflowRun[]) =>
+    historyView({
+      chats: [listed],
+      workflows: roster,
+      workflowLinks: roster?.map((r) => ({
+        runId: r.id,
+        conversationId: listed.id,
+      })),
+      onCancelWorkflow: async () => {},
+      canCancelWorkflow: (r) => r.id === b.id,
+      discovery: {
+        project,
+        error: "",
+        opening: false,
+        onOpen() {},
+        value: {
+          kind: "activity-discovery",
+          epoch: a.epoch,
+          observedAt: 100,
+          completeness: "complete",
+          unavailable: 0,
+          projects: [
+            { path: project, activities: local },
+            {
+              path: "/elsewhere",
+              activities: [{ ...report(a), cwd: "/elsewhere" }],
+            },
+          ],
+        },
+      },
+    }).split(
+      /<section class="lp-section grow"|<header class="lp-section-header"/,
+    );
+  const reports = [report(a), report(b)];
+  for (const roster of [undefined, [a], [b, a]]) {
+    const [outside, pinned, history] = draw(reports, roster);
+    expect(outside.match(/Owner workflow/g)).toHaveLength(1);
+    expect(outside).toContain("/elsewhere");
+    expect(pinned.match(/class="session-title">Gem log</g)).toHaveLength(1);
+    expect(pinned.match(/class="history-run"/g)).toHaveLength(2);
+    expect(pinned).toContain('aria-label="Working"');
+    expect(history).not.toContain(listed.title);
+    for (const r of [a, b]) {
+      if (roster?.includes(r)) {
+        expect(pinned).toContain(
+          `aria-label="Cancel workflow — request stop · Inspect · ${r.id}"${r === a ? ' disabled=""' : ">"}`,
+        );
+      } else {
+        expect(pinned).toContain(` · ${r.epoch} · ${r.id}"`);
+        expect(pinned).toContain(`${r.id.slice(0, 8)}</span>`);
+      }
+    }
+    expect(pinned.match(/class="conversation-stop"/g) ?? []).toHaveLength(
+      roster?.length ?? 0,
+    );
+  }
+  // Its viewer no longer lists any run, but gateway still observes one.
+  const [, last, history] = draw([reports[1]], []);
+  expect(last).toContain(listed.title);
+  expect(last).toContain(b.id);
+  expect(history).not.toContain(listed.title);
+  const [, done, past] = draw([], []);
+  expect(done).not.toContain(listed.title);
+  expect(past).toContain(listed.title);
+});
 it("keeps off-page, archived, unwritten and unlinked activity discoverable without inventing a session summary", () => {
   const fresh = summary("First send", "starting");
   const archived = {
