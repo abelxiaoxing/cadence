@@ -1584,6 +1584,29 @@ it("a stale choice refreshes the open design without resubmitting or requiring a
   expect(f.client.workbenchCommand).toHaveBeenCalledTimes(1);
 });
 
+it("observing initial, advancing live and settled chat heads never requests an owner refresh", () => {
+  const f = workspaceFixture([]);
+  const onChanged = vi.fn();
+  const draw = () => f.draw(false, { onChanged });
+  draw();
+  for (const [leaf, status] of [
+    ["user-entry", "starting"],
+    ["assistant-entry", "running"],
+    ["tool-entry", "running"],
+    ["final-entry", "completed"],
+  ] as const) {
+    f.conversation.leaf = leaf;
+    f.conversation.summary = {
+      ...required(f.conversation.summary),
+      leaf,
+      status,
+    };
+    draw();
+  }
+  expect(onChanged).not.toHaveBeenCalled();
+  expect(f.client.workbenchCommand).not.toHaveBeenCalled();
+});
+
 it("a starting turn is navigable, accepts only in-reply input, and Stop names that exact run", async () => {
   vi.useFakeTimers();
   const prior = loaded("prior", undefined, 0);
@@ -1961,7 +1984,7 @@ it.each(["en", "zh"] as const)(
 );
 
 it.each(["failed", "canceled"] as const)(
-  "an unsaved first %s attempt is a reading scene, not an empty Hero",
+  "an unsaved first %s attempt shows the transcript instead of the welcome screen",
   (status) => {
     const f = workspaceFixture([]);
     Object.assign(f.conversation, {

@@ -1060,8 +1060,8 @@ export const zh = {
     "归档操作的结果未知（{code}）。重新读取列表后会显示已记录的状态；不会自动重试。",
   "Rename and archive need the execution service; it starts with your next Send.":
     "重命名和归档需要执行服务在运行；下次发送消息时会启动它。",
-  "Rename and archive are unavailable until the execution service is observed.":
-    "读取到执行服务的状态后，才能重命名和归档。",
+  "Renaming and archiving are unavailable on this connection.":
+    "当前连接暂不能重命名或归档对话。",
   "Archived conversations": "已归档的对话",
   "Show archived": "查看已归档的对话",
   "Back to history": "返回历史对话",

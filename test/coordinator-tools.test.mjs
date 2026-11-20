@@ -143,6 +143,29 @@ it("private auth replies can never satisfy or leak into a coordinator tool with 
   await f.close();
 });
 
+it("an identical rejected design, including a queued call, is not sent twice; corrected input is sent", async () => {
+  const f = fixture();
+  const design = f.tools.find((t) => t.name === "cadence_design");
+  const first = expect(design.execute("1", { questions: [] })).rejects.toThrow(
+    "questions: missing",
+  );
+  const same = expect(design.execute("2", { questions: [] })).rejects.toThrow(
+    "Unchanged invalid design",
+  );
+  await Promise.resolve();
+  f.reply({
+    id: 1,
+    ok: true,
+    text: JSON.stringify({ refused: "invalid", notice: "questions: missing" }),
+  });
+  await Promise.all([first, same]);
+  expect(f.send).toHaveBeenCalledTimes(1);
+  const changed = design.execute("3", { questions: [{ id: "color" }] });
+  await Promise.resolve();
+  f.reply();
+  await changed;
+  await f.close();
+});
 it("the browser SDK knowledge tool rejects wrong types before SDK coercion", async () => {
   const f = fixture();
   try {
@@ -156,6 +179,16 @@ it("the browser SDK knowledge tool rejects wrong types before SDK coercion", asy
         investigation: "",
       }),
     ).toEqual({ path: "package.json", match: " verify " });
+    // The historical call repeatedly included every optional field.
+    expect(
+      tool.prepareArguments({
+        checkout: ["node_modules", "web/node_modules"],
+        path: "",
+        section: "",
+        match: "",
+        investigation: "",
+      }),
+    ).toEqual({ checkout: ["node_modules", "web/node_modules"] });
     expect(() => tool.prepareArguments({ checkout: "node_modules" })).toThrow(
       "checkout",
     );

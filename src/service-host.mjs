@@ -34803,6 +34803,441 @@ function questionKey(question, roots2) {
 
 // src/service/workflow-controller.ts
 import { createHash as createHash34 } from "node:crypto";
+
+// src/service/turn-capture.ts
+var TURN_BYTES = 384 * 1024;
+var OMITTED_FLAG2 = {
+  "hidden-thinking": "thinking",
+  binary: "media",
+  unsupported: "other"
+};
+
+class TurnCapture {
+  turn;
+  save;
+  secrets;
+  details = new Map;
+  messageText = new Map;
+  constructor(turn, save, secrets) {
+    this.turn = turn;
+    this.save = save;
+    this.secrets = secrets;
+  }
+  item(id, role3) {
+    let item = this.turn.items.find((i) => i.id === id);
+    if (!item) {
+      if (this.turn.items.length >= 256)
+        throw new ContractError("capacity");
+      item = { id, role: role3, text: "", name: "", args: "", error: false };
+      this.turn.items.push(item);
+      try {
+        canonicalJson(this.turn, TURN_BYTES - 2048);
+      } catch (error) {
+        this.turn.items.pop();
+        this.turn.notice = "Conversation capture limit exceeded.";
+        throw error;
+      }
+    }
+    return item;
+  }
+  update(item, field, value, maximum, bytes = Buffer.byteLength(value)) {
+    const before = item[field];
+    try {
+      if (bytes > maximum)
+        throw new ContractError("capacity");
+      item[field] = value;
+      canonicalJson(this.turn, TURN_BYTES - 2048);
+    } catch (error) {
+      item[field] = before;
+      this.turn.notice = "Conversation capture limit exceeded.";
+      throw error;
+    }
+  }
+  accept(frame) {
+    const e = frame.event;
+    if (e.kind === "detail-begin") {
+      if (e.descriptor.owner.kind === "context" || e.descriptor.owner.kind === "handoff")
+        return;
+      if (this.details.size >= 64)
+        throw new ContractError("capacity");
+      this.details.set(e.detailId, {
+        descriptor: e.descriptor,
+        sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
+        text: "",
+        bytes: 0
+      });
+    } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
+      const d = this.details.get(e.detailId);
+      if (!d)
+        return;
+      const added = e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
+      d.text += added;
+      d.bytes += Buffer.byteLength(added);
+      if (d.bytes > 256 * 1024)
+        throw new ContractError("capacity");
+      const o = d.descriptor.owner;
+      if (o.kind === "message") {
+        const role3 = this.turn.items.find((i) => i.id === o.messageId)?.role;
+        if (role3 === "assistant" && o.stage === "stream") {
+          this.messageText.set(o.blockId, {
+            messageId: o.messageId,
+            text: d.text,
+            bytes: d.bytes
+          });
+          const blocks = [...this.messageText.values()].filter((block) => block.messageId === o.messageId);
+          this.update(this.item(o.messageId, "assistant"), "text", blocks.map((block) => block.text).join(""), 256 * 1024, blocks.reduce((size3, block) => size3 + block.bytes, 0));
+        }
+      } else if (o.kind === "message-final") {
+        const item = this.turn.items.find((i) => i.id === o.messageId);
+        if (item?.role === "assistant")
+          this.update(item, "text", d.text, 256 * 1024, d.bytes);
+      } else if (o.kind === "tool") {
+        const item = this.item(o.callId, "tool");
+        if (o.stage === "execution-arguments" || o.stage === "arguments-final")
+          this.update(item, "args", d.text, 64 * 1024, d.bytes);
+        if (o.stage === "result" || o.stage === "update-snapshot")
+          this.update(item, "text", d.text, 256 * 1024, d.bytes);
+      }
+      if (e.kind === "detail-end")
+        this.details.delete(e.detailId);
+    } else if (e.kind === "message-start" && e.role === "assistant") {
+      this.item(e.messageId, "assistant");
+    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
+      const item = this.item(e.callId, "tool");
+      this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
+      if (e.kind === "tool-start")
+        item.state = "running";
+      else {
+        item.state = e.isError ? "failed" : "completed";
+        item.error = e.isError;
+      }
+    } else if (e.kind === "message-end") {
+      const item = this.turn.items.find((i) => i.id === e.messageId && i.role === "assistant");
+      if (item)
+        item.error = ["error", "aborted", "length"].includes(e.stopReason);
+    } else if (e.kind === "model-retry") {
+      if (e.progress)
+        this.turn.retry = e.progress;
+      else
+        delete this.turn.retry;
+    } else if (e.kind === "worker-failure") {
+      delete this.turn.retry;
+      this.turn.notice = `worker-failure: ${e.code}`;
+    } else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
+      this.turn.omitted[OMITTED_FLAG2[e.block.reason]] = true;
+    if ([...this.details.values()].reduce((size3, detail) => size3 + detail.bytes + detail.sanitizer.retainedBytes, 0) > TURN_BYTES)
+      throw new ContractError("capacity");
+    canonicalJson(this.turn, TURN_BYTES);
+    if (e.kind === "message-end") {
+      for (const [id, block] of this.messageText)
+        if (block.messageId === e.messageId)
+          this.messageText.delete(id);
+    }
+    if ([
+      "message-end",
+      "tool-start",
+      "tool-update",
+      "tool-end",
+      "model-retry",
+      "worker-failure"
+    ].includes(e.kind))
+      this.save();
+  }
+}
+
+// src/service/workflow-report.ts
+var RECORD_BYTES2 = 384 * 1024;
+var TRANSCRIPT_LIMIT = "Transcript bound reached: later worker activity was not retained here. The worker continued; its outcome and final result are recorded separately.";
+var issueText = (issue2) => typeof issue2 === "string" ? issue2 : `${issue2.id}: ${issue2.evidence}
+Verify: ${issue2.verify}`;
+function isBlocker(value) {
+  if (typeof value === "string")
+    return true;
+  if (!value || typeof value !== "object")
+    return false;
+  const issue2 = value;
+  return Object.keys(issue2).length === 4 && typeof issue2.id === "string" && /^[a-z][a-z0-9-]{0,47}$/.test(issue2.id) && typeof issue2.evidence === "string" && !!issue2.evidence.trim() && typeof issue2.verify === "string" && !!issue2.verify.trim() && Array.isArray(issue2.writes) && issue2.writes.every((p) => typeof p === "string");
+}
+function reviewVerdict(reply) {
+  let malformed = false;
+  const decode4 = (raw) => {
+    let v;
+    try {
+      v = parseWireJson(raw, RECORD_BYTES2);
+    } catch {
+      try {
+        const value = JSON.parse(raw);
+        if (value && typeof value === "object" && Object.hasOwn(value, "approved"))
+          malformed = true;
+      } catch {}
+      return null;
+    }
+    if (!v || typeof v !== "object" || Array.isArray(v))
+      return null;
+    const o = v;
+    if (typeof o.approved !== "boolean")
+      return null;
+    const issues = o.blockingIssues === undefined ? [] : o.blockingIssues;
+    if (!Array.isArray(issues) || !issues.every(isBlocker)) {
+      malformed = true;
+      return null;
+    }
+    return {
+      approved: o.approved && issues.length === 0,
+      summary: typeof o.summary === "string" ? o.summary : "",
+      blockingIssues: issues
+    };
+  };
+  const body = reply.trim();
+  const direct = decode4(body);
+  if (direct)
+    return direct;
+  if (malformed)
+    return null;
+  const found = [];
+  let starts = 0, start = body.indexOf("{");
+  for (;start >= 0 && starts < 64; start = body.indexOf("{", start + 1), starts++) {
+    let depth = 0, quoted3 = false, escaped = false;
+    for (let i = start;i < body.length; i++) {
+      const c = body[i];
+      if (quoted3) {
+        if (escaped)
+          escaped = false;
+        else if (c === "\\")
+          escaped = true;
+        else if (c === '"')
+          quoted3 = false;
+      } else if (c === '"')
+        quoted3 = true;
+      else if (c === "{")
+        depth++;
+      else if (c === "}" && --depth === 0) {
+        const verdict = decode4(body.slice(start, i + 1));
+        if (verdict)
+          found.push(verdict);
+        break;
+      }
+    }
+  }
+  if (malformed || start >= 0 || !found.length || found.some((v) => v.approved !== found[0].approved))
+    return null;
+  return found[0];
+}
+function reviewReport(reply, secrets) {
+  const verdict = reviewVerdict(reply);
+  if (!verdict)
+    return {
+      text: "Agent review did not return one unambiguous complete verdict.",
+      truncated: false
+    };
+  const cleanSummary = sanitizeText(verdict.summary, secrets);
+  const cleanIssues = verdict.blockingIssues.map((issue2) => {
+    const clean = (s) => sanitizeText(s, secrets);
+    if (typeof issue2 === "string")
+      return clean(issue2);
+    if (clean(issue2.id) !== issue2.id || issue2.writes.some((p) => clean(p) !== p))
+      return clean(issueText(issue2));
+    return {
+      ...issue2,
+      evidence: clean(issue2.evidence),
+      verify: clean(issue2.verify)
+    };
+  });
+  const complete = {
+    approved: verdict.approved,
+    summary: cleanSummary,
+    blockingIssues: cleanIssues
+  };
+  if (Buffer.byteLength(JSON.stringify(complete)) <= 16384)
+    return { text: canonicalJson(complete, 16384), truncated: false };
+  return {
+    text: canonicalJson({
+      approved: verdict.approved,
+      summary: diagnosticText(cleanSummary, 2048),
+      blockingIssues: cleanIssues.slice(0, 16).map((issue2) => diagnosticText(issueText(issue2), 256))
+    }, 16384),
+    truncated: true
+  };
+}
+function implementationReport(reply, secrets = []) {
+  try {
+    const body = reply.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, "$1");
+    const raw = parseWireJson(body, 16384);
+    const o = closed(raw, [
+      "status",
+      "summary",
+      ...Object.hasOwn(raw ?? {}, "lessons") ? ["lessons"] : []
+    ]);
+    if (o.status !== "completed" && o.status !== "partial" && o.status !== "blocked")
+      return null;
+    if (typeof o.summary !== "string" || !o.summary.trim())
+      return null;
+    if (o.lessons !== undefined && (!Array.isArray(o.lessons) || o.lessons.length > 5 || o.lessons.some((lesson) => typeof lesson !== "string" || !lesson.trim() || lesson.length > 400)))
+      return null;
+    const summary2 = sanitizeText(o.summary, secrets);
+    const lessons = (o.lessons ?? []).map((lesson) => sanitizeText(lesson, secrets).trim()).filter(Boolean);
+    return summary2.trim() ? { status: o.status, summary: summary2, ...lessons.length ? { lessons } : {} } : null;
+  } catch {
+    return null;
+  }
+}
+
+class WorkflowTranscript {
+  turn;
+  secrets;
+  overflowed = false;
+  pending = false;
+  capture;
+  final = null;
+  latest;
+  messageDetails = new Set;
+  reportCapture;
+  reportTurn;
+  reportId;
+  reportDetails = new Set;
+  reportText;
+  assignmentReport() {
+    if (this.reportText === undefined)
+      return;
+    try {
+      const value = closed(parseWireJson(this.reportText, 65536), ["content"]);
+      if (!Array.isArray(value.content) || value.content.length !== 1)
+        return;
+      const item = closed(value.content[0], ["type", "text"]);
+      return item.type === "text" && typeof item.text === "string" ? item.text : undefined;
+    } catch {
+      return;
+    }
+  }
+  trackReport(frame) {
+    const e = frame.event;
+    if (e.kind === "tool-start") {
+      if (["read", "grep", "find", "ls", "changes"].includes(e.name))
+        return;
+      this.reportText = undefined;
+      this.reportDetails.clear();
+      this.reportCapture = undefined;
+      this.reportTurn = undefined;
+      this.reportId = undefined;
+      if (e.name === "cadence_report") {
+        this.reportId = e.callId;
+        this.reportTurn = { ...structuredClone(this.turn), items: [] };
+        this.reportCapture = new TurnCapture(this.reportTurn, () => {}, this.secrets);
+        this.reportCapture.accept(frame);
+      }
+      return;
+    }
+    if (!this.reportCapture || !this.reportId)
+      return;
+    if (e.kind === "detail-begin" && e.descriptor.owner.kind === "tool" && e.descriptor.owner.callId === this.reportId) {
+      this.reportDetails.add(e.detailId);
+      this.reportCapture.accept(frame);
+    } else if ((e.kind === "detail-chunk" || e.kind === "detail-end") && this.reportDetails.has(e.detailId)) {
+      this.reportCapture.accept(frame);
+      if (e.kind === "detail-end")
+        this.reportDetails.delete(e.detailId);
+    } else if (e.kind === "tool-end" && e.callId === this.reportId) {
+      this.reportCapture.accept(frame);
+      if (!e.isError && !this.reportDetails.size)
+        this.reportText = this.reportTurn?.items.find((i) => i.id === this.reportId)?.text;
+      this.reportCapture = undefined;
+    }
+  }
+  constructor(turn, secrets) {
+    this.turn = turn;
+    this.secrets = secrets;
+    this.capture = new TurnCapture(turn, () => {
+      this.pending = true;
+    }, secrets);
+    this.latest = { ...structuredClone(turn), items: [] };
+  }
+  accept(frame) {
+    try {
+      this.trackReport(frame);
+    } catch {
+      this.reportText = undefined;
+      this.reportCapture = undefined;
+    }
+    this.track(frame);
+    if (this.overflowed) {
+      if (frame.event.kind === "model-retry") {
+        if (frame.event.progress)
+          this.turn.retry = frame.event.progress;
+        else
+          delete this.turn.retry;
+        return true;
+      }
+      if (frame.event.kind === "worker-failure") {
+        delete this.turn.retry;
+        return true;
+      }
+      return false;
+    }
+    try {
+      this.capture.accept(frame);
+    } catch {
+      this.overflowed = true;
+      this.turn.notice = TRANSCRIPT_LIMIT;
+      this.turn.omitted.other = true;
+      this.trimToBound();
+      return true;
+    }
+    const save = this.pending;
+    this.pending = false;
+    return save;
+  }
+  trimToBound() {
+    for (;; ) {
+      try {
+        canonicalJson(this.turn, RECORD_BYTES2 - 4096);
+        return;
+      } catch {
+        if (!this.turn.items.length)
+          return;
+        this.turn.items.pop();
+      }
+    }
+  }
+  track(frame) {
+    const e = frame.event;
+    let relevant2 = false;
+    if (e.kind === "message-start") {
+      if (e.role === "assistant") {
+        this.latest = { ...structuredClone(this.latest), items: [] };
+        this.final = new TurnCapture(this.latest, () => {}, this.secrets);
+      }
+      relevant2 = true;
+    } else if (e.kind === "message-end")
+      relevant2 = true;
+    else if (e.kind === "detail-begin") {
+      const owner = e.descriptor.owner.kind;
+      if (owner === "message" || owner === "message-final") {
+        this.messageDetails.add(e.detailId);
+        relevant2 = true;
+      }
+    } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
+      relevant2 = this.messageDetails.has(e.detailId);
+      if (e.kind === "detail-end")
+        this.messageDetails.delete(e.detailId);
+    }
+    if (!relevant2 || !this.final)
+      return;
+    try {
+      this.final.accept(frame);
+    } catch {
+      this.final = null;
+    }
+  }
+  selected(messageId) {
+    const find = (turn) => turn.items.find((i) => i.id === messageId && i.role === "assistant")?.text;
+    return (this.final ? find(this.latest) : undefined) ?? (this.overflowed ? undefined : find(this.turn));
+  }
+  get complete() {
+    return !this.overflowed && !!this.final;
+  }
+}
+
+// src/service/workflow-controller.ts
 var RECOVERY_BYTES = 32768;
 
 class AttemptFailure extends Error {
@@ -35057,6 +35492,45 @@ function decodeRecoveryDecision(reply, bounds, secrets = []) {
     throw new InvalidDecision("The recovery reply was not the requested JSON object");
   }
 }
+
+class ReviewRepair extends AttemptFailure {
+  ids;
+  decision;
+  constructor(ids, decision) {
+    super(`Agent review: unresolved ${ids.join(", ")}.`, decision.evidence, `review:${ids.join(",")}`);
+    this.ids = ids;
+    this.decision = decision;
+  }
+  static from(blockers, step, scope, secrets) {
+    if (!blockers.length || !blockers.every((issue2) => typeof issue2 !== "string" && issue2.writes.length > 0 && issue2.writes.every(workflowBoundary)))
+      return;
+    const ids = blockers.map((issue2) => issue2.id).sort();
+    if (new Set(ids).size !== ids.length)
+      return;
+    const writes = [...new Set(blockers.flatMap((issue2) => issue2.writes))];
+    try {
+      const decision = decodeRecoveryDecision(JSON.stringify({
+        action: "continue",
+        evidence: [step],
+        cause: "Independent review identified outstanding acceptance issues.",
+        strategy: `Repair and verify: ${ids.join(", ")}`,
+        work: [
+          {
+            title: "Resolve review blockers",
+            instructions: blockers.map(issueText).join(`
+
+`),
+            writes
+          }
+        ]
+      }), { scope, evidence: [step], floor: "repair", checks: [] }, secrets);
+      return new ReviewRepair(ids, decision);
+    } catch (error) {
+      if (!(error instanceof InvalidDecision))
+        throw error;
+    }
+  }
+}
 var OBJECTIONS = 2;
 
 class DeliveryController {
@@ -35083,6 +35557,7 @@ class DeliveryController {
   async complete(stage, action) {
     let repair = [];
     let recorded = 0;
+    const reviewed = new Set;
     let failure2;
     let original;
     let floor = "repair";
@@ -35105,26 +35580,34 @@ class DeliveryController {
         failure2 = attempt2;
         this.ports.assertRunning();
         const observation = await this.ports.observe();
+        const fingerprint2 = (level) => createHash34("sha256").update(canonicalJson({
+          stage,
+          observation: attempt2 instanceof ReviewRepair ? null : observation,
+          failure: attempt2.identity ?? attempt2.message.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gu, "<step>"),
+          level
+        })).digest("hex");
+        let required = floor;
+        if (attempt2 instanceof ReviewRepair) {
+          while (required !== "deviate" && this.tried.has(fingerprint2(required)))
+            required = RECOVERY_LEVELS[RECOVERY_LEVELS.indexOf(required) + 1];
+        }
         let decision;
         for (;; ) {
-          decision = await this.decide(attempt2, floor);
+          decision = attempt2 instanceof ReviewRepair && required === "repair" && attempt2.ids.every((id) => !reviewed.has(id)) ? attempt2.decision : await this.decide(attempt2, required);
           this.ports.assertRunning();
           if (decision.action === "blocked")
             break;
-          const fingerprint2 = createHash34("sha256").update(canonicalJson({
-            stage,
-            observation,
-            failure: attempt2.identity ?? attempt2.message.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gu, "<step>"),
-            level: decision.level
-          })).digest("hex");
-          if (!this.tried.has(fingerprint2)) {
-            this.tried.add(fingerprint2);
+          const key3 = fingerprint2(decision.level);
+          if (!this.tried.has(key3)) {
+            this.tried.add(key3);
             break;
           }
           const next = RECOVERY_LEVELS[RECOVERY_LEVELS.indexOf(decision.level) + 1];
           if (!next)
             throw new Error(`No new evidence or strategy for ${stage} at any level; partial work is preserved. ${decision.cause}`);
-          floor = next;
+          required = next;
+          if (!(attempt2 instanceof ReviewRepair))
+            floor = next;
         }
         const record3 = {
           revision: ++this.revision,
@@ -35135,10 +35618,13 @@ class DeliveryController {
         };
         recorded = this.ports.record(record3);
         this.previous = record3;
+        if (attempt2 instanceof ReviewRepair)
+          for (const id of attempt2.ids)
+            reviewed.add(id);
         if (decision.action === "blocked")
           throw new Error(`Delivery blocked${decision.blocker ? ` (${decision.blocker})` : ""}: ${decision.cause}
 ${decision.strategy}`);
-        repair = decision.work;
+        repair = [...decision.work];
       }
     }
   }
@@ -35622,409 +36108,6 @@ class WorkflowHistoryScanner {
   }
 }
 
-// src/service/turn-capture.ts
-var TURN_BYTES = 384 * 1024;
-var OMITTED_FLAG2 = {
-  "hidden-thinking": "thinking",
-  binary: "media",
-  unsupported: "other"
-};
-
-class TurnCapture {
-  turn;
-  save;
-  secrets;
-  details = new Map;
-  messageText = new Map;
-  constructor(turn, save, secrets) {
-    this.turn = turn;
-    this.save = save;
-    this.secrets = secrets;
-  }
-  item(id, role3) {
-    let item = this.turn.items.find((i) => i.id === id);
-    if (!item) {
-      if (this.turn.items.length >= 256)
-        throw new ContractError("capacity");
-      item = { id, role: role3, text: "", name: "", args: "", error: false };
-      this.turn.items.push(item);
-      try {
-        canonicalJson(this.turn, TURN_BYTES - 2048);
-      } catch (error) {
-        this.turn.items.pop();
-        this.turn.notice = "Conversation capture limit exceeded.";
-        throw error;
-      }
-    }
-    return item;
-  }
-  update(item, field, value, maximum, bytes = Buffer.byteLength(value)) {
-    const before = item[field];
-    try {
-      if (bytes > maximum)
-        throw new ContractError("capacity");
-      item[field] = value;
-      canonicalJson(this.turn, TURN_BYTES - 2048);
-    } catch (error) {
-      item[field] = before;
-      this.turn.notice = "Conversation capture limit exceeded.";
-      throw error;
-    }
-  }
-  accept(frame) {
-    const e = frame.event;
-    if (e.kind === "detail-begin") {
-      if (e.descriptor.owner.kind === "context" || e.descriptor.owner.kind === "handoff")
-        return;
-      if (this.details.size >= 64)
-        throw new ContractError("capacity");
-      this.details.set(e.detailId, {
-        descriptor: e.descriptor,
-        sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
-        text: "",
-        bytes: 0
-      });
-    } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
-      const d = this.details.get(e.detailId);
-      if (!d)
-        return;
-      const added = e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
-      d.text += added;
-      d.bytes += Buffer.byteLength(added);
-      if (d.bytes > 256 * 1024)
-        throw new ContractError("capacity");
-      const o = d.descriptor.owner;
-      if (o.kind === "message") {
-        const role3 = this.turn.items.find((i) => i.id === o.messageId)?.role;
-        if (role3 === "assistant" && o.stage === "stream") {
-          this.messageText.set(o.blockId, {
-            messageId: o.messageId,
-            text: d.text,
-            bytes: d.bytes
-          });
-          const blocks = [...this.messageText.values()].filter((block) => block.messageId === o.messageId);
-          this.update(this.item(o.messageId, "assistant"), "text", blocks.map((block) => block.text).join(""), 256 * 1024, blocks.reduce((size3, block) => size3 + block.bytes, 0));
-        }
-      } else if (o.kind === "message-final") {
-        const item = this.turn.items.find((i) => i.id === o.messageId);
-        if (item?.role === "assistant")
-          this.update(item, "text", d.text, 256 * 1024, d.bytes);
-      } else if (o.kind === "tool") {
-        const item = this.item(o.callId, "tool");
-        if (o.stage === "execution-arguments" || o.stage === "arguments-final")
-          this.update(item, "args", d.text, 64 * 1024, d.bytes);
-        if (o.stage === "result" || o.stage === "update-snapshot")
-          this.update(item, "text", d.text, 256 * 1024, d.bytes);
-      }
-      if (e.kind === "detail-end")
-        this.details.delete(e.detailId);
-    } else if (e.kind === "message-start" && e.role === "assistant") {
-      this.item(e.messageId, "assistant");
-    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
-      const item = this.item(e.callId, "tool");
-      this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
-      if (e.kind === "tool-start")
-        item.state = "running";
-      else {
-        item.state = e.isError ? "failed" : "completed";
-        item.error = e.isError;
-      }
-    } else if (e.kind === "message-end") {
-      const item = this.turn.items.find((i) => i.id === e.messageId && i.role === "assistant");
-      if (item)
-        item.error = ["error", "aborted", "length"].includes(e.stopReason);
-    } else if (e.kind === "model-retry") {
-      if (e.progress)
-        this.turn.retry = e.progress;
-      else
-        delete this.turn.retry;
-    } else if (e.kind === "worker-failure") {
-      delete this.turn.retry;
-      this.turn.notice = `worker-failure: ${e.code}`;
-    } else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
-      this.turn.omitted[OMITTED_FLAG2[e.block.reason]] = true;
-    if ([...this.details.values()].reduce((size3, detail) => size3 + detail.bytes + detail.sanitizer.retainedBytes, 0) > TURN_BYTES)
-      throw new ContractError("capacity");
-    canonicalJson(this.turn, TURN_BYTES);
-    if (e.kind === "message-end") {
-      for (const [id, block] of this.messageText)
-        if (block.messageId === e.messageId)
-          this.messageText.delete(id);
-    }
-    if ([
-      "message-end",
-      "tool-start",
-      "tool-update",
-      "tool-end",
-      "model-retry",
-      "worker-failure"
-    ].includes(e.kind))
-      this.save();
-  }
-}
-
-// src/service/workflow-report.ts
-var RECORD_BYTES2 = 384 * 1024;
-var TRANSCRIPT_LIMIT = "Transcript bound reached: later worker activity was not retained here. The worker continued; its outcome and final result are recorded separately.";
-function reviewVerdict(reply) {
-  let malformed = false;
-  const decode4 = (raw) => {
-    let v;
-    try {
-      v = parseWireJson(raw, RECORD_BYTES2);
-    } catch {
-      try {
-        const value = JSON.parse(raw);
-        if (value && typeof value === "object" && Object.hasOwn(value, "approved"))
-          malformed = true;
-      } catch {}
-      return null;
-    }
-    if (!v || typeof v !== "object" || Array.isArray(v))
-      return null;
-    const o = v;
-    if (typeof o.approved !== "boolean")
-      return null;
-    const issues = o.blockingIssues === undefined ? [] : o.blockingIssues;
-    if (!Array.isArray(issues) || issues.some((issue2) => typeof issue2 !== "string"))
-      return null;
-    return {
-      approved: o.approved && issues.length === 0,
-      summary: typeof o.summary === "string" ? o.summary : "",
-      blockingIssues: issues
-    };
-  };
-  const body = reply.trim();
-  const direct = decode4(body);
-  if (direct)
-    return direct;
-  if (malformed)
-    return null;
-  const found = [];
-  let starts = 0, start = body.indexOf("{");
-  for (;start >= 0 && starts < 64; start = body.indexOf("{", start + 1), starts++) {
-    let depth = 0, quoted3 = false, escaped = false;
-    for (let i = start;i < body.length; i++) {
-      const c = body[i];
-      if (quoted3) {
-        if (escaped)
-          escaped = false;
-        else if (c === "\\")
-          escaped = true;
-        else if (c === '"')
-          quoted3 = false;
-      } else if (c === '"')
-        quoted3 = true;
-      else if (c === "{")
-        depth++;
-      else if (c === "}" && --depth === 0) {
-        const verdict = decode4(body.slice(start, i + 1));
-        if (verdict)
-          found.push(verdict);
-        break;
-      }
-    }
-  }
-  if (malformed || start >= 0 || !found.length || found.some((v) => v.approved !== found[0].approved))
-    return null;
-  return found[0];
-}
-function reviewReport(reply, secrets) {
-  const verdict = reviewVerdict(reply);
-  if (!verdict)
-    return {
-      text: "Agent review did not return one unambiguous complete verdict.",
-      truncated: false
-    };
-  const cleanSummary = sanitizeText(verdict.summary, secrets);
-  const cleanIssues = verdict.blockingIssues.map((issue2) => sanitizeText(issue2, secrets));
-  return {
-    text: canonicalJson({
-      approved: verdict.approved,
-      summary: diagnosticText(cleanSummary, 2048),
-      blockingIssues: cleanIssues.slice(0, 16).map((issue2) => diagnosticText(issue2, 256))
-    }, 16384),
-    truncated: Buffer.byteLength(cleanSummary) > 2048 || cleanIssues.length > 16 || cleanIssues.some((issue2) => Buffer.byteLength(issue2) > 256)
-  };
-}
-function implementationReport(reply, secrets = []) {
-  try {
-    const body = reply.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, "$1");
-    const raw = parseWireJson(body, 16384);
-    const o = closed(raw, [
-      "status",
-      "summary",
-      ...Object.hasOwn(raw ?? {}, "lessons") ? ["lessons"] : []
-    ]);
-    if (o.status !== "completed" && o.status !== "partial" && o.status !== "blocked")
-      return null;
-    if (typeof o.summary !== "string" || !o.summary.trim())
-      return null;
-    if (o.lessons !== undefined && (!Array.isArray(o.lessons) || o.lessons.length > 5 || o.lessons.some((lesson) => typeof lesson !== "string" || !lesson.trim() || lesson.length > 400)))
-      return null;
-    const summary2 = sanitizeText(o.summary, secrets);
-    const lessons = (o.lessons ?? []).map((lesson) => sanitizeText(lesson, secrets).trim()).filter(Boolean);
-    return summary2.trim() ? { status: o.status, summary: summary2, ...lessons.length ? { lessons } : {} } : null;
-  } catch {
-    return null;
-  }
-}
-
-class WorkflowTranscript {
-  turn;
-  secrets;
-  overflowed = false;
-  pending = false;
-  capture;
-  final = null;
-  latest;
-  messageDetails = new Set;
-  reportCapture;
-  reportTurn;
-  reportId;
-  reportDetails = new Set;
-  reportText;
-  assignmentReport() {
-    if (this.reportText === undefined)
-      return;
-    try {
-      const value = closed(parseWireJson(this.reportText, 65536), ["content"]);
-      if (!Array.isArray(value.content) || value.content.length !== 1)
-        return;
-      const item = closed(value.content[0], ["type", "text"]);
-      return item.type === "text" && typeof item.text === "string" ? item.text : undefined;
-    } catch {
-      return;
-    }
-  }
-  trackReport(frame) {
-    const e = frame.event;
-    if (e.kind === "tool-start") {
-      if (["read", "grep", "find", "ls", "changes"].includes(e.name))
-        return;
-      this.reportText = undefined;
-      this.reportDetails.clear();
-      this.reportCapture = undefined;
-      this.reportTurn = undefined;
-      this.reportId = undefined;
-      if (e.name === "cadence_report") {
-        this.reportId = e.callId;
-        this.reportTurn = { ...structuredClone(this.turn), items: [] };
-        this.reportCapture = new TurnCapture(this.reportTurn, () => {}, this.secrets);
-        this.reportCapture.accept(frame);
-      }
-      return;
-    }
-    if (!this.reportCapture || !this.reportId)
-      return;
-    if (e.kind === "detail-begin" && e.descriptor.owner.kind === "tool" && e.descriptor.owner.callId === this.reportId) {
-      this.reportDetails.add(e.detailId);
-      this.reportCapture.accept(frame);
-    } else if ((e.kind === "detail-chunk" || e.kind === "detail-end") && this.reportDetails.has(e.detailId)) {
-      this.reportCapture.accept(frame);
-      if (e.kind === "detail-end")
-        this.reportDetails.delete(e.detailId);
-    } else if (e.kind === "tool-end" && e.callId === this.reportId) {
-      this.reportCapture.accept(frame);
-      if (!e.isError && !this.reportDetails.size)
-        this.reportText = this.reportTurn?.items.find((i) => i.id === this.reportId)?.text;
-      this.reportCapture = undefined;
-    }
-  }
-  constructor(turn, secrets) {
-    this.turn = turn;
-    this.secrets = secrets;
-    this.capture = new TurnCapture(turn, () => {
-      this.pending = true;
-    }, secrets);
-    this.latest = { ...structuredClone(turn), items: [] };
-  }
-  accept(frame) {
-    try {
-      this.trackReport(frame);
-    } catch {
-      this.reportText = undefined;
-      this.reportCapture = undefined;
-    }
-    this.track(frame);
-    if (this.overflowed) {
-      if (frame.event.kind === "model-retry") {
-        if (frame.event.progress)
-          this.turn.retry = frame.event.progress;
-        else
-          delete this.turn.retry;
-        return true;
-      }
-      if (frame.event.kind === "worker-failure") {
-        delete this.turn.retry;
-        return true;
-      }
-      return false;
-    }
-    try {
-      this.capture.accept(frame);
-    } catch {
-      this.overflowed = true;
-      this.turn.notice = TRANSCRIPT_LIMIT;
-      this.turn.omitted.other = true;
-      this.trimToBound();
-      return true;
-    }
-    const save = this.pending;
-    this.pending = false;
-    return save;
-  }
-  trimToBound() {
-    for (;; ) {
-      try {
-        canonicalJson(this.turn, RECORD_BYTES2 - 4096);
-        return;
-      } catch {
-        if (!this.turn.items.length)
-          return;
-        this.turn.items.pop();
-      }
-    }
-  }
-  track(frame) {
-    const e = frame.event;
-    let relevant2 = false;
-    if (e.kind === "message-start") {
-      if (e.role === "assistant") {
-        this.latest = { ...structuredClone(this.latest), items: [] };
-        this.final = new TurnCapture(this.latest, () => {}, this.secrets);
-      }
-      relevant2 = true;
-    } else if (e.kind === "message-end")
-      relevant2 = true;
-    else if (e.kind === "detail-begin") {
-      const owner = e.descriptor.owner.kind;
-      if (owner === "message" || owner === "message-final") {
-        this.messageDetails.add(e.detailId);
-        relevant2 = true;
-      }
-    } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
-      relevant2 = this.messageDetails.has(e.detailId);
-      if (e.kind === "detail-end")
-        this.messageDetails.delete(e.detailId);
-    }
-    if (!relevant2 || !this.final)
-      return;
-    try {
-      this.final.accept(frame);
-    } catch {
-      this.final = null;
-    }
-  }
-  selected(messageId) {
-    const find = (turn) => turn.items.find((i) => i.id === messageId && i.role === "assistant")?.text;
-    return (this.final ? find(this.latest) : undefined) ?? (this.overflowed ? undefined : find(this.turn));
-  }
-  get complete() {
-    return !this.overflowed && !!this.final;
-  }
-}
-
 // src/service/workflow-result.ts
 var WORKFLOW_RESULT_BYTES = 240 * 1024;
 var omitted2 = `
@@ -36098,8 +36181,8 @@ function workflowResultDetail(value, secrets) {
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.2.4",
-  build: "9d8538776a8e8f204fa4ccffb749d41eee1ca010f56af92ef5d3e88038eb2910",
+  version: "2.2.5",
+  build: "eb12cb5795f0345121f4d0e51627a15027dc2ba685fe5b8f6eb942f3c68c62d9",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -36940,7 +37023,7 @@ class Workflows {
     if (s.kind === "review" && result.outcome === "completed" && result.closed && result.exitCode === 0) {
       const verdict = reviewVerdict(result.text);
       s.status = verdict ? verdict.approved ? "completed" : "rejected" : "failed";
-      s.text = diagnosticText(verdict ? verdict.approved ? `Agent review approved (automatic, not human review). ${verdict.summary}` : `Agent review rejected: ${[verdict.summary, ...verdict.blockingIssues].filter(Boolean).join(" | ") || "no reason given"}` : `Agent review reply could not be parsed as a verdict${result.truncated ? " (the reply was clipped)" : ""}; it is not counted as approval.`, 1024, this.o.secrets());
+      s.text = diagnosticText(verdict ? verdict.approved ? `Agent review approved (automatic, not human review). ${verdict.summary}` : `Agent review rejected: ${[verdict.summary, ...verdict.blockingIssues.map(issueText)].filter(Boolean).join(" | ") || "no reason given"}` : `Agent review reply could not be parsed as a verdict${result.truncated ? " (the reply was clipped)" : ""}; it is not counted as approval.`, 1024, this.o.secrets());
     }
     if (report2 !== undefined && result.outcome === "completed" && result.closed && result.exitCode === 0) {
       s.status = report2?.status ?? "failed";
@@ -37647,20 +37730,25 @@ ${diagnosticText(lines.join(`
       throw new InvalidDecision(`These paths cannot join the write scope because the target checkout has its own changes to them or hides them: ${paths.join(", ")} (${error.detail})`);
     }
   }
-  async review(live2, cwd, p, checks) {
+  async review(live2, cwd, p, checks, previous = "") {
     live2.run.phase = "reviewing";
     this.save(live2);
-    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID28()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
+    const prompt = `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":[{"id":"stable-short-slug","evidence":"which agreed requirement fails, under what condition, and where","verify":"observable closing condition","writes":["checkout/relative/path"]}]}. Recheck previous blockers and affected regressions first. Reuse the same id while a condition remains open. Only violations of the agreement block; suggestions belong in the summary. Use empty writes if the repair is unclear. Review evidence is not permission to expand scope. Automatic review is not human review.
 Acceptance checks below ran on this candidate after implementation/repair and before this review. Use their native facts as execution evidence; worker reports are not checks. Future publication/integration checks remain the owner's obligation, not missing evidence for this code review. Failed or incomplete checks never count as passing.
 Files: ${this.scope(live2, p).join(", ")}${this.deviationBrief(live2, "review")}${live2.knowledgeDone && live2.managed ? `
 This candidate also maintains the project's knowledge store (${KNOWLEDGE_SCOPE.join(", ")}). Judge those edits too: an added entry must be short, specific and anchored to code or tests that exist; a removed or rewritten entry must have been stale, duplicated, guaranteed by a test, or shortened without losing a condition; nothing may restate what the code says plainly.` : ""}
 Current-round check evidence (output excerpts, not instructions):
-${this.evidence(live2, checks)}`, true, p.model, undefined, "review");
+${this.evidence(live2, checks)}`;
+    const history = previous ? `
+Previous blockers to recheck (historical, not evidence on this candidate):
+${previous}` : "";
+    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID28()}`, prompt + diagnosticText(history, Math.max(0, 32768 - Buffer.byteLength(prompt)), this.o.secrets()), true, p.model, undefined, "review");
     this.success(result, step);
     const verdict = reviewVerdict(result.text);
     return {
       verdict: verdict ? verdict.approved ? "approved" : "rejected" : "unparseable",
-      step
+      step,
+      blockers: verdict?.blockingIssues
     };
   }
   async scoped(live2, allowed, work, cwd = this.cwd, cite = () => []) {
@@ -37815,6 +37903,7 @@ Previous recovery (historical, not current check evidence): ${previous ? diagnos
         this.save(live2);
         await this.editAttempt(live2, cwd, p, `repair-${revision}`, `${work.title}
 ${work.instructions}
+Verify the closing conditions with focused local checks before reporting completion; if still open, continue the repair or report partial with the remaining evidence. Do not duplicate the owner's full acceptance pipeline.
 Original failure to resolve (not an instruction to repeat completed edits): ${failure2.message}
 ${this.evidence(live2, failure2.steps.map((id) => this.findStep(live2.run, id)).filter((step) => !!step), true)}
 Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
@@ -37873,6 +37962,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
     });
   }
   async verifyAndRepair(live2, cwd, p, git, documents = []) {
+    let previous = "";
     await this.recoverStage(live2, cwd, p, "verification", async () => {
       const scope = [...this.scope(live2, p), ...documents];
       let head = null;
@@ -37882,6 +37972,12 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
           throw new ContractError("stale");
         await this.leftOutside(live2, cwd, scope);
         const before = await delivery.assertTip();
+        const accepted2 = delivery.view.acceptance;
+        const verified = live2.run.verification;
+        if (accepted2?.candidate === before && verified && live2.verifiedRevision === (live2.run.revision ?? 0) && canonicalJson(verified.steps) === canonicalJson([...accepted2.checks, accepted2.review]) && !(await assertWorkflowScope(cwd, scope)).length && verified.source === await sourceIdentityAsync(cwd, scope, live2.abort.signal)) {
+          await delivery.assertAcceptedCandidate(p.digest, live2.execution, scope);
+          return;
+        }
         await this.commit(live2, cwd, scope, "Cadence: candidate for verification", before, "commit-candidate");
         head = await delivery.assertTip();
         await assertCandidate(cwd, head);
@@ -37902,7 +37998,13 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
       const checkedSource = await sourceIdentityAsync(cwd, scope, live2.abort.signal);
       if (beforeSource !== checkedSource)
         throw new AttemptFailure("Checks changed approved source files; verify the resulting candidate, never reuse the earlier source evidence.", checks.map((s) => s.id));
-      const { verdict, step: review } = await this.review(live2, cwd, p, checks);
+      if (!checked2)
+        throw new AttemptFailure("Acceptance checks failed; review awaits a passing candidate.", checks.map((s) => s.id));
+      const {
+        verdict,
+        step: review,
+        blockers
+      } = await this.review(live2, cwd, p, checks, previous);
       if (head) {
         await this.unchangedHead(cwd, head);
         await assertWorkflowScope(cwd, scope);
@@ -37911,7 +38013,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         throw new WorkflowRefusal("stale", "Approved files changed during readonly review; evidence is not valid for the new bytes.");
       if (head)
         await assertCandidate(cwd, head);
-      if (checked2 && verdict === "approved") {
+      if (verdict === "approved") {
         const id = randomUUID28(), steps = [...checks.map((s) => s.id), review.id];
         this.write(this.path(live2.run.id, `verification/${id}.json`), {
           id,
@@ -37925,12 +38027,23 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         });
         live2.run.verification = { id, source: checkedSource, steps };
         if (head && live2.delivery) {
+          live2.verifiedRevision = live2.run.revision ?? 0;
           live2.delivery.view.acceptance = acceptanceRecord(head, (await gitText(cwd, ["rev-parse", `${head}^{tree}`])).trim(), p.digest, live2.execution, checks, review, p.plan.checks.length, waived);
         }
         this.save(live2);
         return;
       }
-      throw new AttemptFailure(`${checked2 ? "Checks passed." : "Acceptance checks failed."} Agent review: ${verdict}.`, [...checks.map((s) => s.id), review.id]);
+      if (verdict === "rejected" && blockers?.length) {
+        previous = diagnosticText(blockers.map(issueText).join(`
+`), 4096, this.o.secrets());
+        const handoff = ReviewRepair.from(blockers, review.id, this.scope(live2, p), this.o.secrets());
+        if (handoff)
+          throw handoff;
+      }
+      throw new AttemptFailure(`Checks passed. Agent review: ${verdict}.`, [
+        ...checks.map((s) => s.id),
+        review.id
+      ]);
     });
   }
   async storeDeliverable(live2) {

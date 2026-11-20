@@ -1037,9 +1037,6 @@ summary:focus-visible,
   width: 13px;
   height: 13px;
 }
-.lp-actions-hint {
-  padding: 0 10px 6px;
-}
 .lp-section-action[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: var(--accent-soft);

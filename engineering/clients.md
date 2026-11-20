@@ -34,6 +34,8 @@ Execution uses the existing exact-plan approval on the originating surface.
 Both surfaces declare `cadence_knowledge`, `cadence_design`, `cadence_research` and `cadence_plan` from one schema (the parameter definitions in `src/coordinator-tools.mjs`) that states shape only: no counts or sizes, so Pi's own argument check never turns a call down for a bound the model could not know.
 The service completes and checks the call (`researchInput`, `workflowPlanInput` in `src/service/contracts/workflow.ts`): a plan field that may be empty may be left out, a question list loses its blank and repeated entries, and whatever cannot be accepted is refused as `<field>: <what it holds and what is accepted>`.
 The coordinator corrects that field and repeats the call in the same turn; nothing in the instructions or a notice lets it publish a reduced plan or ask the user to reply first.
+The browser worker reports invalid design/plan input as a tool error with the original field diagnostic.
+Within that worker it refuses to send the last invalid design again unchanged, including queued duplicates; it never caches project observations, plan bindings or admission outcomes.
 A reading names a recorded investigation by a completed research step's `investigation` value or by that step's own id; the browser checks that an answer is recorded under it before publishing, and a worker is told when one it was given is not.
 `cadence_plan` returns the complete plan in its own tool result; no message is injected while a tool call is open, and workflow results notify at once and are appended as a message once Pi is idle.
 An attempted run ID is restored on a definite refusal (and Start keeps its proposal); one the owner proves absent is forgotten on observation; an `unknown` run blocks new research or planning until one `cadence_status` has observed it.
@@ -366,7 +368,7 @@ Rename turns the row into a field: Enter or Save requests the name, Escape or le
 The history heading's archive control swaps the list for the archived conversations (the `conversations` read with `archived`, read only while shown and never on a timer), each with Unarchive; a failed read there says so and is never an empty list.
 Each request is one command and nothing is changed ahead of it: the row says what is in flight, an accepted or unknown outcome re-reads the lists (and the head of the conversation, when it is the open one), and only those reads change a title or a list.
 A refusal that changed nothing is a toast, and an unknown outcome stays under its row without a retry.
-While no live authenticated owner can take them the actions are shown disabled, with one line above the rows saying why (a stopped owner starts with the next Send).
+When the live owner cannot take a history action, the button is disabled and its reason is available on the control and in the footer's connection details; readiness changes never insert a notice into the history or archive list.
 History rows are grouped by this browser's calendar day (today, yesterday, earlier), and a filter box narrows the rows already listed by title and reads nothing: Running work is never filtered, and pages not loaded are not searched.
 Running work counts reply/workflow/run rows, not distinct conversations; an unreadable count is labelled unobserved, never zero.
 There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as one line; an active one is also listed under Running work.
@@ -391,11 +393,8 @@ Direct legacy project entries remain available; only that compatibility route re
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
 Mineral Alabaster and Obsidian Optical follow the system until the theme chip selects a scheme; the browser remembers that choice and applies it before the first render.
 `web/src/optical-tokens.css` supplies the palette, rims, recessed code surfaces, reading measure and material tiers, including history trace swatches.
-In More, **Ambient light** switches the decorative field off or on without changing a conversation.
-The shared shell draws a single low-resolution WebGL pass only for a visible empty Hero; reading uses a subdued static layer.
-A selected conversation with no durable turn still uses the reading scene when its head reports an attempt, waiting input or an undelivered message; the body, status and applicable recovery action remain in the transcript.
-Hidden tabs and reduced motion suspend the clock.
-A missing context leaves the CSS material in place.
+The welcome screen uses the same plain background as the transcript.
+A selected conversation with no durable turn still shows the transcript rather than the welcome screen when its head reports an attempt, waiting input or an undelivered message; the body, status and applicable recovery action remain visible.
 The script-free access page follows the system's scheme without storing a separate preference.
 Error codes, identifiers, commands and recorded content stay untranslated.
 
@@ -546,6 +545,7 @@ One client-chosen attachment ID survives a lost session header or body; a sessio
 Retained readonly GET requests do not carry an execution attachment.
 Each observation poll checks the existing session too, so an ordinary chat without a socket keeps its viewer alive and detects owner replacement even when its model list is unchanged; session, workspace, active-roster and snapshot epochs must agree before readiness is reported.
 Routine reconciliation on the same current viewer leaves confirmed controls in place while the reads are pending; it does not flash a disabled history list or interrupt a rename.
+Reading a conversation's first head, following a live reply or recognizing a previously sent message updates the conversation, not the viewer's action ticket; history and running-work lists have their own reads.
 A session that withdraws action capability disables controls immediately, and restoring it requires a completed current observation.
 Explicit refresh still invalidates the previous observation immediately.
 Detach is idempotent after authenticated release, including after a lost reply, so gateways can retire the exact viewer mapping; a refused old CSRF is recovered by a readonly session check on that same ID before the next detach.

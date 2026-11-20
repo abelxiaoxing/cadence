@@ -708,6 +708,8 @@ it("folder setup uses the conversation shell, keeps input editable and cannot se
     <FolderSetup ready onChooseFolder={open} onRefresh={open} />,
   );
   expect(html).toContain('class="panel panel-left lp-panel"');
+  expect(html).not.toContain("Ambient light");
+  expect(html).not.toContain("<canvas");
   // First-use guidance and New conversation open the same folder picker.
   expect(html).toMatch(
     /class="primary welcome-action"[^>]*>.*Choose a folder…/,
@@ -740,6 +742,7 @@ it("folder setup uses the conversation shell, keeps input editable and cannot se
       <FolderSetup ready onChooseFolder={open} onRefresh={open} />
     </LocaleProvider>,
   );
+  expect(chinese).not.toContain("环境光");
   expect(chinese).toContain("选择目录…");
   expect(chinese).toContain("选择工作文件夹即可开始，也可以先在下方写草稿");
   expect(chinese).toContain("发送前请选择文件夹");

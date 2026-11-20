@@ -628,7 +628,6 @@ export function TaskSidebar({
         {archivedOpen && (
           <ArchivedList
             list={archived}
-            unavailable={actionsUnavailable}
             onBack={() => setArchivedOpen(false)}
             row={chatRow}
           />
@@ -660,9 +659,6 @@ export function TaskSidebar({
                 </button>
               )}
             </label>
-          )}
-          {actionsUnavailable && pastChats.length > 0 && (
-            <p className="panel-hint lp-actions-hint">{actionsUnavailable}</p>
           )}
           {groupByTime(shownChats, (chat) => chat.updatedAt).map((group) => (
             <div className="lp-time-group" key={group.key}>

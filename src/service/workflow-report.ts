@@ -11,10 +11,39 @@ const RECORD_BYTES = 384 * 1024;
 const TRANSCRIPT_LIMIT =
   "Transcript bound reached: later worker activity was not retained here. The worker continued; its outcome and final result are recorded separately.";
 
+export interface ReviewIssue {
+  id: string;
+  evidence: string;
+  verify: string;
+  writes: string[];
+}
+type Blocker = string | ReviewIssue;
+export const issueText = (issue: Blocker): string =>
+  typeof issue === "string"
+    ? issue
+    : `${issue.id}: ${issue.evidence}\nVerify: ${issue.verify}`;
+
+function isBlocker(value: unknown): value is Blocker {
+  if (typeof value === "string") return true;
+  if (!value || typeof value !== "object") return false;
+  const issue = value as Partial<ReviewIssue>;
+  return (
+    Object.keys(issue).length === 4 &&
+    typeof issue.id === "string" &&
+    /^[a-z][a-z0-9-]{0,47}$/.test(issue.id) &&
+    typeof issue.evidence === "string" &&
+    !!issue.evidence.trim() &&
+    typeof issue.verify === "string" &&
+    !!issue.verify.trim() &&
+    Array.isArray(issue.writes) &&
+    issue.writes.every((p) => typeof p === "string")
+  );
+}
+
 /** Accepts the requested JSON verdict alone, fenced, or embedded in prose. */
 export function reviewVerdict(
   reply: string,
-): { approved: boolean; summary: string; blockingIssues: string[] } | null {
+): { approved: boolean; summary: string; blockingIssues: Blocker[] } | null {
   let malformed = false;
   const decode = (raw: string) => {
     let v: unknown;
@@ -40,15 +69,14 @@ export function reviewVerdict(
     const o = v as Record<string, unknown>;
     if (typeof o.approved !== "boolean") return null;
     const issues = o.blockingIssues === undefined ? [] : o.blockingIssues;
-    if (
-      !Array.isArray(issues) ||
-      issues.some((issue) => typeof issue !== "string")
-    )
+    if (!Array.isArray(issues) || !issues.every(isBlocker)) {
+      malformed = true;
       return null;
+    }
     return {
       approved: o.approved && issues.length === 0,
       summary: typeof o.summary === "string" ? o.summary : "",
-      blockingIssues: issues as string[],
+      blockingIssues: issues,
     };
   };
   const body = reply.trim();
@@ -106,9 +134,29 @@ export function reviewReport(
       truncated: false,
     };
   const cleanSummary = sanitizeText(verdict.summary, secrets);
-  const cleanIssues = verdict.blockingIssues.map((issue) =>
-    sanitizeText(issue, secrets),
-  );
+  const cleanIssues = verdict.blockingIssues.map((issue) => {
+    const clean = (s: string) => sanitizeText(s, secrets);
+    if (typeof issue === "string") return clean(issue);
+    // Never turn a redacted selector into an editing destination.
+    if (
+      clean(issue.id) !== issue.id ||
+      issue.writes.some((p) => clean(p) !== p)
+    )
+      return clean(issueText(issue));
+    return {
+      ...issue,
+      evidence: clean(issue.evidence),
+      verify: clean(issue.verify),
+    };
+  });
+  const complete = {
+    approved: verdict.approved,
+    summary: cleanSummary,
+    blockingIssues: cleanIssues,
+  };
+  if (Buffer.byteLength(JSON.stringify(complete)) <= 16384)
+    return { text: canonicalJson(complete, 16384), truncated: false };
+  // Oversize results retain their verdict and readable evidence, never a partially retained repair instruction.
   return {
     // At most 6KiB of fields; even JSON escaping fits the 16KiB reply allowance.
     text: canonicalJson(
@@ -117,14 +165,11 @@ export function reviewReport(
         summary: diagnosticText(cleanSummary, 2048),
         blockingIssues: cleanIssues
           .slice(0, 16)
-          .map((issue) => diagnosticText(issue, 256)),
+          .map((issue) => diagnosticText(issueText(issue), 256)),
       },
       16384,
     ),
-    truncated:
-      Buffer.byteLength(cleanSummary) > 2048 ||
-      cleanIssues.length > 16 ||
-      cleanIssues.some((issue) => Buffer.byteLength(issue) > 256),
+    truncated: true,
   };
 }
 

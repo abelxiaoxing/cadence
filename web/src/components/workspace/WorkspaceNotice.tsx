@@ -32,6 +32,7 @@ export function WorkspaceConnection({
   projectError,
   viewerError,
   historyError,
+  historyActionsUnavailable,
   readErrors = [],
   prepareOnly,
   retained,
@@ -44,6 +45,7 @@ export function WorkspaceConnection({
   projectError?: string;
   viewerError?: string;
   historyError?: string;
+  historyActionsUnavailable?: string;
   readErrors?: readonly (readonly [MessageKey, string | undefined])[];
   prepareOnly?: boolean;
   retained: boolean;
@@ -137,6 +139,7 @@ export function WorkspaceConnection({
         {(phase === "stopped" || phase === "not-started") && (
           <p>{t("Ready to prepare execution")}</p>
         )}
+        {historyActionsUnavailable && <p>{historyActionsUnavailable}</p>}
         {unavailable && retained && <p>{t("Last known state")}</p>}
         {cause?.entryError && (
           <p>

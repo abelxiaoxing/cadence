@@ -44,7 +44,8 @@ The agreement explicitly allows service-owned diagnosis, remaining-work splittin
 There is no total delivery deadline or fixed repair-round quota.
 Agents have no total runtime deadline; setup/check commands are unlimited unless their exact approved definition specifies a timeout.
 Original closure requirements are unchanged.
-Settled failures enter readonly diagnosis; authority, storage, cancellation and unknown-closure failures never authorize another attempt.
+Settled failures enter recovery: clear in-scope review findings go directly to repair, while ambiguous failures need readonly diagnosis (see [checks and review](checks-review.md)).
+Authority, storage, cancellation and unknown-closure failures never authorize another attempt.
 An edit outside the write scope is a settled failure when it stays inside the repository boundary (`workflowBoundary`) and its attempt's step can be cited: the diagnosis adopts or restores it.
 Changes found outside the scope when a candidate is about to be committed are recorded as their own failed `write-scope` step and decided the same way.
 A protected path (credentials, keys, `.env`, `.git`) or an uncitable attempt still ends the run with the edits preserved.

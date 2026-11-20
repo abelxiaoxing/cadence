@@ -22,8 +22,6 @@
   --tool-success: light-dark(#11734f, #34d399);
   --prism-a: light-dark(#39578d, #b0c8ef);
   --prism-b: light-dark(#45558c, #a6b6eb);
-  --lens-silver: light-dark(#949fb1, #c0ccde);
-  --lens-violet: light-dark(#ad9cb5, #d1c6dc);
   --on-accent: light-dark(#ffffff, #141519);
   --border: light-dark(#c4c7cf, #42454d);
   --border-soft: light-dark(#d9dce2, #2b2c32);
@@ -150,8 +148,6 @@
   --card-body-pad: 4px 14px 12px;
   --reading-width: 800px;
   --reading-leading: 1.65;
-  --ambient-fps: 24;
-  --ambient-pixels: 256000;
   --grain-image:
     radial-gradient(ellipse at 28% 69%, var(--grain) 0.65px, transparent 1px),
     radial-gradient(circle at 79% 17%, var(--grain) 0.6px, transparent 1px);

@@ -88,7 +88,8 @@ Reports distinguish `completed`, `partial` (useful outputs with remaining assign
 Partial/blocked steps keep those statuses separately from their successful native closure; neither releases dependencies or approves delivery.
 Malformed or missing reports remain failed attempts.
 All incomplete attempts enter recovery, not inferred success.
-The owner records a readonly diagnosis and a route revision with actual failed-step references before dispatching further work.
+The owner records a revision citing actual failed steps before dispatching further work.
+Ambiguous failures need readonly diagnosis; a clear review finding can go straight to repair as described below.
 Recovery accepts one complete JSON decision with optional surrounding diagnostic prose or a code fence.
 Markdown links and bracketed evidence labels in that prose are allowed; a decision nested inside an array remains refused.
 The entire reply stays byte-bounded; multiple objects, duplicate keys, incomplete objects and array wrappers refuse rather than selecting a convenient fragment.
@@ -110,12 +111,21 @@ The owner assembles implementation, curated knowledge and deliverable notes befo
 Final verification and integration outcomes stay in owner records.
 Repairs and changed candidate identities require fresh evidence.
 Failed checks, rejected review, unparseable review and settled worker failures can enter diagnosis and repair without further routine confirmation.
-Every declared check runs in every round.
+A repair worker exercises the affected behavior with focused checks before reporting completed or partial; these observations never count as owner acceptance.
+Every declared check still runs on a candidate submitted for final verification.
+A failed gating check goes to recovery with its original results, without spending a review on a candidate that cannot pass.
 A check is set aside only by a recorded deviation that names it: it still runs and is shown as failed, stops gating acceptance, and is listed in the acceptance record (`waived`); a candidate whose every check was set aside is never accepted.
 The review is given every recorded deviation and must find each necessary and minimal; rejecting one sends the delivery back to recovery.
 A completed run that deviated says so first in its final notice, composed after settlement so cleanup and the final writer cannot overwrite it.
 Repeated operation/failure identity and unchanged source observation escalate the decision's level even when strategy or work instructions are rephrased.
-Observable progress still permits further repairs without a fixed quota.
+An independent review may name each blocker by a stable ID, concrete evidence against the agreement, an observable closing condition and repository-relative write paths.
+Suggestions do not block.
+When all blockers have actionable paths in the current edit scope, the owner validates and records one ordinary repair revision and sends the complete conditions directly to the editor.
+It cannot add scope, amend the agreement or waive a check.
+Ambiguous, oversized, out-of-scope or repeated findings take the diagnosis path.
+The next review gets the preceding blockers as historical context and judges the new candidate; a repeated actionable ID set does not reset escalation merely because files changed.
+A new issue set can still make progress without a round quota.
+The existing review-step result holds the list: complete redacted verdicts within its budget are not clipped for display; an oversize projection carries only text excerpts, never a partially usable repair.
 Current-round native exit/closure facts and labelled redacted result excerpts reach diagnosis, repair and review.
 Check results also retain their exact command, actual mapped cwd, checkout placement, target binding and only the effective `TMPDIR`/`TEMP`/`TMP` launch values (null means unset in a retained launch), all sanitized before storage and again on reads.
 Diagnosis and repair receive this context even for silent failures; older results explicitly say when it was not recorded.
@@ -124,6 +134,8 @@ A failed repair retains the original failing step identities alongside the lates
 No worker needs permission to inspect private state or the owner process environment.
 Old failures are historical context, not current check evidence; baseline and post-merge rounds collect their own original check identities.
 Every relevant repair or knowledge edit triggers fresh checks/review on the combined candidate.
+Only within that original delivery, an already accepted clean candidate with matching verification step IDs, scope/source identity and recovery revision can reuse its evidence after exact candidate, tree, agreement, context and ownership revalidation.
+Post-merge checks remain independent.
 Successful verification records bind the agreement, cwd, exact approved-source identity and original step IDs.
 Cross-worktree verification streams file bytes, including large files under directory scopes; placement-dependent stat identities remain observation fences only.
 Cancellation joins the current read/close instead of abandoning it.

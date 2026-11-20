@@ -13,6 +13,7 @@ import {
   type RecoveryLevel,
   type RecoveryPorts,
   type RecoveryRecord,
+  ReviewRepair,
   type RouteTask,
   revisedRoute,
 } from "../src/service/workflow-controller.ts";
@@ -60,6 +61,38 @@ it("more than two failed attempts can complete one goal without another approval
   expect(result).toBe("verified output");
   expect(f.records).toHaveLength(5);
   expect(f.records.map((r) => r.revision)).toEqual([1, 2, 3, 4, 5]);
+});
+it("only the first clear in-scope review goes straight to repair; changed bytes alone cannot repeat it", async () => {
+  const issue = {
+    id: "scroll",
+    evidence: "acceptance 3: stationary poll jumps",
+    verify: "two polls leave the offset unchanged",
+    writes: ["src/view.ts"],
+  };
+  const rejection = () => ReviewRepair.from([issue], "step-a", ["src"], [])!;
+  for (const issues of [
+    ["uncertain"],
+    [issue, issue],
+    [{ ...issue, writes: [] }],
+    [{ ...issue, writes: ["other.ts"] }],
+    [{ ...issue, writes: ["src/auth.json"] }],
+    [{ ...issue, writes: ["src/../view"] }],
+  ])
+    expect(ReviewRepair.from(issues, "step-a", ["src"], [])).toBeUndefined();
+  let attempts = 0;
+  const f = fixture({
+    observe: async () => String(attempts),
+    diagnose: async (_failure, _previous, floor) => ({
+      ...decision(),
+      level: floor,
+    }),
+  });
+  await f.controller.complete("verification", async () => {
+    if (++attempts <= 2) throw rejection();
+  });
+  expect(f.ports.execute).toHaveBeenCalledTimes(1);
+  expect(f.records.map((r) => r.decision.level)).toEqual(["repair", "replan"]);
+  expect(f.records[0].decision.work[0].instructions).toContain(issue.verify);
 });
 it("a diagnosis can split remaining work, and a failed repair is diagnosed rather than abandoned", async () => {
   let attempts = 0,

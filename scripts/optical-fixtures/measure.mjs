@@ -385,8 +385,7 @@ export async function frameWindow(ms, scroll) {
   const el = document.querySelector(".chat-messages"),
     intervals = [];
   let last = 0;
-  const start = performance.now(),
-    draws = window.opticalProbe.draws;
+  const start = performance.now();
   await new Promise((resolve) => {
     const frame = (t) => {
       if (last) intervals.push(t - last);
@@ -406,7 +405,6 @@ export async function frameWindow(ms, scroll) {
     p50: intervals[Math.floor(intervals.length * 0.5)],
     p95: intervals[Math.floor(intervals.length * 0.95)],
     over50: intervals.filter((x) => x > 50).length / intervals.length,
-    draws: window.opticalProbe.draws - draws,
   };
 }
 

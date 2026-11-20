@@ -23,6 +23,7 @@ import {
   workflowPath,
   workflowTaskId,
 } from "./contracts/workflow.ts";
+import { issueText, type ReviewIssue } from "./workflow-report.ts";
 
 /** Full structured recovery reply, independent of ordinary text previews. */
 export const RECOVERY_BYTES = 32768;
@@ -425,6 +426,64 @@ export function decodeRecoveryDecision(
     );
   }
 }
+/** Only the owner constructs this shortcut, after the current checks, readonly
+ * review and candidate fences. No review may add scope, commands or deviations. */
+export class ReviewRepair extends AttemptFailure {
+  private constructor(
+    readonly ids: string[],
+    readonly decision: RecoveryDecision,
+  ) {
+    super(
+      `Agent review: unresolved ${ids.join(", ")}.`,
+      decision.evidence,
+      `review:${ids.join(",")}`,
+    );
+  }
+  static from(
+    blockers: (string | ReviewIssue)[],
+    step: string,
+    scope: readonly string[],
+    secrets: readonly string[],
+  ): ReviewRepair | undefined {
+    if (
+      !blockers.length ||
+      !blockers.every(
+        (issue): issue is ReviewIssue =>
+          typeof issue !== "string" &&
+          issue.writes.length > 0 &&
+          issue.writes.every(workflowBoundary),
+      )
+    )
+      return;
+    const ids = blockers.map((issue) => issue.id).sort();
+    if (new Set(ids).size !== ids.length) return;
+    const writes = [...new Set(blockers.flatMap((issue) => issue.writes))];
+    try {
+      const decision = decodeRecoveryDecision(
+        JSON.stringify({
+          action: "continue",
+          evidence: [step],
+          cause: "Independent review identified outstanding acceptance issues.",
+          strategy: `Repair and verify: ${ids.join(", ")}`,
+          work: [
+            {
+              title: "Resolve review blockers",
+              instructions: blockers.map(issueText).join("\n\n"),
+              writes,
+            },
+          ],
+        }),
+        { scope, evidence: [step], floor: "repair", checks: [] },
+        secrets,
+      );
+      return new ReviewRepair(ids, decision);
+    } catch (error) {
+      // An oversized or out-of-scope handoff needs diagnosis, not a partial repair.
+      if (!(error instanceof InvalidDecision)) throw error;
+    }
+  }
+}
+
 export interface RecoveryPorts {
   assertRunning(): void;
   observe(): Promise<string>;
@@ -478,6 +537,7 @@ export class DeliveryController {
   async complete<T>(stage: string, action: () => Promise<T>): Promise<T> {
     let repair: RecoveryWork[] = [];
     let recorded = 0;
+    const reviewed = new Set<string>();
     let failure: AttemptFailure | undefined;
     let original: AttemptFailure | undefined;
     // Escalation holds for the rest of this stage.
@@ -508,31 +568,51 @@ export class DeliveryController {
         failure = attempt;
         this.ports.assertRunning();
         const observation = await this.ports.observe();
-        let decision: RecoveryDecision;
-        for (;;) {
-          decision = await this.decide(attempt, floor);
-          this.ports.assertRunning();
-          if (decision.action === "blocked") break;
-          const fingerprint = createHash("sha256")
+        const fingerprint = (level: RecoveryLevel) =>
+          createHash("sha256")
             .update(
               canonicalJson({
                 stage,
-                observation,
+                // The same unresolved review conditions are not new evidence
+                // just because the repair produced a different candidate.
+                observation:
+                  attempt instanceof ReviewRepair ? null : observation,
                 failure:
                   attempt.identity ??
                   attempt.message.replace(
                     /[0-9a-f]{8}-[0-9a-f-]{27,}/gu,
                     "<step>",
                   ),
-                level: decision.level,
+                level,
                 // Prose (including work instructions) is not new evidence.
                 // A failed changed approach without an observable change must
                 // escalate too; the next level may revise scope/route.
               }),
             )
             .digest("hex");
-          if (!this.tried.has(fingerprint)) {
-            this.tried.add(fingerprint);
+        let required = floor;
+        // Don't pay for a diagnosis at a level already known not to work.
+        // Review escalation belongs to this set of open issues, not the next set.
+        if (attempt instanceof ReviewRepair) {
+          while (
+            required !== "deviate" &&
+            this.tried.has(fingerprint(required))
+          )
+            required = RECOVERY_LEVELS[RECOVERY_LEVELS.indexOf(required) + 1];
+        }
+        let decision: RecoveryDecision;
+        for (;;) {
+          decision =
+            attempt instanceof ReviewRepair &&
+            required === "repair" &&
+            attempt.ids.every((id) => !reviewed.has(id))
+              ? attempt.decision
+              : await this.decide(attempt, required);
+          this.ports.assertRunning();
+          if (decision.action === "blocked") break;
+          const key = fingerprint(decision.level);
+          if (!this.tried.has(key)) {
+            this.tried.add(key);
             break;
           }
           // The same operation and observed state failed again: the next level decides.
@@ -542,7 +622,8 @@ export class DeliveryController {
             throw new Error(
               `No new evidence or strategy for ${stage} at any level; partial work is preserved. ${decision.cause}`,
             );
-          floor = next;
+          required = next;
+          if (!(attempt instanceof ReviewRepair)) floor = next;
         }
         const record = {
           revision: ++this.revision,
@@ -553,11 +634,13 @@ export class DeliveryController {
         };
         recorded = this.ports.record(record);
         this.previous = record;
+        if (attempt instanceof ReviewRepair)
+          for (const id of attempt.ids) reviewed.add(id);
         if (decision.action === "blocked")
           throw new Error(
             `Delivery blocked${decision.blocker ? ` (${decision.blocker})` : ""}: ${decision.cause}\n${decision.strategy}`,
           );
-        repair = decision.work;
+        repair = [...decision.work];
       }
     }
   }

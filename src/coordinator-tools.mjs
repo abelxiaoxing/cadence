@@ -1,6 +1,12 @@
 /** Serialized private child/owner bridge. Never a browser API or shell executor. */
+import { createHash } from "node:crypto";
 import { Type } from "typebox";
-import { closed, knowledgeFields, LIMITS } from "./worker-public.mjs";
+import {
+  canonicalJson,
+  closed,
+  knowledgeFields,
+  LIMITS,
+} from "./worker-public.mjs";
 
 /** The parameters of the two tools a coordinator calls, declared once for the
  * native extension and the browser coordinator. They state shape only: counts,
@@ -278,6 +284,9 @@ export function createCoordinatorTools() {
   const pending = new Map();
   let counter = 0;
   let chain = Promise.resolve();
+  // Design validation refusals describe the arguments, not mutable project
+  // state. Remember only the last one for this coordinator's lifetime.
+  let invalidDesign;
   let disconnected = false;
   let retiring = false;
   let retirement;
@@ -301,13 +310,28 @@ export function createCoordinatorTools() {
     const p = pending.get(reply.id);
     if (!p) return;
     pending.delete(reply.id);
-    if (reply.ok === true && typeof reply.text === "string")
+    if (reply.ok === true && typeof reply.text === "string") {
+      if (p.design || p.plan) {
+        let value;
+        try {
+          value = JSON.parse(reply.text);
+        } catch {
+          /* Not a structured refusal. */
+        }
+        if (
+          (value?.refused === "invalid" || value?.refused === "invalid-plan") &&
+          typeof value.notice === "string"
+        ) {
+          if (p.design) invalidDesign = { key: p.design, notice: value.notice };
+          return p.reject(new Error(value.notice));
+        }
+        if (p.design) invalidDesign = undefined;
+      }
       p.resolve({
         content: [{ type: "text", text: reply.text }],
         details: undefined,
       });
-    // The service did nothing; its fixed code says why it could not.
-    else
+    } else
       p.reject(
         new Error(
           typeof reply.code === "string" && /^[a-z-]{1,40}$/.test(reply.code)
@@ -360,7 +384,12 @@ export function createCoordinatorTools() {
     execute: async (_callId, args, signal) => {
       if (retiring) throw new Error("Coordinator closed");
       if (signal?.aborted) throw new Error("Coordinator canceled");
-      const request = { id: ++counter, name: tool.name, args };
+      const request = {
+        id: ++counter,
+        name: tool.name,
+        args:
+          tool.name === "cadence_knowledge" ? knowledgeToolInput(args) : args,
+      };
       if (Buffer.byteLength(JSON.stringify(request)) > LIMITS.coordinatorBytes)
         throw new Error(
           `This call is larger than ${LIMITS.coordinatorBytes} bytes and was not sent; nothing happened.`,
@@ -371,7 +400,24 @@ export function createCoordinatorTools() {
             if (signal?.aborted) throw new Error("Coordinator canceled");
             if (disconnected) throw new Error("Coordinator disconnected");
             if (retiring) throw new Error("Coordinator closed");
-            pending.set(request.id, { resolve, reject });
+            const design =
+              tool.name === "cadence_design"
+                ? createHash("sha256")
+                    .update(canonicalJson(args, LIMITS.coordinatorBytes))
+                    .digest("hex")
+                : undefined;
+            if (design && invalidDesign?.key === design)
+              return reject(
+                new Error(
+                  `Unchanged invalid design was not sent. ${invalidDesign.notice}`,
+                ),
+              );
+            pending.set(request.id, {
+              resolve,
+              reject,
+              design,
+              plan: tool.name === "cadence_plan",
+            });
             const unavailable = () => {
               pending.delete(request.id);
               reject(new Error("Coordinator request unavailable"));
