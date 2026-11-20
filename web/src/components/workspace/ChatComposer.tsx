@@ -93,7 +93,7 @@ export interface ChatComposerProps {
   /** What the next message continues, when that is not simply the end of the
    * latest branch. */
   anchor?: ReactNode;
-  /** Why Send is unavailable. */
+  /** Why Send, steer or queue is unavailable. */
   status?: string;
   cadence: Parameters<typeof CadenceModeButton>[0];
   model: Parameters<typeof ModelPicker>[0];
@@ -530,6 +530,7 @@ export function ChatComposer({
         disabled={locked && !focused}
         readOnly={locked && focused}
         aria-label={t("Message")}
+        aria-description={status}
         aria-autocomplete={location ? "list" : undefined}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open ? rowId : undefined}

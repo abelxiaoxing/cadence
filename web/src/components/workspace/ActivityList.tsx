@@ -29,8 +29,8 @@ export function activityKey(
   ]);
 }
 
-/** Take only the selected project's attributable reports (and its orphan
- * workflows) out of discovery, whether or not its history has loaded. The
+/** Take only the selected project's attributable reports (and its unattributed
+ * owner work) out of discovery, whether or not its history has loaded. The
  * viewer's exact roster identities, when available, already occupy `seen`. */
 export function groupProjectActivity(
   project: ActivityProject | undefined,
@@ -42,7 +42,7 @@ export function groupProjectActivity(
     for (const a of project.activities) {
       const key = activityKey(project.path, a);
       if (seen.has(key)) continue;
-      if (a.source === "workflow" && !a.sessionId) unlinked.push(a);
+      if (a.source !== "terminal" && a.sessionId === null) unlinked.push(a);
       else if (
         a.sessionId &&
         a.history === "shared" &&

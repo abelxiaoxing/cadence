@@ -3,9 +3,10 @@
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
-import type {
-  Activity,
-  ActivityDiscovery,
+import {
+  type Activity,
+  type ActivityDiscovery,
+  managedActivity,
 } from "../../src/service/contracts/activity.ts";
 import type { ChatSummary } from "../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
@@ -360,6 +361,53 @@ it("pins one session until its last independent reply or linked run leaves the r
     'class="session-item active" aria-current="true" title="Pinned session"',
   );
 });
+it("pins a direct owner's reply by roster membership until settlement, independently of its recorded result", () => {
+  const reply = {
+    ...summary("Direct reply", "running"),
+    live: { commandId: id(), epoch: id() },
+  };
+  const settling = { ...reply, status: "failed" as const };
+  const draw = (
+    activeChats?: ChatSummary[],
+    chatActivityKnown = true,
+    page = reply,
+  ) =>
+    historyView({
+      chats: [page], // The page and direct owner's roster refresh independently.
+      activeChats,
+      chatActivityKnown,
+      conversationId: reply.id,
+    }).split('<header class="lp-section-header"');
+  const row =
+    'class="session-item active" aria-current="true" title="Direct reply"';
+  const [running, firstPage] = draw([reply]);
+  const [closing, secondPage] = draw([settling]);
+  for (const [prefix, page] of [
+    [running, firstPage],
+    [closing, secondPage],
+  ]) {
+    expect(prefix).toContain(row);
+    expect(prefix).toContain('aria-label="Working"');
+    expect(prefix).not.toContain('class="session-actions"');
+    expect(page).not.toContain(reply.title);
+  }
+  const outcome = 'class="session-sub session-state failed">failed</span>';
+  expect(closing).toContain(outcome);
+  const [released, lastPage] = draw([]);
+  expect(released).not.toContain(reply.title);
+  expect(lastPage).toContain(row);
+  expect(lastPage).not.toContain("history-activity-mark");
+  // A failed read retains the last roster, or the page's live hint if no
+  // roster has arrived yet. Neither is a fresh observation.
+  for (const [stale] of [
+    draw([settling], false),
+    draw(undefined, false, settling),
+  ]) {
+    expect(stale).toContain(row);
+    expect(stale).toContain('aria-label="Stale observation"');
+    expect(stale).toContain(outcome);
+  }
+});
 it("joins shared terminal reports to their project's history without consuming unrelated discovery or owner controls", () => {
   const listed = summary("Mineral notes", "completed"),
     idle = summary("Older notes", "completed");
@@ -596,6 +644,63 @@ it("promotes the session from owner discovery alone; only matching viewer runs a
   const [, done, past] = draw([], []);
   expect(done).not.toContain(listed.title);
   expect(past).toContain(listed.title);
+});
+it("replaces only the exact unattributed owner turn when its viewer session appears", () => {
+  const project = "/notes";
+  const epoch = id();
+  const turn = () =>
+    managedActivity({
+      id: id(),
+      epoch,
+      source: "turn",
+      root: project,
+      phase: "settling",
+      now: 1000,
+    });
+  const first = turn(),
+    second = turn();
+  const draw = (activeChats?: ChatSummary[]) =>
+    historyView({
+      chats: [],
+      activeChats,
+      discovery: {
+        project,
+        opening: false,
+        onOpen() {},
+        error: "",
+        value: {
+          kind: "activity-discovery",
+          epoch,
+          observedAt: 1000,
+          completeness: "complete",
+          unavailable: 0,
+          projects: [{ path: project, activities: [first, second, first] }],
+        },
+      },
+    });
+  const viewer = {
+    ...summary("Viewer reply", "failed"),
+    live: { commandId: first.id, epoch },
+  };
+  for (const roster of [undefined, [viewer]]) {
+    const html = draw(roster);
+    expect(html).not.toMatch(/Active Pi work|Cancel|Stop/);
+    const details = html.match(
+      /<details class="history-unlinked">(.*?)<\/details>/s,
+    )?.[1];
+    expect(details).toContain(`Unattributed work · ${roster ? 1 : 2}`);
+    expect(details).not.toContain("<button");
+    expect(details).toContain(`Owner turn · <code>${second.id}</code>`);
+    if (roster) {
+      expect(details).not.toContain(first.id);
+      expect(html.match(/class="session-title">Viewer reply</g)).toHaveLength(
+        1,
+      );
+    } else {
+      expect(details).toContain(`Owner turn · <code>${first.id}</code>`);
+      expect(html).not.toContain('class="conversation-row');
+    }
+  }
 });
 it("keeps off-page, archived, unwritten and unlinked activity discoverable without inventing a session summary", () => {
   const fresh = summary("First send", "starting");

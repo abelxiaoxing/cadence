@@ -356,11 +356,14 @@ export function TaskSidebar({
       (chat) => [chat.id, chat],
     ),
   );
+  // The owner keeps a reply on its roster through cleanup, even after its
+  // result is recorded. Consult page hints only before the first roster read.
   const liveChats = executionStopped
     ? []
-    : (activeChats ?? [...summaries.values()]).filter((chat) =>
-        unsettled(chat.status),
-      );
+    : (activeChats ??
+      [...summaries.values()].filter(
+        (chat) => chat.live || unsettled(chat.status),
+      ));
   const replying = new Set(liveChats.map((chat) => chat.id));
   const links = new Map(
     workflowLinks.map((link) => [link.runId, link.conversationId]),
@@ -495,7 +498,7 @@ export function TaskSidebar({
         ? t("Working")
         : t("Stale observation")
       : undefined;
-    const showActions = !!chat && !unsettled(status);
+    const showActions = !!chat && !replying.has(id) && !unsettled(status);
     const label = chat ?? {
       id,
       title: t("Conversation {id}", { id }),

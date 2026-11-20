@@ -91,7 +91,23 @@ it("groups the selected project's associated work on first discovery, before his
   const reply = activity({ source: "turn", instance: null, epoch });
   const run = { ...reply, source: "workflow" as const, id: randomUUID() };
   const secondRun = { ...run, id: randomUUID() };
-  const local = [secondRun, a, reply, b, run];
+  const orphanTurn = {
+    ...reply,
+    id: randomUUID(),
+    sessionId: null,
+    leaf: null,
+  };
+  const otherTurn = { ...orphanTurn, id: randomUUID() };
+  const local = [
+    secondRun,
+    a,
+    reply,
+    b,
+    run,
+    orphanTurn,
+    otherTurn,
+    orphanTurn,
+  ];
   vi.stubGlobal("window", {
     location: new URL(`http://127.0.0.1:43210/app?project=${project.id}`),
   });
@@ -165,7 +181,12 @@ it("groups the selected project's associated work on first discovery, before his
   const details = list.match(
     /<details class="history-unlinked">(.*?)<\/details>/s,
   )?.[1];
-  expect(details).toContain("Unattributed work · 2");
+  expect(details).toContain("Unattributed work · 4");
+  expect(details?.match(/Owner turn · <code>/g)).toHaveLength(2);
+  for (const turn of [orphanTurn, otherTurn])
+    expect(details).toContain(
+      `Owner turn · <code>${turn.id}</code><br/>turn · Current observation · /project`,
+    );
   expect(details).toContain(
     `<code>${a.id}</code><br/>implementing · Current observation`,
   );

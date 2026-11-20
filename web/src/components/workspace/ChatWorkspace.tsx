@@ -227,13 +227,40 @@ export interface ChatDiagnostics {
 type Draft = { text: string; source?: string | symbol };
 type DraftEntry = Draft & { parked?: Draft };
 // Native history exposes the restored text, not which edit it came from.
-// Remember only recognized phrases: a discussion lifetime if unambiguous,
-// otherwise null. Neither the browser's edit stack nor plan bindings live here.
+// Keep short edits, not just finished phrases: undo can restore an unfinished
+// word which the user then completes. Never evict a conflicting source and
+// later mistake the same text for unambiguous. An untracked edit has no proof.
+// The longest forms cover unfinished words even when the caret is in the
+// middle. This only filters bookkeeping; cadenceApproval alone recognizes
+// intent. Ordinary typing must not consume the entire provenance budget.
+const phraseBodies = [
+  ...["按这个计划开始", "按本计划开始", "确认计划并"].flatMap((stem) => [
+    `${stem}执行`,
+    `${stem}实施`,
+  ]),
+  "approve and execute",
+];
+function phraseFragment(key: string) {
+  const body = key.toLowerCase().replace(/[。.!！]$/u, "");
+  return phraseBodies.some((phrase) => {
+    let matched = 0;
+    for (const char of phrase) if (char === body[matched]) ++matched;
+    return matched === body.length;
+  });
+}
+const MAX_ORIGIN_KEYS = 512;
+const MAX_ORIGIN_TEXT = 32;
 type PhraseOrigins = ReadonlyMap<string, symbol | null>;
 function rememberPhrase(origins: PhraseOrigins, entry: Draft): PhraseOrigins {
-  if (!cadenceApproval(entry.text)) return origins;
   const key = entry.text.trim();
+  if (!key || key.length > MAX_ORIGIN_TEXT) return origins;
   const previous = origins.get(key);
+  if (
+    previous === undefined &&
+    (origins.size >= MAX_ORIGIN_KEYS ||
+      (!cadenceApproval(key) && !phraseFragment(key)))
+  )
+    return origins;
   const source =
     typeof entry.source === "symbol" &&
     (previous === undefined || previous === entry.source)
@@ -703,6 +730,7 @@ export function ChatWorkspace({
   const summary = conversation.summary ?? undefined;
   const status = summary?.status;
   const running = unsettled(status);
+  const liveRun = running ? summary?.live : undefined;
   const lastTurn = turns.at(-1)?.header;
   const replyClock = observedReplyClock(conversation, id, !!pending);
   // The branch's context size beside the window of the model that reported
@@ -869,7 +897,11 @@ export function ChatWorkspace({
       : "readonly";
   // An exact phrase can also be ordinary discussion (including steering a
   // live reply). Never reinterpret a draft across these two input paths.
-  const discussionPath = running ? "reply" : cadence ? undefined : mode;
+  const discussionPath = running
+    ? liveRun && JSON.stringify([id, liveRun.commandId, liveRun.epoch])
+    : cadence
+      ? undefined
+      : mode;
   const discussionSource = useMemo(
     () => discussionPath && Symbol(discussionPath),
     [discussionPath],
@@ -900,7 +932,7 @@ export function ChatWorkspace({
           return {
             text,
             source:
-              discussionPath === "chat" &&
+              (discussionPath === "chat" || !!liveRun) &&
               origins.get(text.trim()) === discussionSource
                 ? discussionSource
                 : undefined,
@@ -1954,7 +1986,6 @@ export function ChatWorkspace({
     lastTurn?.status === "running" &&
     (lastTurn.activity?.kind === "tool" ||
       lastTurn.activity?.kind === "thinking");
-  const liveRun = running ? summary?.live : undefined;
   // The whole text of messages this tab sent, which the head read may clip.
   const sentInputs = useRef(new Map<string, string>());
   const inputBlock = inputRefusal({
@@ -2209,6 +2240,28 @@ export function ChatWorkspace({
         ? t("Choose a model; your message is sent right after.")
         : busy
           ? t("Working…")
+          : undefined;
+  const liveInputStatus =
+    !running || !draft.trim()
+      ? undefined
+      : inputBlock
+        ? t(
+            inputBlock === "images"
+              ? "A message into a running reply carries no images. Remove them, or send after the reply ends."
+              : inputBlock === "mode"
+                ? "Cadence mode is not changed by a message into a running reply. Send this after the reply ends."
+                : inputBlock === "full"
+                  ? "Eight messages already wait for this reply. Withdraw one, or wait."
+                  : "A message into a running reply continues that reply, not another entry.",
+          )
+        : !canInput
+          ? t("Cannot steer or queue: {reason}", {
+              reason:
+                waitingReason ??
+                (attaching
+                  ? t("Reading the message's images…")
+                  : t("Current action context unavailable; observe again.")),
+            })
           : undefined;
   const imageLockReason = running
     ? t("Wait for the current reply to finish before adding images.")
@@ -2757,17 +2810,9 @@ export function ChatWorkspace({
           status={
             preparing
               ? t("Preparing execution for this Send…")
-              : liveRun && draft.trim() && inputBlock
-                ? t(
-                    inputBlock === "images"
-                      ? "A message into a running reply carries no images. Remove them, or send after the reply ends."
-                      : inputBlock === "mode"
-                        ? "Cadence mode is not changed by a message into a running reply. Send this after the reply ends."
-                        : inputBlock === "full"
-                          ? "Eight messages already wait for this reply. Withdraw one, or wait."
-                          : "A message into a running reply continues that reply, not another entry.",
-                  )
-                : running || canPrepareOnly || canSend
+              : running
+                ? liveInputStatus
+                : canPrepareOnly || canSend
                   ? undefined
                   : pending
                     ? t(
