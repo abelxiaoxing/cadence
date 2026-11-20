@@ -34,7 +34,8 @@ const otherProject = "e".repeat(64); // recentFolder in the optical gateway entr
 const clock = 1_700_000_000_000;
 const background = "quiet-background",
   title = "Quartz study",
-  discussion = "Keep the other surface unchanged.";
+  discussion = "Keep the other surface unchanged.",
+  phrase = "按计划实施";
 
 /** Only public projections: transcript entry IDs and command IDs have different
  * lifetimes. Continuing discussion changes the head, NOT the active proposal. */
@@ -61,6 +62,7 @@ function specimen(id) {
     id,
     cat,
     turns,
+    runIds: ids,
     commands: [],
     unexpected: [],
     firstHead: Promise.withResolvers(),
@@ -74,6 +76,7 @@ function specimen(id) {
     heldKinds: new Set(),
     unknown: false,
     modeReads: 0,
+    liveTurnReads: 0,
     makeProposal(stage = "original") {
       const base = readRecord({ kind: "cadence-conversation", id: "design" })
         .state.proposal;
@@ -280,6 +283,7 @@ function specimen(id) {
         ];
       page.steps[1].text = t.answer;
       if (s.replying) {
+        ++s.liveTurnReads;
         page.turn.status = "running";
         page.turn.activity = { kind: "tool", sequence: 1, name: "read" };
       }
@@ -339,6 +343,15 @@ function specimen(id) {
       const gate = Promise.withResolvers();
       s.pending = { command: c, finish: gate.resolve };
       return await gate.promise;
+    }
+    if (kind === "cadence-prepare" && s.permit === kind) {
+      // Witness a fresh edit's binding without ever issuing a synthetic grant.
+      assert.equal(c.conversationId, id);
+      assert.equal(c.revision, s.revision);
+      assert.equal(c.proposalId, s.proposal.id);
+      assert.equal(c.digest, s.proposal.digest);
+      s.permit = null;
+      return refused();
     }
     if (kind === "cadence-revalidate" && s.permit === kind) {
       assert.equal(c.conversationId, id);
@@ -406,6 +419,13 @@ async function intercept({ b, site, origin }, s) {
           epoch: local ? epoch : null,
         },
       };
+    } else if (
+      s.firstProject &&
+      path === `/workbench/v1/projects/${project}` &&
+      request.method === "GET"
+    ) {
+      s.projectRequested = true;
+      await s.firstProject.promise; // Continue to the site's associated-project GET.
     } else if (
       s.gateway &&
       path === `/workbench/v1/projects/${otherProject}` &&
@@ -519,6 +539,7 @@ async function intercept({ b, site, origin }, s) {
     patterns: [{ urlPattern: `${origin}/*`, resourceType: "Fetch" }],
   });
   return async () => {
+    s.firstProject?.resolve();
     s.firstWorkspace?.resolve();
     s.holdSession?.resolve();
     s.holdRosters?.resolve();
@@ -606,6 +627,10 @@ function watchFeedback() {
       events.push({
         text,
         rect: label.getBoundingClientRect().toJSON(),
+        visible: label.checkVisibility({
+          opacityProperty: true,
+          visibilityProperty: true,
+        }),
         at: performance.now(),
         brandAnimation: getComputedStyle(
           document.querySelector(".brand-logo svg"),
@@ -618,11 +643,15 @@ function watchFeedback() {
     childList: true,
     characterData: true,
   });
-  ws.ownerDocument.addEventListener("animationstart", (event) => {
-    if (event.target.closest?.(".brand-logo"))
+  const started = (event) => {
+    if (event.target.matches(".brand-logo svg"))
       events.push({ animation: event.animationName, at: performance.now() });
-  });
-  opticalProbe.endFeedback = () => observer.disconnect();
+  };
+  ws.ownerDocument.addEventListener("animationstart", started);
+  opticalProbe.endFeedback = () => {
+    observer.disconnect();
+    ws.ownerDocument.removeEventListener("animationstart", started);
+  };
 }
 async function pasteFixtureImage(run) {
   // A fabricated File is pasted through the ordinary paste listener. No
@@ -722,15 +751,15 @@ async function observeBootstrap(p, row) {
     assert.deepEqual(locked, { same: true, draft: "", images: 0 });
     // The same live turn/tool across every reread. A refused or mismatched
     // reply keeps its text. Only each matched input receipt adds a pulse.
+    await wait(`!document.querySelector('.conversation-feedback[data-event]')`);
+    const notices = () => ev("opticalProbe.feedback.filter(e=>e.text)");
+    const receiptPair = [];
     for (const [mode, outcome] of [
       ["steer", "refused"],
       ["steer", "unconfirmed"],
       ["steer", "accepted"],
       ["queue", "accepted"],
     ]) {
-      await wait(
-        `!document.querySelector('.conversation-feedback[data-event]')`,
-      );
       const text = `${mode}: ${outcome}`;
       await run((sel) => document.querySelector(sel).select(), input);
       await send("Input.insertText", { text });
@@ -741,12 +770,33 @@ async function observeBootstrap(p, row) {
       assert.equal(command.kind, "conversation-input");
       assert.equal(command.text, text);
       assert.equal(command.mode, mode);
-      assert.equal(
-        await ev(
-          `!!document.querySelector('.conversation-feedback[data-event]')`,
-        ),
-        false,
-      );
+      if (mode === "queue") {
+        // Finish after the first animation's 680ms, BEFORE its 1400ms
+        // message expires. Use the page's actual notice time as the origin.
+        const before = await run(async (firstAt) => {
+          await new Promise((r) =>
+            setTimeout(r, firstAt + 900 - performance.now()),
+          );
+          return {
+            elapsed: performance.now() - firstAt,
+            text: document.querySelector(".conversation-feedback").innerText,
+            animating: document
+              .querySelector(".brand-logo svg")
+              .getAnimations()
+              .some((a) => a.playState === "running"),
+          };
+        }, receiptPair[0].notice.at);
+        row.beforeSecondReceipt = before;
+        assert.equal(before.text, receiptPair[0].notice.text);
+        assert.equal(before.animating, false);
+      } else {
+        assert.equal(
+          await ev(
+            `document.querySelector('.conversation-feedback').innerText`,
+          ),
+          "",
+        );
+      }
       finish(
         outcome === "refused"
           ? refused()
@@ -761,18 +811,38 @@ async function observeBootstrap(p, row) {
         `!opticalProbe.editor.readOnly && !opticalProbe.editor.disabled`,
       );
       assert.equal((await editor()).draft, outcome === "accepted" ? "" : text);
-      if (outcome === "accepted")
+      if (outcome === "accepted") {
+        const expected =
+          mode === "steer" ? "Message received" : "2 messages received";
         await wait(
-          `document.querySelector('.conversation-feedback')?.innerText==='Message received'`,
+          `document.querySelector('.conversation-feedback').innerText===${q(expected)}`,
         );
-      else
+        const notice = (await notices()).at(-1);
+        assert.equal(notice.text, expected);
+        receiptPair.push({ commandId: command.commandId, mode, notice });
+      } else {
+        assert.equal((await notices()).length, 1); // Only the initial ordinary Send.
         assert.equal(
           await ev(
-            `!!document.querySelector('.conversation-feedback[data-event]')`,
+            `document.querySelector('.conversation-feedback').innerText`,
           ),
-          false,
+          "",
         );
+      }
     }
+    assert.notEqual(receiptPair[0].commandId, receiptPair[1].commandId);
+    const separation = receiptPair[1].notice.at - receiptPair[0].notice.at;
+    assert.ok(
+      separation >= 850 && separation < 1300,
+      `Receipt spacing ${separation}ms`,
+    );
+    await wait(`!document.querySelector('.conversation-feedback[data-event]')`);
+    const duplicate = s.liveTurnReads;
+    await until(
+      () => s.liveTurnReads > duplicate,
+      "unchanged live turn and tool snapshot",
+    );
+    assert.equal((await notices()).length, 3);
     s.replying = false;
     await wait(`document.querySelector('${add}:enabled')`);
     await pasteFixtureImage(run);
@@ -790,24 +860,43 @@ async function observeBootstrap(p, row) {
     );
     assert.deepEqual(
       feedback.filter((e) => e.text).map((e) => e.text),
-      Array(3).fill("Message received"),
+      ["Message received", "Message received", "2 messages received"],
     );
     assert.ok(
       feedback
         .filter((e) => e.text)
-        .every((e) => e.rect.width > 0 && e.rect.height > 0),
+        .every(
+          (e) =>
+            e.visible &&
+            e.rect.width > 0 &&
+            e.rect.height > 0 &&
+            e.rect.left >= 0 &&
+            e.rect.right <= row.width + 1,
+        ),
+    );
+    const animations = feedback.filter((e) => e.animation);
+    const visibleBrand = await ev(
+      "document.querySelector('.brand-logo').checkVisibility()",
     );
     if (row.motion === "reduce")
       assert.ok(
         feedback.every((e) => !e.animation && e.brandAnimation === "none"),
       );
-    else if (
-      await ev("document.querySelector('.brand-logo').checkVisibility()")
-    )
-      assert.deepEqual(
-        feedback.filter((e) => e.animation).map((e) => e.animation),
-        Array(3).fill("entry-received"),
-      );
+    if (row.motion === "reduce" || !visibleBrand)
+      assert.equal(animations.length, 0);
+    else {
+      // Tie each actual animationstart to its own feedback window, not just
+      // the total count or a computed animation-name on the second receipt.
+      const labels = feedback.filter((e) => e.text);
+      assert.equal(animations.length, labels.length);
+      for (const [i, label] of labels.entries()) {
+        assert.ok(
+          animations[i].at >= label.at &&
+            animations[i].at < (labels[i + 1]?.at ?? label.at + 680),
+        );
+        assert.equal(animations[i].animation, label.brandAnimation);
+      }
+    }
     assert.deepEqual(
       s.commands.map((c) => c.kind),
       [
@@ -820,11 +909,88 @@ async function observeBootstrap(p, row) {
     );
     row.bootstrap = {
       feedback,
+      receiptPair,
+      separation,
+      animationStarts: animations.length,
       held,
       locked,
       settled: await editor(),
       commands: s.commands,
     };
+  } finally {
+    await stop();
+  }
+}
+
+// A new direct session with a known ordinary mode throughout. The prior
+// fixture's accepted live input is a real prompt-history entry in this tab.
+async function observeOrdinaryPhrase(p, row) {
+  const { go, click, send, press, wait, run, ev } = p;
+  const s = specimen(`ordinary-${randomUUID()}`);
+  s.firstHead.resolve();
+  const stop = await intercept(p, s);
+  row.ordinaryPhrase = [];
+  try {
+    await go(`/app#chat=${s.id}`, input);
+    for (const via of ["park and restore", "remove image"]) {
+      await wait(
+        `document.querySelector('.mode-toggle.off') && document.querySelector('.model-trigger-text')?.innerText==='optical'`,
+      );
+      await click(input);
+      const attachment = via === "remove image";
+      if (attachment) {
+        await pasteFixtureImage(run);
+        await wait(`document.querySelector('.chat-image-draft img')`);
+      }
+      await send("Input.insertText", { text: phrase });
+      if (attachment) {
+        await click(".chat-image-remove");
+        await wait(`!document.querySelector('.chat-image-draft')`);
+        await click(input);
+      } else {
+        await press("ArrowUp", 38);
+        await wait(
+          `document.querySelector(${q(input)}).value==='queue: accepted'`,
+        );
+        await press("Escape", 27);
+      }
+      await wait(
+        `document.activeElement.matches(${q(input)}) && document.activeElement.value===${q(phrase)} && document.querySelector('.chat-composer button[type="submit"]:enabled')`,
+      );
+      const before = s.commands.length;
+      s.permit = "send";
+      await press("Enter", 13);
+      await until(() => s.pending, `ordinary send after ${via}`);
+      const { command, finish } = s.pending;
+      assert.equal(command.kind, "send");
+      assert.equal(command.text, phrase);
+      assert.equal(command.images?.length ?? 0, 0);
+      s.turns.push({
+        ...command,
+        entry: attachment ? "00000014" : "00000012",
+        answer: "Ordinary discussion.",
+      });
+      finish(ok({ kind: "accepted", commandId: command.commandId }));
+      s.pending = null;
+      await wait(
+        `document.querySelector(${q(input)}).value==='' && document.querySelectorAll('.msg-user').length===${s.turns.length}`,
+      );
+      const commands = s.commands.slice(before);
+      assert.deepEqual(
+        commands.map((c) => c.kind),
+        ["send"],
+      );
+      row.ordinaryPhrase.push({
+        via,
+        text: command.text,
+        commands,
+        mode: await ev(`document.querySelector('.mode-toggle.off').innerText`),
+      });
+    }
+    assert.deepEqual(
+      s.commands.map((c) => c.kind),
+      ["send", "send"],
+    );
   } finally {
     await stop();
   }
@@ -1212,7 +1378,6 @@ async function observeProposal(p, s, row, shot) {
   await shot("discussion");
   await open();
   await frame("reopened", first);
-  const phrase = "按计划实施";
   await click(input);
   await send("Input.insertText", { text: phrase });
   await wait(`document.querySelector(${q(input)}).value === ${q(phrase)}`);
@@ -1316,6 +1481,94 @@ async function observeProposal(p, s, row, shot) {
   assert.deepEqual(
     s.commands.slice(prefix).map((c) => c.kind),
     ["cadence-send", "cadence-revalidate"],
+  );
+
+  // Create both sides of Chromium's native history cursor under A. The
+  // middle discussion edit can now be undone OR redone back to A's phrase.
+  // CDP edit commands run the browser's editor; no value setter, fake input
+  // event or application draft callback is used. Capture the trusted input.
+  const nativePrefix = s.commands.length;
+  await click(input);
+  await run((sel) => {
+    opticalProbe.nativeEdits = [];
+    document.querySelector(sel).addEventListener("input", (e) => {
+      opticalProbe.nativeEdits.push({
+        type: e.inputType,
+        text: e.target.value,
+        trusted: e.isTrusted,
+      });
+    });
+  }, input);
+  const nativeKey = async (key, code, modifiers, editCommand) => {
+    for (const type of ["keyDown", "keyUp"])
+      await send("Input.dispatchKeyEvent", {
+        type,
+        key,
+        code: `Key${key.toUpperCase()}`,
+        windowsVirtualKeyCode: code,
+        modifiers,
+        ...(type === "keyDown" ? { commands: [editCommand] } : {}),
+      });
+  };
+  const replace = async (text) => {
+    await nativeKey("a", 65, 2, "SelectAll");
+    await send("Input.insertText", { text });
+    await wait(
+      `document.activeElement.matches(${q(input)}) && document.activeElement.value===${q(text)}`,
+    );
+  };
+  const restore = async (redo, text) => {
+    const type = redo ? "historyRedo" : "historyUndo";
+    const n = await ev("opticalProbe.nativeEdits.length");
+    await nativeKey("z", 90, redo ? 10 : 2, redo ? "Redo" : "Undo");
+    await wait(
+      `opticalProbe.nativeEdits.length===${n + 1} && document.activeElement.value===${q(text)}`,
+    );
+    assert.deepEqual(await ev("opticalProbe.nativeEdits.at(-1)"), {
+      type,
+      text,
+      trusted: true,
+    });
+  };
+  await replace(phrase);
+  await replace(discussion);
+  await replace(phrase);
+  await restore(false, discussion);
+  const target = s.makeProposal("replacement");
+  await collapsed(target.plan.goal);
+  await open();
+  assert.equal(
+    (await frame("nativeReplacement", target)).button,
+    "Implement this plan",
+  );
+  await click(input);
+  await restore(false, phrase);
+  await refuseDraft("nativeUndo");
+  await click(input);
+  await restore(true, discussion);
+  await restore(true, phrase);
+  await refuseDraft("nativeRedo");
+  row.plan.nativeHistory = {
+    edits: await ev("opticalProbe.nativeEdits"),
+    commands: s.commands.slice(nativePrefix),
+  };
+  assert.deepEqual(row.plan.nativeHistory.commands, []);
+
+  // A new explicit edit under B is the positive control. Intercept only its
+  // exact B preparation and refuse it: no grant, approval or real execution.
+  await click(input);
+  await replace(discussion);
+  await replace(phrase);
+  s.permit = "cadence-prepare";
+  await press("Enter", 13);
+  await until(() => !s.permit, "explicit edit bound to B");
+  row.plan.freshPreparation = {
+    proposal: target.id,
+    commands: s.commands.slice(nativePrefix),
+  };
+  assert.deepEqual(
+    row.plan.freshPreparation.commands.map((c) => c.kind),
+    ["cadence-prepare"],
   );
   await click(trigger);
 }
@@ -1618,6 +1871,19 @@ async function observeTerminalHistory(p, row, shot) {
   };
   const b = { ...a, instance: randomUUID(), leaf: "00000022" };
   const other = { ...a, cwd: recentFolder, leaf: "00000023" };
+  // Only the first orphan will have a matching viewer run. Its exact ID and
+  // epoch also occur in another directory, where discovery must stay readonly.
+  const orphans = [s.runIds[2], randomUUID()].map((id) => ({
+    ...a,
+    source: "workflow",
+    sessionId: null,
+    instance: null,
+    leaf: null,
+    epoch,
+    id,
+    phase: "research",
+    observedAt: clock,
+  }));
   const gateway = {
     reads: new Set(),
     selections: [],
@@ -1637,10 +1903,13 @@ async function observeTerminalHistory(p, row, shot) {
         completeness: stage.partial ? "partial" : "complete",
         unavailable: Number(stage.partial),
         projects: [
-          { path: cwd, activities },
+          { path: cwd, activities: stage.cold ? orphans : activities },
           {
             path: recentFolder,
-            activities: [{ ...other, observedAt: stage.at }],
+            activities: [
+              { ...other, observedAt: stage.at },
+              ...(stage.cold ? [{ ...orphans[0], cwd: recentFolder }] : []),
+            ],
           },
         ],
       };
@@ -1692,7 +1961,12 @@ async function observeTerminalHistory(p, row, shot) {
     native,
     partial,
   });
-  s.roster = stage("together", 0, "research", true, 2, 2);
+  s.roster = {
+    ...stage("cold discovery", 0, "research", false, 3, 0),
+    cold: true,
+  };
+  s.firstProject = Promise.withResolvers();
+  s.holdRosters = Promise.withResolvers();
   const settledFrame = async (focus = false) => {
     const r = s.roster;
     await until(
@@ -1743,8 +2017,105 @@ async function observeTerminalHistory(p, row, shot) {
   };
   const stop = await intercept(p, s);
   try {
-    await go(`/app?project=${project}#chat=${s.id}`, button);
-    await drawer();
+    const unlinked = ".panel-left details.history-unlinked";
+    const orphanFrame = async () => {
+      await drawer();
+      if (!(await ev(`document.querySelector(${q(unlinked)}).open`)))
+        await clickEntry(`${unlinked} > summary`);
+      await wait(`document.querySelector(${q(`${unlinked}[open]`)})`);
+      return run(
+        (sel, path, section) => {
+          const details = document.querySelector(sel);
+          const otherDir = [
+            ...document.querySelectorAll(`${section} .lp-section-body > div`),
+          ].find((e) => e.querySelector("p")?.innerText === path);
+          return {
+            summary: details.querySelector("summary").innerText,
+            ids: [...details.querySelectorAll("code")].map((e) => ({
+              id: e.innerText,
+              visible: e.checkVisibility(),
+              rect: e.getBoundingClientRect().toJSON(),
+            })),
+            actions: [...details.querySelectorAll("button")].map((e) => ({
+              label: e.getAttribute("aria-label") ?? e.title,
+              disabled: e.disabled,
+            })),
+            other: [...otherDir.querySelectorAll("button")].map((e) => ({
+              text: e.innerText,
+              disabled: e.disabled,
+            })),
+          };
+        },
+        unlinked,
+        recentFolder,
+        outside,
+      );
+    };
+    await go(`/app?project=${project}#chat=${s.id}`, `${outside} details`);
+    await until(
+      () => s.projectRequested && s.served.has("discovery:cold discovery"),
+      "discovery ahead of first project observation",
+    );
+    const cold = await orphanFrame();
+    const ids = orphans.map((a) => a.id).sort();
+    const readonly = (f) => {
+      assert.match(f.summary, /Unattributed work · 2/);
+      assert.deepEqual(f.ids.map((e) => e.id).sort(), ids);
+      assert.ok(
+        f.ids.every((e) => e.visible && e.rect.width > 0 && e.rect.height > 0),
+      );
+      assert.deepEqual(f.actions, []);
+    };
+    readonly(cold);
+    assert.equal(s.sessions.size, 0);
+    assert.equal(cold.other.length, 2);
+    assert.ok(cold.other.every((e) => e.text.includes(recentFolder)));
+    assert.ok(
+      cold.other.some(
+        (e) =>
+          e.disabled &&
+          e.text.includes("Unattributed work") &&
+          e.text.includes("Owner workflow"),
+      ),
+    );
+    assert.ok(
+      cold.other.some((e) => !e.disabled && e.text.includes(background)),
+    );
+    s.firstProject.resolve();
+    await until(() => s.heldKinds.size === 2, "viewer awaiting cold rosters");
+    const awaitingRoster = await orphanFrame();
+    readonly(awaitingRoster);
+    s.holdRosters.resolve();
+    s.holdRosters = null;
+    await wait(
+      `document.querySelector(${q(`${unlinked} .conversation-stop:enabled`)})`,
+    );
+    const joined = await orphanFrame();
+    assert.deepEqual(
+      joined.ids.map((e) => e.id),
+      [orphans[1].id],
+    );
+    assert.match(joined.summary, /Unattributed work · 2/);
+    assert.deepEqual(joined.actions, [
+      {
+        label: `Open workflow details · Unlinked specimen · ${orphans[0].id}`,
+        disabled: false,
+      },
+      {
+        label: `Cancel workflow — request stop · Unlinked specimen · ${orphans[0].id}`,
+        disabled: false,
+      },
+    ]);
+    assert.deepEqual(joined.other, cold.other);
+    assert.equal(
+      await ev(
+        `document.querySelectorAll(${q(`${outside} .history-unlinked`)}).length`,
+      ),
+      0,
+    );
+    row.coldDiscovery = { ids, cold, awaitingRoster, joined };
+    assert.deepEqual(s.commands, []);
+    s.roster = stage("together", 0, "research", true, 2, 2);
     const first = await settledFrame(true);
     assert.ok(
       first.order.indexOf(title) < first.order.indexOf("Earlier material"),
@@ -1858,6 +2229,7 @@ export async function observeQuietWorkspace(p) {
   };
   await layout(width, theme, motion);
   await observeBootstrap(p, row);
+  await observeOrdinaryPhrase(p, row);
   const stop = await intercept(p, s);
   try {
     await navigate();

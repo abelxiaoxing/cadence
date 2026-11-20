@@ -5,6 +5,7 @@ import type {
   Activity,
   ActivityDiscovery,
 } from "../../src/service/contracts/activity.ts";
+import { App } from "../../web/src/App";
 import { observeActivity, staleActivity } from "../../web/src/client/activity";
 import {
   activityRoute,
@@ -70,6 +71,61 @@ it("shows distinct terminal and owner rows without a visible heading, counts or 
   expect(html).toContain("Owner workflow");
   expect(html).toContain("recovering");
   expect(html).not.toMatch(/Stop|Cancel|completed/);
+});
+it("identifies unattributed workflows in the selected project's loading sidebar before any viewer roster", () => {
+  const project = {
+    id: "a".repeat(64),
+    path: "/project",
+    cwd: "/project/sub",
+    epoch,
+  };
+  const a = activity({
+    source: "workflow",
+    sessionId: null,
+    leaf: null,
+    instance: null,
+    epoch,
+    phase: "implementing",
+  });
+  const b = { ...a, id: randomUUID(), freshness: "stale" as const };
+  const value = discovery([a, b]);
+  value.projects.push({
+    path: "/other",
+    activities: [{ ...a, cwd: "/other" }],
+  });
+  vi.stubGlobal("window", {
+    location: new URL(`http://127.0.0.1:43210/app?project=${project.id}`),
+  });
+  const html = renderToStaticMarkup(
+    <App
+      project={project}
+      discovery={{
+        project: project.path,
+        value,
+        error: "",
+        opening: false,
+        onOpen() {},
+      }}
+    />,
+  );
+  expect(html).toContain("Reading conversation history…");
+  const list = html.match(/aria-label="Active Pi work">(.*?)<\/section>/s)?.[1];
+  const details = list?.match(
+    /<details class="history-unlinked">(.*?)<\/details>/s,
+  )?.[1];
+  expect(details).toContain("Unattributed work · 2");
+  expect(details).toContain(
+    `<code>${a.id}</code><br/>implementing · Current observation`,
+  );
+  expect(details).toContain(
+    `<code>${b.id}</code><br/>implementing · Stale observation`,
+  );
+  expect(details).not.toMatch(/<button|Stop|Cancel/i);
+  // Only the other directory keeps its original disabled discovery row.
+  expect(list?.match(/<button/g)).toHaveLength(1);
+  expect(list).toMatch(
+    /<button[^>]+disabled[^>]*>.*?Unattributed work.*?Owner workflow · implementing · Current observation.*?\/other<\/span>/s,
+  );
 });
 it("partial empty observation never claims everything finished; Chinese text and unattributed rows stay explicit", () => {
   const value = {

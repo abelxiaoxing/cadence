@@ -1184,7 +1184,7 @@ export function App({
           <>
             {!showSidebar && (
               <aside className="panel panel-left lp-panel">
-                {discovery && <ActivityList {...discovery} />}
+                {discovery && <ActivityList {...discovery} awaitingHistory />}
                 {activeRuns.length > 0 && (
                   <section
                     className="run-strip"

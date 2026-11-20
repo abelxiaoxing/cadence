@@ -6,7 +6,9 @@ export const zh = {
   "Explain this project": "介绍一下这个项目",
   "Help me plan a change": "帮我规划一项改动",
   "Message received": "消息已接收",
+  "{count} messages received": "已接收 {count} 条消息",
   "Conversation updated": "会话已更新",
+  "Conversation updated {count} times": "会话已更新 {count} 次",
   "Show the latest branch before acting on the current plan.":
     "请先显示最新分支，再验证或批准当前计划。",
   "View current plan": "查看当前计划",
