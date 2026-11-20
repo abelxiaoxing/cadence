@@ -7,6 +7,7 @@ import {
   canonicalJson,
   decodeId,
   integer,
+  publicError,
   text,
 } from "../../../src/service/contracts/core.ts";
 import {
@@ -107,7 +108,17 @@ export async function dispatchSend(
 ) {
   pending(command.commandId);
   const reply = await client.workbenchCommand(command);
-  if (reply.kind === "ok" || reply.error.effect === "none") pending("");
+  if (reply.kind === "ok") {
+    if (
+      reply.value.kind !== "accepted" ||
+      reply.value.commandId !== command.commandId
+    )
+      return {
+        kind: "error" as const,
+        error: publicError("unavailable", "uncertain"),
+      };
+    pending("");
+  } else if (reply.error.effect === "none") pending("");
   return reply;
 }
 export function captureSend(input: {

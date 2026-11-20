@@ -1118,6 +1118,7 @@ export function ChatWorkspace({
         conversation.commands.includes(pending))
     ) {
       setPending("");
+      setError("");
       if (modelDraftConsumed(pending, modelCommand)) {
         setReceived(pending);
         setReview(null);
@@ -2102,8 +2103,12 @@ export function ChatWorkspace({
   };
   const restoreUndelivered = (text: string) => {
     setEntry((prior) =>
-      prior.text.trim()
-        ? { text: `${prior.text}\n${text}` }
+      prior.text
+        ? {
+            text: `${prior.text}\n${text}`,
+            source:
+              prior.source === recoveredSource ? recoveredSource : undefined,
+          }
         : { text, source: recoveredSource },
     );
     textarea.current?.focus();

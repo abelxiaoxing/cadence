@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
@@ -15,9 +17,13 @@ import {
 } from "../../web/src/client/project-route";
 import {
   ActivityList,
+  type ActivityListProps,
   activityKey,
 } from "../../web/src/components/workspace/ActivityList";
-import { TaskSidebar } from "../../web/src/components/workspace/TaskSidebar";
+import {
+  TaskSidebar,
+  useHistoryDiscovery,
+} from "../../web/src/components/workspace/TaskSidebar";
 import { LocaleProvider } from "../../web/src/i18n/locale";
 
 import { transport } from "./fixtures";
@@ -366,6 +372,145 @@ it("a failed observation marks retained work unknown and bounds its lifetime wit
     projects: [],
     completeness: "partial",
   });
+});
+it("pins only the selected directory's exact work through expired and incomplete reads until a complete observation", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", { HTMLIFrameElement: class {} });
+  const root = createRoot(
+    Object.assign(new EventTarget(), {
+      nodeType: 1,
+      tagName: "DIV",
+      ownerDocument: new EventTarget(),
+    }) as unknown as HTMLElement,
+  );
+  const client = new ServiceClient(transport());
+  const no = vi.fn(),
+    a = activity(),
+    b = { ...a, instance: randomUUID() };
+  const first = discovery([a, b, a]);
+  first.projects.push({
+    path: "/other",
+    activities: [{ ...a, cwd: "/other" }],
+  });
+  let response: ActivityDiscovery | undefined = first;
+  let selected = "/project",
+    tree!: ReturnType<typeof TaskSidebar>;
+  let observed: Pick<ActivityListProps, "value" | "error"> = { error: "" };
+  // Keep both the prefix and the sidebar hooks mounted while the real poller
+  // publishes. Only serialize the returned rows; this is not a layout test.
+  function Probe() {
+    const feed = useHistoryDiscovery({
+      ...observed,
+      project: selected,
+      opening: false,
+      onOpen: no,
+    });
+    tree = TaskSidebar({
+      client,
+      taskId: null,
+      scope: null,
+      runs: [],
+      canCancel: false,
+      canceling: new Set(),
+      onCancel: no,
+      onTask: no,
+      onScope: no,
+      discovery: feed,
+      canCancelWorkflow: () => true,
+      onCancelWorkflow: no,
+      chats: ["Earlier", "Local"].map((title, i) => ({
+        title,
+        id: i ? "pi-session" : "past",
+        updatedAt: 2 - i,
+        origin: "webui",
+        status: "completed",
+        leaf: null,
+      })),
+    });
+    return null;
+  }
+  const render = () => root.render(<Probe />);
+  const read = vi.fn(async () => {
+    if (!response) throw Error("unavailable");
+    return response;
+  });
+  const close = observeActivity(
+    epoch,
+    (value, error) => {
+      observed = { value, error };
+      render();
+    },
+    no,
+    read,
+  );
+  const tick = (ms = 3000) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  const check = (count: number, label?: string, other = false) => {
+    const html = renderToStaticMarkup(tree);
+    expect(html.match(/title="Local"/g)).toHaveLength(1);
+    expect(
+      html.indexOf('title="Local"') < html.indexOf('title="Earlier"'),
+    ).toBe(!!count);
+    expect(
+      html.indexOf('title="Local"') < html.indexOf('class="task-list"'),
+    ).toBe(!!count);
+    expect(
+      html.match(/class="history-run history-terminal"/g) ?? [],
+    ).toHaveLength(count);
+    if (label) expect(html).toContain(`role="img" aria-label="${label}"`);
+    if (label !== "Working") expect(html).not.toContain('aria-label="Working"');
+    expect(html.includes(">/other<")).toBe(other);
+    expect(html).not.toMatch(/conversation-stop|Cancel workflow|Cancel run/);
+    return html;
+  };
+  try {
+    await tick(0);
+    check(2, "Working", true);
+    response = undefined;
+    await tick();
+    check(2, "Stale observation", true);
+    await tick(120000);
+    expect(read.mock.calls.length).toBeGreaterThan(40);
+    expect(observed.value?.projects).toEqual([]);
+    check(2, "Stale observation");
+    response = { ...discovery([]), completeness: "partial", unavailable: 1 };
+    await tick();
+    const partial = check(2, "Stale observation");
+    for (const report of [a, b])
+      expect(partial).toContain(`${report.instance} · ${report.id}`);
+    response = { ...response, projects: discovery([a]).projects };
+    await tick();
+    expect(check(2, "Working")).toContain("Stale observation ·");
+    response = discovery([b]);
+    await tick();
+    expect(check(1, "Working")).not.toContain(a.instance);
+    response = discovery([]);
+    await tick();
+    check(0);
+    // No retained identity crosses a directory, gateway epoch or access denial.
+    for (const reset of ["directory", "epoch", "forbidden"]) {
+      response = first;
+      await tick();
+      check(2, "Working", true);
+      response = { ...discovery([]), completeness: "partial" };
+      await tick();
+      if (reset === "directory") selected = "/other";
+      else if (reset === "epoch")
+        observed = { value: { ...response, epoch: randomUUID() }, error: "" };
+      else observed = { error: "forbidden" };
+      await act(async () => render());
+      check(0);
+      selected = "/project";
+      await tick();
+      check(0);
+    }
+  } finally {
+    close();
+    await act(async () => root.unmount());
+  }
 });
 it("late open/refresh discovers newly started work; polling is serialized, cancellable, and late replies cannot navigate", async () => {
   vi.useFakeTimers();

@@ -334,7 +334,9 @@ The old task inspector is readonly content/check/change/review evidence, never a
 Browser conversations are the project's Pi sessions, shared with the terminal rather than imported (see [Ordinary conversations](#ordinary-conversations)).
 Shared history does not transfer native terminal grants, tool-restoration state or browser plan approval: mode and confirmation authority remain per surface.
 All of this works without a live Pi terminal.
-A lost Send is acknowledged only by its original command ID, not by an unrelated terminal append advancing the leaf or another tab's live reply; the pending draft cannot be steered or queued into that reply.
+A final Send needs an `accepted` receipt for its original command ID; another result kind, even with that ID, leaves its outcome uncertain.
+A later record of that command in this conversation resolves the uncertainty without another Send.
+An unrelated terminal append advancing the leaf or another tab's live reply does not acknowledge it; the pending draft cannot be steered or queued into that reply.
 A definite pre-acceptance Send refusal preserves the draft and permits another explicit Send or mode exit; it does not pin an impossible pending turn.
 A token grants workspace access, not action consent.
 Ordinary Send binds its exact text, session entry it continues, conversation/cwd, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
@@ -719,7 +721,11 @@ Closing or invalidating the observer aborts only its reads; it cannot cancel exe
 Only work represented in the selected project’s history prefix is subtracted from discovery: owner work by source, epoch and run/command ID, terminal work by instance and activity ID.
 Other projects, incompatible reader scopes and reports without a session remain separate, even when their session IDs match.
 Limits and uncertainty windows live beside the constants in these modules.
-A failed/changed-epoch observation retains briefly unknown work, never fabricates completion; capacity, corrupt state and missing observations make the response partial, including empty responses.
+On a failed read, the general discovery list drops reports whose observation is more than 120 seconds old.
+Capacity, corrupt state and missing observations can also make a successful response partial, even when empty.
+For the selected directory only, history keeps the last attributable work missing from a failed or partial read as a **stale observation**, not running work or a source of Stop permission.
+A complete read releases absent work; a session leaves the prefix only after its last item is gone.
+These display identities do not transfer across directory, discovery epoch or loss of access.
 Discovery does not locate idle terminals, other hosts/accounts or another Pi configuration scope.
 
 The unified sidebar shows independent activity rows, including work in never-selected projects, without a visible heading, project/session totals or deduplication note.

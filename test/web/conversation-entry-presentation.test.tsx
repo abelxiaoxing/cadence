@@ -10,6 +10,7 @@ import type { ChatComposerProps } from "../../web/src/components/workspace/ChatC
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
 import { LocaleProvider } from "../../web/src/i18n/locale";
 import { currentToasts } from "../../web/src/layout/toasts";
+import { pngBytes } from "../helpers/images.ts";
 import { transport } from "./fixtures";
 
 const f = vi.hoisted(() => ({
@@ -19,6 +20,7 @@ const f = vi.hoisted(() => ({
   keyDown: undefined as ((event: unknown) => void) | undefined,
   start: undefined as ((text: string) => void) | undefined,
   summary: null as ChatSummary | null | undefined,
+  cadence: false,
   error: "",
   no: () => {},
 }));
@@ -110,7 +112,7 @@ vi.mock("../../web/src/client/use-workbench", async (load) => ({
             kind: "cadence-conversation",
             state: {
               id: "chat",
-              enabled: false,
+              enabled: f.cadence,
               revision: 0,
               head: null,
               runs: [],
@@ -123,8 +125,29 @@ afterEach(() => {
   f.cursor = -1;
   f.cells = [];
   f.summary = null;
+  f.cadence = false;
   f.error = "";
 });
+
+const choice = {
+  provider: "fixture",
+  model: "fixed",
+  api: "openai-completions",
+  thinking: "low",
+} as const;
+const preview = {
+  status: "complete" as const,
+  entries: [
+    {
+      ...choice,
+      images: true,
+      eligibility: "candidate" as const,
+      thinking: [{ level: choice.thinking, selectable: true }],
+    },
+  ],
+  remembered: null,
+  withheld: 0,
+};
 
 function workspace(wire = transport()) {
   const client = new ServiceClient(wire);
@@ -140,17 +163,8 @@ function workspace(wire = transport()) {
         catalogId: crypto.randomUUID(),
         conversation: { id: "chat", cwd: "/fixture" },
       },
-      selected: {
-        provider: "fixture",
-        model: "fixed",
-        api: "openai-completions",
-        thinking: "low",
-        sourceSelectionId: "source",
-      },
-      remembered: null,
-      status: "complete",
-      entries: [],
-      withheld: 0,
+      selected: { ...choice, sourceSelectionId: "source" },
+      ...preview,
     },
   });
   function Probe({ actionsReady }: { actionsReady: boolean }) {
@@ -169,6 +183,7 @@ function workspace(wire = transport()) {
           current: () => true,
         },
         modelAvailability: { status: "ready", epoch, attachmentVersion: 1 },
+        previewModels: async () => preview,
         onModelChanged: f.no,
         onChanged: f.no,
         onReferenceUsed: f.no,
@@ -218,56 +233,128 @@ it("only an observed new session offers local starters; they never replace text 
   expect(withPhoto.html).not.toContain("entry-starters");
   expect(w.command).not.toHaveBeenCalled();
 });
-it.each(["accepted", "refused", "uncertain"] as const)(
+it.each([
+  "accepted",
+  "refused",
+  "uncertain",
+  "wrong ID",
+  "wrong kind",
+] as const)(
   "%s first Send: pending is not admission; only confirmation moves the composer",
   async (outcome) => {
-    const w = workspace();
-    let resolve!: () => void;
-    w.command.mockImplementation(
-      (cmd) =>
-        new Promise((done) => {
-          resolve = () =>
-            done(
-              outcome === "accepted"
-                ? {
-                    kind: "ok",
-                    value: { kind: "accepted", commandId: cmd.commandId },
-                  }
-                : {
-                    kind: "error",
-                    error: publicError(
-                      "stale",
-                      outcome === "refused" ? "none" : "uncertain",
-                    ),
-                  },
-            );
-        }),
+    let settle!: (value: unknown) => void;
+    const w = workspace(
+      transport({
+        workbenchCommand: async (cmd) =>
+          cmd.kind === "image-upload"
+            ? {
+                kind: "ok",
+                value: {
+                  kind: cmd.kind,
+                  commandId: cmd.commandId,
+                  imageId: cmd.imageId,
+                  offset: cmd.data.length,
+                },
+              }
+            : new Promise((resolve) => {
+                settle = resolve;
+              }),
+      }),
     );
-    w.draw().input.onDraft("first draft");
+    const image = new File([pngBytes()], "draft.png", { type: "image/png" });
+    const initial = w.draw().input;
+    initial.onDraft("first draft");
+    initial.onAddImages([image]);
+    initial.model.onPreviewChoice?.(choice);
     const before = w.draw().input;
+    expect(before.model.draftModel).toEqual(choice);
     before.onSend();
     before.onSend();
-    await vi.waitFor(() => expect(w.command).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(w.command.mock.calls.map(([cmd]) => cmd.kind)).toEqual([
+        "image-upload",
+        "send",
+      ]),
+    );
+    const { commandId } = w.command.mock.calls[1][0];
     const during = w.draw();
-    expect(during.input).toMatchObject({ draft: "first draft", locked: true });
+    expect(during.input).toMatchObject({
+      draft: "first draft",
+      images: [image],
+      locked: true,
+    });
     expect(during.html).toContain('data-entry="new"');
-    resolve();
+    settle(
+      outcome === "wrong kind"
+        ? {
+            kind: "ok",
+            value: {
+              kind: "image-upload",
+              commandId,
+              imageId: crypto.randomUUID(),
+              offset: 4,
+            },
+          }
+        : outcome === "accepted" || outcome === "wrong ID"
+          ? {
+              kind: "ok",
+              value: {
+                kind: "accepted",
+                commandId:
+                  outcome === "accepted" ? commandId : crypto.randomUUID(),
+              },
+            }
+          : {
+              kind: "error",
+              error: publicError(
+                "stale",
+                outcome === "refused" ? "none" : "uncertain",
+              ),
+            },
+    );
+    const accepted = outcome === "accepted",
+      waiting = !accepted && outcome !== "refused";
     await vi.waitFor(() => {
       const next = w.draw();
       expect(next.html).toContain(
-        outcome === "accepted" ? 'data-entry="received"' : 'data-entry="new"',
+        accepted ? 'data-entry="received"' : 'data-entry="new"',
       );
-      expect(next.input.draft).toBe(
-        outcome === "accepted" ? "" : "first draft",
-      );
-      expect(next.input.locked).toBe(outcome === "uncertain");
+      expect(next.input.draft).toBe(accepted ? "" : "first draft");
+      expect(next.input.images).toEqual(accepted ? [] : [image]);
+      expect(next.input.model.draftModel).toEqual(accepted ? null : choice);
+      expect(next.input.locked).toBe(waiting);
       expect(next.input.inputRef).toBe(before.inputRef);
-      if (outcome === "uncertain")
+      if (waiting) {
         expect(next.html).toContain("Send outcome is unknown");
+        expect(next.html).toContain(`<code>${commandId}</code>`);
+      }
     });
-    expect(w.command).toHaveBeenCalledTimes(1);
+    if (waiting)
+      f.keyDown?.({ key: "Enter", nativeEvent: {}, preventDefault: f.no });
+    expect(w.command).toHaveBeenCalledTimes(2);
   },
 );
+
+it("a matched exit receipt consumes the mode control, not a first message", async () => {
+  f.cadence = true;
+  const w = workspace(
+    transport({
+      workbenchCommand: async (cmd) => ({
+        kind: "ok",
+        value: { kind: "accepted", commandId: cmd.commandId },
+      }),
+    }),
+  );
+  w.draw().input.onDraft("exit cadence");
+  const before = w.draw();
+  expect(before.html).toContain('data-entry="new"');
+  before.input.onSend();
+  await vi.waitFor(() => expect(w.draw().input.draft).toBe(""));
+  expect(w.command.mock.calls.map(([cmd]) => cmd.kind)).toEqual([
+    "cadence-exit",
+  ]);
+  expect(w.draw().html).toContain('data-entry="new"');
+});
 
 it("explains the running reply's image lock and refuses pasted files without changing or sending the draft", () => {
   const w = workspace();
