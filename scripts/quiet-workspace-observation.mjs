@@ -73,6 +73,7 @@ function specimen(id) {
     sessions: new Set(),
     heldKinds: new Set(),
     unknown: false,
+    modeReads: 0,
     makeProposal(stage = "original") {
       const base = readRecord({ kind: "cadence-conversation", id: "design" })
         .state.proposal;
@@ -128,7 +129,7 @@ function specimen(id) {
   };
   const state = () => ({
     id,
-    enabled: turns.length > 0,
+    enabled: turns.some((t) => t.kind === "cadence-send"),
     revision: s.revision,
     head: turns.at(-1)?.commandId ?? null,
     proposal: s.proposal,
@@ -234,7 +235,8 @@ function specimen(id) {
           model: modelSelector(),
         },
       };
-    if (kind === "cadence-conversation")
+    if (kind === "cadence-conversation") {
+      ++s.modeReads;
       return {
         kind,
         state: {
@@ -244,6 +246,7 @@ function specimen(id) {
             : {}),
         },
       };
+    }
     const head = readRecord({ kind: "conversation", id: "questions" });
     if (kind === "conversation") {
       s.headRequested = true;
@@ -460,8 +463,9 @@ async function intercept({ b, site, origin }, s) {
       if (s.deny && r.kind === "workflow-active") {
         body = { kind: "error", error: publicError("forbidden") };
       } else if (
-        s.roster?.stale &&
-        ["conversation-active", "workflow-active"].includes(r.kind)
+        (s.failMode && r.kind === "cadence-conversation" && r.id === s.id) ||
+        (s.roster?.stale &&
+          ["conversation-active", "workflow-active"].includes(r.kind))
       ) {
         body = { kind: "error", error: publicError("unavailable") };
       } else if (v) {
@@ -643,6 +647,7 @@ async function pasteFixtureImage(run) {
 async function observeBootstrap(p, row) {
   const { go, run, ev, click, send, wait, press } = p;
   const s = specimen(`bootstrap-${randomUUID()}`);
+  s.failMode = true;
   s.firstWorkspace = Promise.withResolvers();
   s.firstHead.resolve();
   const stop = await intercept(p, s);
@@ -672,6 +677,18 @@ async function observeBootstrap(p, row) {
     );
     assert.deepEqual(await editor(), held);
     assert.deepEqual(s.commands, []);
+    await wait(`document.querySelector('.mode-toggle.unknown:disabled')`);
+    await run(watchFeedback);
+    s.permit = "send";
+    await press("Enter", 13);
+    await until(() => s.pending, "ordinary Send with failed mode read");
+    s.pending.finish(refused());
+    s.pending = null;
+    await wait(
+      `document.querySelector('.chat-composer button[type="submit"]:enabled')`,
+    );
+    assert.deepEqual(await editor(), held);
+    assert.deepEqual(await ev("opticalProbe.feedback"), []);
     s.permit = "send";
     await press("Enter", 13);
     await until(() => s.pending, "bootstrap explicit Send");
@@ -682,6 +699,9 @@ async function observeBootstrap(p, row) {
     s.replying = true;
     finish(ok({ kind: "accepted", commandId: c.commandId }));
     s.pending = null;
+    await wait(
+      `document.querySelector('.chat-workspace[data-entry="received"]') && opticalProbe.feedback.some(e=>e.text === 'Message received')`,
+    );
     const add = '.chat-composer button[aria-label="Add images"]';
     await wait(
       `document.querySelector('${add}:disabled')?.getAttribute('aria-description')?.includes('reply to finish')`,
@@ -696,11 +716,41 @@ async function observeBootstrap(p, row) {
     await wait(`document.querySelector('${add}:enabled')`);
     await pasteFixtureImage(run);
     await wait(`document.querySelector('.chat-image-draft img')`);
+    await wait(`!document.querySelector('.conversation-feedback[data-event]')`);
+    s.failMode = false;
+    await wait(`document.querySelector('.mode-toggle.off')`);
+    const baseline = s.modeReads;
+    await until(
+      () => s.modeReads > baseline,
+      "duplicate recovered mode snapshot",
+    );
+    const feedback = await ev(
+      "opticalProbe.endFeedback();opticalProbe.feedback",
+    );
+    assert.deepEqual(
+      feedback.filter((e) => e.text).map((e) => e.text),
+      ["Message received"],
+    );
+    assert.ok(
+      feedback.some((e) => e.text && e.rect.width > 0 && e.rect.height > 0),
+    );
+    if (row.motion === "reduce")
+      assert.ok(
+        feedback.every((e) => !e.animation && e.brandAnimation === "none"),
+      );
+    else if (
+      await ev("document.querySelector('.brand-logo').checkVisibility()")
+    )
+      assert.deepEqual(
+        feedback.filter((e) => e.animation).map((e) => e.animation),
+        ["entry-received"],
+      );
     assert.deepEqual(
       s.commands.map((c) => c.kind),
-      ["image-upload", "send"],
+      ["image-upload", "send", "image-upload", "send"],
     );
     row.bootstrap = {
+      feedback,
       held,
       locked,
       settled: await editor(),

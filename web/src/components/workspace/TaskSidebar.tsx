@@ -375,7 +375,7 @@ export function TaskSidebar({
     } else unlinked.push(run);
   }
   const project = discovery?.project;
-  const terminals = new Map<string, Activity[]>();
+  const discovered = new Map<string, Activity[]>();
   const represented = new Set<string>();
   if (project) {
     for (const run of roster)
@@ -396,27 +396,27 @@ export function TaskSidebar({
           }),
         );
     // The gateway groups by canonical project, not the terminal's launch cwd.
-    // These reports are independent of whether the project's owner is running.
+    // An independent owner can appear here before we have its viewer roster.
     const local = discovery.value?.projects.find((p) => p.path === project);
     for (const a of local?.activities ?? []) {
       if (
-        a.source !== "terminal" ||
-        !a.instance ||
+        represented.has(activityKey(project, a)) ||
+        !(a.source === "terminal" ? a.instance : a.epoch) ||
         a.history !== "shared" ||
         !a.sessionId
       )
         continue;
-      const group = terminals.get(a.sessionId) ?? [];
+      const group = discovered.get(a.sessionId) ?? [];
       group.push(a);
-      terminals.set(a.sessionId, group);
+      discovered.set(a.sessionId, group);
       represented.add(activityKey(project, a));
     }
-    for (const group of terminals.values())
+    for (const group of discovered.values())
       group.sort((a, b) =>
         activityKey(project, a).localeCompare(activityKey(project, b)),
       );
   }
-  const pinned = new Set([...replying, ...linked.keys(), ...terminals.keys()]);
+  const pinned = new Set([...replying, ...linked.keys(), ...discovered.keys()]);
   const pastChats = chats.filter((chat) => !pinned.has(chat.id));
   const activityKnown =
     executionStopped ||
@@ -475,12 +475,12 @@ export function TaskSidebar({
   };
   const chatRow = (id: string, chat?: ChatSummary) => {
     const flows = linked.get(id);
-    const native = terminals.get(id);
-    const workCount = (flows?.length ?? 0) + (native?.length ?? 0);
-    const details = native
-      ? flows
-        ? t("Details")
-        : t("Terminal turn (observe only)")
+    const reports = discovered.get(id);
+    const workCount = (flows?.length ?? 0) + (reports?.length ?? 0);
+    const details = reports
+      ? !flows && reports.every((a) => a.source === "terminal")
+        ? t("Terminal turn (observe only)")
+        : t("Details")
       : t("Open workflow details");
     const busy = pinned.has(id);
     const status = chat?.status;
@@ -488,7 +488,7 @@ export function TaskSidebar({
     const activityLabel = busy
       ? (replying.has(id) && chatActivityKnown) ||
         (flows && !workflowError) ||
-        (!discovery?.error && native?.some((a) => a.freshness === "current"))
+        (!discovery?.error && reports?.some((a) => a.freshness === "current"))
         ? t("Working")
         : t("Stale observation")
       : undefined;
@@ -515,8 +515,8 @@ export function TaskSidebar({
           }
           tone={staleReply ? "unknown" : status}
           onOpen={() => {
-            if (!chat && native && project && discovery) {
-              if (!discovery.opening) discovery.onOpen(project, native[0]);
+            if (!chat && reports && project && discovery) {
+              if (!discovery.opening) discovery.onOpen(project, reports[0]);
             } else onConversation?.(id);
           }}
           row={commands.states.get(id)}
@@ -548,10 +548,14 @@ export function TaskSidebar({
             {flows?.map(workflowRow)}
             {project &&
               discovery &&
-              native?.map((a) => (
+              reports?.map((a) => (
                 <div
                   key={activityKey(project, a)}
-                  className="history-run history-terminal"
+                  className={
+                    a.source === "terminal"
+                      ? "history-run history-terminal"
+                      : "history-run"
+                  }
                 >
                   <ActivityButton
                     grouped

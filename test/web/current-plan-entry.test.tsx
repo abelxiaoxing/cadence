@@ -26,6 +26,8 @@ import { transport } from "./fixtures";
 const f = vi.hoisted(() => ({
   state: undefined as CadenceConversation | undefined,
   pinned: false,
+  modeError: false,
+  live: undefined as { epoch: string; commandId: string } | undefined,
   catalog: undefined as ChoiceVersion | undefined,
   no: () => {},
 }));
@@ -33,6 +35,10 @@ vi.mock("../../web/src/client/use-workbench", async (load) => ({
   ...(await load<typeof import("../../web/src/client/use-workbench")>()),
   useWorkbench: (_: unknown, r: { kind: string } | null) => ({
     refresh: f.no,
+    error:
+      r?.kind === "cadence-conversation" && f.modeError
+        ? "unavailable"
+        : undefined,
     value:
       r?.kind === "cadence-conversation"
         ? { kind: r.kind, state: f.state }
@@ -70,7 +76,8 @@ vi.mock("../../web/src/client/use-conversation", () => ({
     summary: {
       id: "chat",
       title: "Fixture discussion",
-      status: "completed",
+      status: f.live ? "running" : "completed",
+      live: f.live,
       origin: "webui",
       leaf: "leaf",
     },
@@ -242,28 +249,33 @@ it("opens and closes the current plan at the title, not the stream tail; later d
   expect(read).not.toHaveBeenCalled();
 });
 
+function recordedProposal(version: 2 | 3 | undefined) {
+  const p = proposal("Recorded material");
+  if (version !== 3) {
+    const {
+      version: _version,
+      assumptions,
+      documents,
+      reviewReads,
+      policy,
+      tasks,
+      ...retained
+    } = p.plan;
+    p.plan = decodeWorkflowPlan({
+      ...retained,
+      tasks: tasks.map(({ reads, ...task }) => task),
+      ...(version === 2
+        ? { version, knowledge: [] }
+        : { projectContext: "Older context", repairAttempts: 2 }),
+    });
+  }
+  return p;
+}
+
 it.each([2, undefined, 3] as const)(
   "version %s: real title disclosure and workspace eligibility under matched and stale bindings",
   (version) => {
-    const p = proposal("Recorded material");
-    if (version !== 3) {
-      const {
-        version: _version,
-        assumptions,
-        documents,
-        reviewReads,
-        policy,
-        tasks,
-        ...retained
-      } = p.plan;
-      p.plan = decodeWorkflowPlan({
-        ...retained,
-        tasks: tasks.map(({ reads, ...task }) => task),
-        ...(version === 2
-          ? { version, knowledge: [] }
-          : { projectContext: "Older context", repairAttempts: 2 }),
-      });
-    }
+    const p = recordedProposal(version);
     f.state = {
       id: "chat",
       revision: 1,
@@ -523,3 +535,213 @@ it("Enter cannot transfer A's phrase to approvable B; a fresh edit after reviewi
     f.catalog = undefined;
   }
 });
+
+// A real textarea key handler wired to the workspace's current draft/target.
+function pressEnter(props: ChatComposerProps, altKey = false) {
+  let keyDown: ((event: unknown) => void) | undefined;
+  function Keys() {
+    const form = ChatComposer(props);
+    const field = Children.toArray(form.props.children).find(
+      (el) => isValidElement(el) && el.type === "textarea",
+    );
+    if (!isValidElement<{ onKeyDown(event: unknown): void }>(field))
+      throw Error("missing textarea");
+    keyDown = field.props.onKeyDown;
+    return null;
+  }
+  renderToStaticMarkup(<Keys />);
+  if (!keyDown) throw Error("missing Enter handler");
+  keyDown({ key: "Enter", altKey, nativeEvent: {}, preventDefault() {} });
+}
+
+function usePhraseWorkspace(
+  client: ServiceClient,
+  prepare: () => Promise<void>,
+) {
+  return ChatWorkspace({
+    client,
+    id: "chat",
+    workspaceId: "workspace",
+    initialCwd: "/fixture",
+    enabled: true,
+    modelAvailability: {
+      status: "ready",
+      epoch: f.state?.proposal?.epoch ?? "fixture",
+      attachmentVersion: 1,
+    },
+    prepareForPlan: prepare,
+    prepareForSend: prepare,
+    onModelChanged: f.no,
+    onChanged: f.no,
+    onReferenceUsed: f.no,
+  });
+}
+
+it.each([2, undefined] as const)(
+  "version %s: submitting to the collapsed read-only proposal explains the refusal; discussion still sends",
+  async (version) => {
+    const p = recordedProposal(version);
+    f.state = {
+      id: "chat",
+      revision: 1,
+      enabled: true,
+      head: "turn-1",
+      proposal: p,
+      runs: [],
+    };
+    const prepare = vi.fn(async () => {});
+    const command = vi.fn(async (cmd: WorkbenchCommand) => ({
+      kind: "ok",
+      value: { kind: "accepted", commandId: cmd.commandId },
+    }));
+    const client = new ServiceClient(transport({ workbenchCommand: command }));
+    const model = vi.spyOn(client, "models").mockResolvedValue({
+      kind: "ok",
+      value: {
+        status: "complete",
+        withheld: 0,
+        remembered: null,
+        entries: [],
+        version: {
+          ...p.model,
+          epoch: crypto.randomUUID(),
+          catalogId: crypto.randomUUID(),
+          conversation: { id: "chat", cwd: "/fixture" },
+        },
+        selected: {
+          provider: "fixture",
+          model: "fixture",
+          api: "openai-completions",
+          thinking: "low",
+          sourceSelectionId: crypto.randomUUID(),
+        },
+      },
+    });
+    const phrase = "按计划实施",
+      text = "Discuss another option.";
+    let discussion: ChatComposerProps | undefined;
+    function Probe() {
+      const [step, advance] = useState(0);
+      const tree = usePhraseWorkspace(client, prepare),
+        editor = composer(tree);
+      expect(titleButton(tree)["aria-expanded"]).toBe(false);
+      if (!step) editor.onDraft(phrase);
+      else if (step === 1) {
+        const before = currentToasts().at(-1)?.id;
+        expect(editor.canSend).toBe(true);
+        editor.onSend();
+        expect(currentToasts().at(-1)).toMatchObject({
+          level: "error",
+          text: "This plan is read-only. A new proposal is required for implementation.",
+        });
+        expect(currentToasts().at(-1)?.id).not.toBe(before);
+      } else if (step === 2) {
+        expect(editor.draft).toBe(phrase);
+        editor.onDraft(text);
+      } else {
+        discussion = editor;
+        return tree;
+      }
+      advance(step + 1);
+      return tree;
+    }
+    renderToStaticMarkup(<Probe />);
+    expect(command).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(model).not.toHaveBeenCalled();
+    if (!discussion) throw Error("missing discussion editor");
+    pressEnter(discussion);
+    await vi.waitFor(() =>
+      expect(command.mock.calls.map(([c]) => c)).toEqual([
+        expect.objectContaining({
+          kind: "cadence-send",
+          intent: "message",
+          text,
+        }),
+      ]),
+    );
+  },
+);
+
+it.each(["steer", "queue"])(
+  "%s: a failed mode read cannot repurpose an approval draft or block fresh input to a live turn",
+  async (mode) => {
+    const p = proposal("Review A");
+    f.state = {
+      id: "chat",
+      revision: 1,
+      enabled: true,
+      head: "turn-1",
+      proposal: p,
+      runs: [],
+    };
+    const phrase = "按计划实施",
+      live = { commandId: crypto.randomUUID(), epoch: crypto.randomUUID() };
+    const prepare = vi.fn(async () => {});
+    const command = vi.fn(async (cmd: WorkbenchCommand) => ({
+      kind: "ok",
+      value: { kind: "accepted", commandId: cmd.commandId },
+    }));
+    const client = new ServiceClient(transport({ workbenchCommand: command }));
+    let fresh: ChatComposerProps | undefined;
+    function Probe() {
+      const [step, advance] = useState(0);
+      const tree = usePhraseWorkspace(client, prepare),
+        edit = composer(tree);
+      switch (step) {
+        case 0:
+          toggleTitle(tree);
+          break;
+        case 1:
+          edit.onDraft(phrase);
+          break;
+        case 2:
+          f.live = live;
+          f.modeError = true;
+          break;
+        case 3:
+          expect(edit.input?.enabled).toBe(true);
+          expect(edit.draft).toBe(phrase);
+          edit.input?.onInput("steer");
+          expect(command).not.toHaveBeenCalled();
+          expect(currentToasts().at(-1)?.text).toContain(
+            "Review it from the conversation title",
+          );
+          break;
+        case 4:
+          expect(edit.draft).toBe(phrase);
+          edit.onDraft("");
+          break;
+        case 5:
+          edit.onDraft(phrase);
+          break;
+        default:
+          fresh = edit;
+          return tree;
+      }
+      advance(step + 1);
+      return tree;
+    }
+    try {
+      renderToStaticMarkup(<Probe />);
+      if (!fresh?.input?.enabled) throw Error("missing live input");
+      pressEnter(fresh, mode === "queue");
+      await vi.waitFor(() =>
+        expect(command.mock.calls.map(([c]) => c)).toEqual([
+          expect.objectContaining({
+            kind: "conversation-input",
+            mode,
+            text: phrase,
+            conversationId: "chat",
+            turnId: live.commandId,
+            epoch: live.epoch,
+          }),
+        ]),
+      );
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      f.live = undefined;
+      f.modeError = false;
+    }
+  },
+);

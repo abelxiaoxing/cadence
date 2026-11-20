@@ -838,11 +838,10 @@ export function ChatWorkspace({
       : "readonly";
   // An exact phrase can also be ordinary discussion (including steering a
   // live reply). Never reinterpret a draft across these two input paths.
-  const phraseSource = !cadenceKnown
-    ? undefined
-    : running || !cadence
+  const phraseSource =
+    running || (cadenceKnown && !cadence)
       ? "discussion"
-      : reviewed && planApprovable && contextKnown && !anchor
+      : cadenceKnown && reviewed && planApprovable && contextKnown && !anchor
         ? canonicalJson([
             binding,
             approvalAction,
@@ -861,9 +860,11 @@ export function ChatWorkspace({
   const refusePhrase = () =>
     refuse(
       t(
-        proposal
-          ? "This draft does not confirm the current plan. Review it from the conversation title and enter the approval phrase again."
-          : "No plan is awaiting approval.",
+        !proposal
+          ? "No plan is awaiting approval."
+          : approvalAction === "readonly"
+            ? "This plan is read-only. A new proposal is required for implementation."
+            : "This draft does not confirm the current plan. Review it from the conversation title and enter the approval phrase again.",
       ),
     );
   const validationPending =
@@ -2366,18 +2367,21 @@ export function ChatWorkspace({
             observed &&
             available &&
             !conversation.error &&
-            cadenceKnown &&
             (!summary || summary.id === id) && (
               <ConversationFeedback
                 key={`${id}:${conversation.pinned ? conversation.leaf : "latest"}`}
                 receipt={received}
-                semantic={JSON.stringify([
-                  summary?.status,
-                  conversation.count,
-                  lastTurn?.activity?.kind,
-                  cadence,
-                  proposal?.id,
-                ])}
+                semantic={
+                  cadenceKnown
+                    ? JSON.stringify([
+                        summary?.status,
+                        conversation.count,
+                        lastTurn?.activity?.kind,
+                        cadence,
+                        proposal?.id,
+                      ])
+                    : undefined
+                }
               />
             )}
         </div>
@@ -2764,7 +2768,7 @@ export function ChatWorkspace({
             awaitingSend: awaitingModel,
           }}
           hint={
-            cadenceKnown && liveRun && canInput && !inputBlock && draft.trim()
+            liveRun && canInput && !inputBlock && draft.trim()
               ? t("Enter steers this reply · Alt+Enter queues behind it")
               : modeHint
                 ? t(modeHint)
