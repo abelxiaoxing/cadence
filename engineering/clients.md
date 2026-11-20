@@ -128,8 +128,11 @@ An ordinary turn shows the user's message, then one speaker label over the reply
 An inactive thinking placeholder with no body can share a group but does not count as a result.
 Failed, unknown and in-flight calls stay visible.
 Revealing the process restores its keyed rows, not their detail bodies; focused or explicitly opened members stay readable through regrouping.
-The main conversation keeps explicit group choices above its lazy window, by turn and member render identity. Advancing the latest leaf does not retire them; switching branches does. No detail body or DOM row is retained to restore a group.
-In both the conversation and a subagent transcript, pausing follow protects individually displayed steps in the viewport when a new result crosses the folding threshold. That visibility is local to the mounted view, not a saved choice.
+The main conversation keeps explicit group choices above its lazy window, by turn and member render identity.
+Advancing the latest leaf does not retire them; switching branches does.
+No detail body or DOM row is retained to restore a group.
+In both the conversation and a subagent transcript, pausing follow protects individually displayed steps in the viewport when a new result crosses the folding threshold.
+That visibility is local to the mounted view, not a saved choice.
 A fine rail joins adjacent rows but stops at prose.
 A body-free observation shares the icon slot without offering a disclosure; only an opened detail has a glass backing.
 The disclosure fills the row, keeping the chevron in a fixed end column beside shrinkable text.
