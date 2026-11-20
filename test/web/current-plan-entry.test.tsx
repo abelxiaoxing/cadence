@@ -577,6 +577,38 @@ function usePhraseWorkspace(
   });
 }
 
+function discussionFixture(version: ChoiceVersion) {
+  const prepare = vi.fn(async () => {});
+  const command = vi.fn(async (cmd: WorkbenchCommand) => ({
+    kind: "ok",
+    value: { kind: "accepted", commandId: cmd.commandId },
+  }));
+  const client = new ServiceClient(transport({ workbenchCommand: command }));
+  const model = vi.spyOn(client, "models").mockResolvedValue({
+    kind: "ok",
+    value: {
+      status: "complete",
+      withheld: 0,
+      remembered: null,
+      entries: [],
+      version: {
+        ...version,
+        epoch: crypto.randomUUID(),
+        catalogId: crypto.randomUUID(),
+        conversation: { id: "chat", cwd: "/fixture" },
+      },
+      selected: {
+        provider: "fixture",
+        model: "fixture",
+        api: "openai-completions",
+        thinking: "low",
+        sourceSelectionId: crypto.randomUUID(),
+      },
+    },
+  });
+  return { client, command, prepare, model };
+}
+
 it.each([2, undefined] as const)(
   "version %s: submitting to the collapsed read-only proposal explains the refusal; discussion still sends",
   async (version) => {
@@ -589,34 +621,7 @@ it.each([2, undefined] as const)(
       proposal: p,
       runs: [],
     };
-    const prepare = vi.fn(async () => {});
-    const command = vi.fn(async (cmd: WorkbenchCommand) => ({
-      kind: "ok",
-      value: { kind: "accepted", commandId: cmd.commandId },
-    }));
-    const client = new ServiceClient(transport({ workbenchCommand: command }));
-    const model = vi.spyOn(client, "models").mockResolvedValue({
-      kind: "ok",
-      value: {
-        status: "complete",
-        withheld: 0,
-        remembered: null,
-        entries: [],
-        version: {
-          ...p.model,
-          epoch: crypto.randomUUID(),
-          catalogId: crypto.randomUUID(),
-          conversation: { id: "chat", cwd: "/fixture" },
-        },
-        selected: {
-          provider: "fixture",
-          model: "fixture",
-          api: "openai-completions",
-          thinking: "low",
-          sourceSelectionId: crypto.randomUUID(),
-        },
-      },
-    });
+    const { client, prepare, command, model } = discussionFixture(p.model);
     const phrase = "按计划实施",
       text = "Discuss another option.";
     let discussion: ChatComposerProps | undefined;
@@ -662,6 +667,73 @@ it.each([2, undefined] as const)(
     );
   },
 );
+
+it("a failed mode read allows a newly typed ordinary Send but cannot convert a prior plan confirmation", async () => {
+  const p = proposal("Review A");
+  f.state = {
+    id: "chat",
+    revision: 1,
+    enabled: true,
+    proposal: p,
+    runs: [],
+    head: "turn-1",
+  };
+  const { client, command, prepare, model } = discussionFixture(p.model);
+  const phrase = "按计划实施";
+  let fresh: ChatComposerProps | undefined;
+  function Probe() {
+    const [step, advance] = useState(0);
+    const tree = usePhraseWorkspace(client, prepare),
+      edit = composer(tree);
+    switch (step) {
+      case 0:
+        toggleTitle(tree);
+        break;
+      case 1:
+        edit.onDraft(phrase);
+        break;
+      case 2:
+        f.state = undefined;
+        f.modeError = true;
+        break;
+      case 3:
+        expect(edit.canSend).toBe(true);
+        edit.onSend();
+        break;
+      case 4:
+        expect(edit.draft).toBe(phrase);
+        expect(prepare).not.toHaveBeenCalled();
+        expect(command).not.toHaveBeenCalled();
+        expect(model).not.toHaveBeenCalled();
+        edit.onDraft("");
+        break;
+      case 5:
+        edit.onDraft(phrase);
+        break;
+      default:
+        fresh = edit;
+        return tree;
+    }
+    advance(step + 1);
+    return tree;
+  }
+  try {
+    renderToStaticMarkup(<Probe />);
+    if (!fresh?.canSend) throw Error("missing ordinary Send");
+    pressEnter(fresh);
+    await vi.waitFor(() =>
+      expect(command.mock.calls.map(([c]) => c)).toEqual([
+        expect.objectContaining({
+          kind: "send",
+          text: phrase,
+          conversationId: "chat",
+        }),
+      ]),
+    );
+  } finally {
+    f.modeError = false;
+  }
+});
 
 it.each(["steer", "queue"])(
   "%s: a failed mode read cannot repurpose an approval draft or block fresh input to a live turn",

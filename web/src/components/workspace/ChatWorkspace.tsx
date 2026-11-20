@@ -839,7 +839,7 @@ export function ChatWorkspace({
   // An exact phrase can also be ordinary discussion (including steering a
   // live reply). Never reinterpret a draft across these two input paths.
   const phraseSource =
-    running || (cadenceKnown && !cadence)
+    running || !cadence
       ? "discussion"
       : cadenceKnown && reviewed && planApprovable && contextKnown && !anchor
         ? canonicalJson([
@@ -1915,10 +1915,15 @@ export function ChatWorkspace({
     setBusy(true);
     const text = draft;
     const command = inputCommand(id, liveRun, mode, text);
-    const outcome = inputOutcome(await client.workbenchCommand(command));
+    const reply = await client.workbenchCommand(command);
+    const outcome =
+      reply.kind === "ok" && reply.value.kind !== "accepted"
+        ? { kind: "unknown" as const, code: "unavailable" }
+        : inputOutcome(reply);
     if (!alive.current) return;
     setBusy(false);
     if (outcome.kind === "accepted") {
+      if (!renderedBranch.aborted) setReceived(command.commandId);
       sentInputs.current.set(command.commandId, text);
       pushPromptHistory(workspaceId, text);
       setDraft("");
@@ -2495,7 +2500,7 @@ export function ChatWorkspace({
                       entry it continued is known. */}
                   <ChatTurnView
                     key={traceBranch}
-                    reading={away && !hidden && !planOpen}
+                    reading={away && !hidden}
                     expandedSteps={expandedTraces?.get(renderId)}
                     onExpandSteps={rememberTrace}
                     turn={turn}
@@ -2666,11 +2671,13 @@ export function ChatWorkspace({
           flow={flow}
           inputRef={textarea}
           draft={draft}
-          onDraft={(text) =>
+          onDraft={(text, origin) =>
             setEntry({
               text,
               source:
-                cadenceApproval(text) && !imageDraft.files.length
+                origin !== "history" &&
+                cadenceApproval(text) &&
+                !imageDraft.files.length
                   ? phraseSource
                   : undefined,
             })

@@ -8,7 +8,12 @@ import {
   controlGeometry,
   glyphSample,
 } from "./optical-fixtures/measure.mjs";
-import { epoch, liveDock, project } from "./optical-fixtures/records.mjs";
+import {
+  epoch,
+  liveDock,
+  project,
+  readRecord,
+} from "./optical-fixtures/records.mjs";
 
 const traceId = "polish-trace";
 const bookId = "polish-reading";
@@ -97,6 +102,7 @@ function readFixture(
   {
     revision,
     settled,
+    growing,
     agentPhase,
     windowGrown,
     windowFork,
@@ -139,6 +145,26 @@ function readFixture(
     };
   if (![traceId, bookId, pausedId, windowId, longBookId].includes(id))
     return null;
+  if (id === pausedId && kind === "cadence-conversation") {
+    const { proposal } = readRecord({ id: "design", kind }).state;
+    return {
+      kind,
+      state: {
+        id,
+        enabled: true,
+        revision: 1,
+        head: null,
+        runs: [],
+        proposal: {
+          ...proposal,
+          model: {
+            ...proposal.model,
+            conversation: { ...proposal.model.conversation, id },
+          },
+        },
+      },
+    };
+  }
   const live = id === traceId || id === pausedId;
   const book =
     id === longBookId
@@ -193,7 +219,7 @@ function readFixture(
       id === windowId && windowGrown && q.ordinal === 0 ? "completed" : status;
     const steps = live
       ? id === pausedId
-        ? pausedSteps(settled)
+        ? pausedSteps(settled, growing)
         : traceSteps(revision)
       : id === windowId && q.ordinal === 0
         ? [
@@ -534,7 +560,7 @@ async function observeTrace(ctx, row, source) {
 
 // First crossing of the folding threshold, without focusing or opening a row.
 // Sample inside the selected pane: AgentView leaves the main chat mounted.
-async function observeThreshold(ctx, pane, latestButton, settle) {
+async function observeThreshold(ctx, pane, latestButton, settle, peek) {
   const { run, send, wait } = ctx;
   const frame = () =>
     run(
@@ -602,7 +628,14 @@ async function observeThreshold(ctx, pane, latestButton, settle) {
     text?.includes("steps completed"),
   );
   assert.deepEqual(summaries, ["2 steps completed · Show steps"]);
-  return { start, before, after, offscreen, summaries };
+  const result = { start, before, after, offscreen, summaries };
+  if (peek) {
+    await peek();
+    result.afterPlan = await frame();
+    assert.deepEqual(result.afterPlan, before);
+    assert.ok(await ctx.ev(`!!document.querySelector('${latestButton}')`));
+  }
+  return result;
 }
 
 async function observePausedTrace(ctx, row, source) {
@@ -614,7 +647,27 @@ async function observePausedTrace(ctx, row, source) {
     () => {
       source.settled = true;
     },
+    async () => {
+      const trigger = ".current-plan-trigger";
+      await ctx.click(trigger);
+      await ctx.wait(
+        `document.querySelector('.current-plan-panel .workflow-plan')`,
+      );
+      await ctx.click(trigger);
+      await ctx.wait(`!document.querySelector('.current-plan-panel')`);
+    },
   );
+  const beforeGrowth = await ctx.run(scrollPosition);
+  source.growing = true;
+  await ctx.wait(
+    `document.querySelector('.msg-assistant').innerText.includes('Following again.')`,
+  );
+  const afterGrowth = await ctx.run(scrollPosition);
+  assert.ok(
+    afterGrowth.height > beforeGrowth.height &&
+      afterGrowth.top === beforeGrowth.top,
+  );
+  Object.assign(row.unfocusedReading, { beforeGrowth, afterGrowth });
   assert.deepEqual(source.detailReads, []);
 }
 

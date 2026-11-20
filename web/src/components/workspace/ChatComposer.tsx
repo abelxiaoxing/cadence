@@ -78,7 +78,7 @@ const heightCap = () =>
 export interface ChatComposerProps {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   draft: string;
-  onDraft(text: string): void;
+  onDraft(text: string, origin?: "history"): void;
   /** A Send is in flight or unconfirmed: its text stays as it was sent. */
   locked: boolean;
   images: readonly File[];
@@ -236,7 +236,7 @@ export function ChatComposer({
   const show = (text: string) => {
     recalled.current = text;
     caretTo.current = text.length;
-    onDraft(text);
+    onDraft(text, "history");
   };
 
   // ---- `@` popup: a path reference from the folder's bounded listing. ----

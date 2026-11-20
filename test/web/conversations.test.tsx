@@ -504,14 +504,16 @@ it("promotes the session from owner discovery alone; only matching viewer runs a
     observedAt: 100,
     freshness: "current",
   });
-  const draw = (local: Activity[], roster?: WorkflowRun[]) =>
+  const draw = (local: Activity[], roster?: WorkflowRun[], linked = true) =>
     historyView({
       chats: [listed],
       workflows: roster,
-      workflowLinks: roster?.map((r) => ({
-        runId: r.id,
-        conversationId: listed.id,
-      })),
+      workflowLinks: linked
+        ? roster?.map((r) => ({
+            runId: r.id,
+            conversationId: listed.id,
+          }))
+        : undefined,
       onCancelWorkflow: async () => {},
       canCancelWorkflow: (r) => r.id === b.id,
       discovery: {
@@ -557,6 +559,32 @@ it("promotes the session from owner discovery alone; only matching viewer runs a
       }
     }
     expect(pinned.match(/class="conversation-stop"/g) ?? []).toHaveLength(
+      roster?.length ?? 0,
+    );
+  }
+  // A gateway observation without any session is an identifiable, read-only
+  // detail. Matching viewer evidence replaces only that exact observation.
+  const orphans = reports.map((r) => ({ ...r, sessionId: null }));
+  for (const roster of [undefined, [a], [a, b]]) {
+    const [outside, prefix, history] = draw(orphans, roster, false);
+    expect(outside.match(/Owner workflow/g)).toHaveLength(1);
+    expect(outside).toContain("/elsewhere");
+    expect(history).toContain(listed.title);
+    expect(prefix).not.toContain("conversation-row");
+    const details = prefix.match(
+      /<details class="history-unlinked">(.*?)<\/details>/,
+    )?.[1];
+    expect(details).toContain("Unattributed work · 2");
+    expect(details?.match(/class="history-run"/g)).toHaveLength(2);
+    for (const r of [a, b]) {
+      if (roster?.includes(r)) {
+        expect(details).toContain(
+          `aria-label="Cancel workflow — request stop · Inspect · ${r.id}"${r === a ? ' disabled=""' : ">"}`,
+        );
+        expect(details).not.toContain(`<code>${r.id}</code>`);
+      } else expect(details).toContain(`<code>${r.id}</code>`);
+    }
+    expect(details?.match(/class="conversation-stop"/g) ?? []).toHaveLength(
       roster?.length ?? 0,
     );
   }
