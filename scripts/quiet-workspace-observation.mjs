@@ -241,6 +241,14 @@ function specimen(id) {
       };
     }
     if ((r.id ?? r.location?.id) !== id) return;
+    if (
+      kind === "conversation-models" &&
+      s.firstCatalog &&
+      !s.catalogRequested
+    ) {
+      s.catalogRequested = true;
+      await s.firstCatalog.promise;
+    }
     if (kind === "conversation-models" || kind === "reload-conversation-models")
       return { kind: "conversation-models", catalog: cat };
     if (kind === "conversation-context")
@@ -1758,11 +1766,70 @@ function historyFrame(title) {
     };
   }, "background conversation");
 }
+// Keep the clicked node, not a selector that could silently pick up its replacement.
+function watchReplyInput(sel, answer, stopButton) {
+  const field = document.querySelector(sel),
+    events = [],
+    listeners = new AbortController();
+  const name = (el) => el && `${el.localName}.${el.className}`;
+  for (const type of ["pointerdown", "focusin", "focusout"])
+    document.addEventListener(
+      type,
+      (e) =>
+        events.push({
+          type,
+          at: performance.now(),
+          trusted: e.isTrusted,
+          onField: e.target === field,
+          target: name(e.target),
+          related: name(e.relatedTarget),
+          ...(type === "pointerdown" ? { x: e.clientX, y: e.clientY } : {}),
+        }),
+      { capture: true, signal: listeners.signal },
+    );
+  const frame = () => {
+    const fields = document.querySelectorAll(sel),
+      rect = field.getBoundingClientRect(),
+      point = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+      target = document.elementFromPoint(point.x, point.y);
+    return {
+      matches: fields.length,
+      same: fields[0] === field && field.isConnected,
+      disabled: field.disabled,
+      readOnly: field.readOnly,
+      draft: field.value,
+      active: name(document.activeElement),
+      focused: document.activeElement === field,
+      replyShown:
+        document
+          .querySelector(".msg-assistant .msg-body")
+          ?.innerText.includes(answer) ?? false,
+      stopAvailable: !!document.querySelector(`${stopButton}:enabled`),
+      ordinary: !!field.form?.querySelector(".mode-toggle.off"),
+      model: field.form?.querySelector(".model-trigger-text")?.innerText,
+      level: field.form?.querySelector(".model-trigger-level")?.innerText,
+      rect: rect.toJSON(),
+      point,
+      hit: target === field,
+      target: name(target),
+      events,
+    };
+  };
+  opticalProbe.replyInput = {
+    frame,
+    end: () => {
+      listeners.abort();
+      return frame();
+    },
+  };
+}
+
 // One ordinary reply, exact turn + epoch throughout. No linked workflow or
 // gateway discovery can mask an early release of this direct owner's row.
 async function observeDirectReply(p, row) {
-  const { go, click, wait, run, ev, press, observeButton } = p;
+  const { go, click, clickPoint, wait, run, ev, press, observeButton } = p;
   const s = specimen(background);
+  s.firstCatalog = Promise.withResolvers();
   s.firstHead.resolve();
   s.turns.push({
     kind: "send",
@@ -1779,14 +1846,52 @@ async function observeDirectReply(p, row) {
     count: 0,
     reply: true,
   };
+  const opening = {};
+  row.directReply = { id: s.id, live: s.live, opening, inputs: [] };
   const stop = await intercept(p, s);
   try {
     const stopButton = '.chat-composer button[aria-label="Stop response"]';
     await go(`/app#chat=${s.id}`, input);
-    await wait(
-      `document.querySelector('${stopButton}:enabled') && document.querySelector('.mode-toggle.off')`,
+    await run(watchReplyInput, input, s.turns[0].answer, stopButton);
+    await until(() => s.catalogRequested, "held direct-reply model catalog");
+    const ready = (f) =>
+      f.replyShown &&
+      f.stopAvailable &&
+      f.ordinary &&
+      f.matches === 1 &&
+      f.same &&
+      !f.disabled &&
+      !f.readOnly;
+    await wait(`(${ready})(opticalProbe.replyInput.frame())`);
+    const held = await ev(
+      `opticalProbe.stableFrames(opticalProbe.replyInput.frame, 'direct reply before catalog')`,
     );
-    await click(input);
+    opening.held = held;
+    assert.ok(ready(held) && held.hit);
+    assert.notEqual(held.model, "optical");
+    await clickPoint(input, held.point);
+    const pressed = await ev("opticalProbe.replyInput.frame()");
+    opening.pressed = pressed;
+    assert.deepEqual(
+      pressed.events
+        .filter((e) => e.type === "pointerdown")
+        .map((e) => [e.trusted, e.onField]),
+      [[true, true]],
+    );
+    assert.ok(pressed.same && pressed.focused);
+    s.firstCatalog.resolve();
+    await wait(
+      `document.querySelector('${composer} .model-trigger-text')?.innerText==='optical' && document.querySelector('${composer} .model-trigger-level')?.innerText==='Thinking · Medium'`,
+    );
+    const loaded = await ev("opticalProbe.replyInput.frame()");
+    opening.loaded = loaded;
+    assert.ok(loaded.matches === 1 && loaded.same && loaded.focused);
+    assert.ok(
+      !loaded.events
+        .slice(held.events.length)
+        .some((e) => e.type === "focusout" && e.onField),
+      "Clicked editor lost focus",
+    );
     const editor = await nativeEditor(p, row.nativeEditorSteps);
     const reason =
       "Cannot steer or queue: Current action context unavailable; observe again.";
@@ -1809,7 +1914,6 @@ async function observeDirectReply(p, row) {
         input,
         stopButton,
       );
-    row.directReply = { id: s.id, live: s.live, inputs: [] };
     for (const mode of ["steer", "queue"]) {
       await editor.replace(phrase);
       await editor.replace(discussion);
@@ -1993,7 +2097,13 @@ async function observeDirectReply(p, row) {
       s.commands.length,
     );
   } finally {
-    await stop();
+    try {
+      opening.catalogRequested = !!s.catalogRequested;
+      opening.last = await ev("opticalProbe.replyInput?.end() ?? null");
+    } finally {
+      s.firstCatalog.resolve();
+      await stop();
+    }
   }
 }
 

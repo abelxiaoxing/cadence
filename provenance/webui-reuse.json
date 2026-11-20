@@ -453,7 +453,7 @@
   ],
   "destinations": {
     "scripts/qualify-optical.mjs": "6d639f5e338d57d12269970f31e24dc6050cee48f555f8b2c46ffc133bd81d13",
-    "scripts/quiet-workspace-observation.mjs": "3547ba32ebc9c0662b0fbe5d831b4e7ddb52e7cc3b8cf0dfe4e9d126c04c9120",
+    "scripts/quiet-workspace-observation.mjs": "55ce4850bf343585fd123b241b24afafcb176028484291c92164b71fd701a75f",
     "scripts/transcript-polish-observation.mjs": "125f77faee0ffd5e1986985b029e5ab527ebbe722d8946f5d04665930a2df79b",
     "test/web/conversation-entry-presentation.test.tsx": "ac798b033bab62337f0db04cb950a6b409ac3f1d99e572cc7f15610d314da5a2",
     "test/web/current-plan-entry.test.tsx": "a3314893a86376855954d05382017a663e1d14bafa1005437892050884d3bf5b",
