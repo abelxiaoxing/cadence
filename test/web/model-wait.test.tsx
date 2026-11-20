@@ -240,9 +240,9 @@ function fixture() {
         value: { version: catalog().version, selected },
       };
     }),
-    workbenchCommand: vi.fn(async (_request: unknown) => ({
+    workbenchCommand: vi.fn(async (request: { commandId: string }) => ({
       kind: "ok",
-      value: {},
+      value: { kind: "accepted", commandId: request.commandId },
     })),
   };
   const prepareForSend = vi.fn(async () => {});
