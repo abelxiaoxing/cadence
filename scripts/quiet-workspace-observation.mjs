@@ -1138,7 +1138,18 @@ async function observeOrdinaryPhrase(p, row, paths) {
         await wait(`document.querySelector('.chat-image-draft img')`);
       }
       let restored, continued;
-      if (via === "recall confirmed Send") {
+      if (via === "edit starter") {
+        const starter = ".entry-starters button";
+        await click(starter);
+        const prompt = await ev(`document.activeElement.value`);
+        assert.equal(prompt, "Explain this project");
+        continued = await editor.append(phrase, prompt + phrase);
+        await run(
+          (length) => document.activeElement.setSelectionRange(0, length),
+          prompt.length,
+        );
+        await press("Backspace", 8);
+      } else if (via === "recall confirmed Send") {
         assert.equal(s.turns.at(-1)?.kind, "send");
         assert.equal(s.turns.at(-1).text, phrase);
         assert.equal(await ev(`document.activeElement.value`), "");
@@ -2725,6 +2736,9 @@ async function observeTerminalHistory(p, row, shot) {
           ].find((e) => e.querySelector("p")?.innerText === path);
           return {
             summary: details.querySelector("summary").innerText,
+            mark: details
+              .querySelector('summary [role="img"]')
+              .getAttribute("aria-label"),
             ids: [...details.querySelectorAll("code")].map((e) => ({
               id: e.innerText,
               text: e.closest(".history-run").innerText,
@@ -2735,10 +2749,12 @@ async function observeTerminalHistory(p, row, shot) {
               label: e.getAttribute("aria-label") ?? e.title,
               disabled: e.disabled,
             })),
-            other: [...otherDir.querySelectorAll("button")].map((e) => ({
-              text: e.innerText,
-              disabled: e.disabled,
-            })),
+            other: [...(otherDir?.querySelectorAll("button") ?? [])].map(
+              (e) => ({
+                text: e.innerText,
+                disabled: e.disabled,
+              }),
+            ),
           };
         },
         unlinked,
@@ -2821,7 +2837,12 @@ async function observeTerminalHistory(p, row, shot) {
     );
     const cold = await orphanFrame();
     const ids = unattributed.map((a) => a.id).sort();
-    const assertReports = (f, expected, reordered) => {
+    const assertReports = (
+      f,
+      expected,
+      reordered,
+      fresh = "Current observation",
+    ) => {
       assert.deepEqual(
         f.ids.map((e) => e.id).sort(),
         expected.map((a) => a.id).sort(),
@@ -2835,14 +2856,20 @@ async function observeTerminalHistory(p, row, shot) {
         );
         assert.ok(
           text.includes(
-            `${reordered ? "verifying" : phase} · Current observation · ${cwd}`,
+            `${reordered ? "verifying" : phase} · ${fresh} · ${cwd}`,
           ),
         );
       }
     };
-    const readonly = (f, reordered = false) => {
+    const readonly = (f, reordered = false, stale = false) => {
       assert.equal(f.summary.trim(), "Unattributed work · 4");
-      assertReports(f, unattributed, reordered);
+      assert.equal(f.mark, stale ? "Stale observation" : "Working");
+      assertReports(
+        f,
+        unattributed,
+        reordered,
+        stale ? "Stale observation" : "Current observation",
+      );
       assert.ok(
         f.ids.every((e) => e.visible && e.rect.width > 0 && e.rect.height > 0),
       );
@@ -2893,6 +2920,31 @@ async function observeTerminalHistory(p, row, shot) {
     readonly(awaitingRoster, true);
     const awaitingSession = await sessionFrame();
     assertDiscoverySession(awaitingSession);
+    // No viewer has witnessed these runs yet. Expire the *gateway* feed:
+    // only this directory's history details should survive, without Stop.
+    const lastCold = s.roster;
+    await run((now) => {
+      opticalProbe.wallClock = Date.now;
+      Date.now = () => now;
+    }, lastCold.at + 120_001);
+    s.roster = {
+      ...lastCold,
+      name: "cold discovery expired",
+      discoveryFailed: true,
+    };
+    await wait(
+      `document.querySelector(${q(`${unlinked} summary [aria-label="Stale observation"]`)}) && !document.querySelector(${q(`${outside} button`)})`,
+    );
+    const expired = await orphanFrame();
+    readonly(expired, true, true);
+    assert.deepEqual(expired.other, []);
+    await ev(
+      "Date.now = opticalProbe.wallClock; delete opticalProbe.wallClock",
+    );
+    s.roster = lastCold;
+    await wait(
+      `document.querySelector(${q(`${unlinked} summary [aria-label="Working"]`)}) && document.querySelector(${q(`${outside} button`)})`,
+    );
     s.holdRosters.resolve();
     s.holdRosters = null;
     // The two independently held GETs can paint in either order. Wait for
@@ -2960,12 +3012,14 @@ async function observeTerminalHistory(p, row, shot) {
       reordered,
       awaitingRoster,
       awaitingSession,
+      expired,
       joined,
       rosterSession,
     };
     assert.deepEqual(s.commands, []);
     s.roster = stage("together", 0, "research", true, 2, 2);
     const first = await settledFrame(true);
+    assert.equal(await ev(`!!document.querySelector(${q(unlinked)})`), false);
     assert.ok(
       first.order.indexOf(title) < first.order.indexOf("Earlier material"),
     );
@@ -3224,6 +3278,7 @@ export async function observeQuietWorkspace(p) {
     "complete restored prefix",
     "recall confirmed Send",
   ]);
+  await observeOrdinaryPhrase(p, row, ["edit starter"]);
   await observeDirectReply(p, row);
   const stop = await intercept(p, s);
   try {

@@ -211,7 +211,7 @@ function RetainedConversations({
   );
 }
 
-/** History keeps its last attributable work across incomplete discovery reads.
+/** History keeps its last local session and unattributed work across incomplete reads.
  * Only this display projection is extended, never the gateway feed or a roster
  * that supplies actions. Its lifetime spans the sidebar's loading/loaded views. */
 export function useHistoryDiscovery(
@@ -256,7 +256,7 @@ export function useHistoryDiscovery(
         : {
             path,
             epoch: value.epoch,
-            reports: [...groups.sessions.values()].flat(),
+            reports: [...groups.sessions.values(), groups.unlinked].flat(),
           },
       value: missing.length
         ? {
