@@ -1,0 +1,56 @@
+/* Only the marks live in this spine. Keep the hit strip to its left, and
+   leave room on the right even for an overlay scrollbar with no layout box. */
+.chat-messages-wrap > nav.qn-rail {
+  --qn-hit: 16px;
+  right: max(10px, calc(var(--qn-scrollbar, 0px) + 1px));
+  width: var(--qn-hit);
+
+  /* Replace the reference rail's invisible 216px hover shelf with the
+     visible spine itself. Only actual labels/list entries extend left. */
+  &::before {
+    right: 0;
+    width: 8px;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--border-soft) 45%, transparent);
+    pointer-events: none;
+  }
+  &:is(:hover, :focus-within)::before {
+    background: var(--border-soft);
+    pointer-events: none;
+  }
+  .qn-bar {
+    width: 4px;
+    opacity: 0.75;
+  }
+  .qn-bar.active {
+    width: 6px;
+  }
+  &:is(:hover, :focus-within) .qn-bar {
+    width: 6px;
+    opacity: 1;
+  }
+  &:is(:hover, :focus-within) .qn-bar.active {
+    width: 8px;
+  }
+
+  /* Adjacent targets meet halfway between dense marks; none extends into
+     the native scrollbar. The visible labels abut the strip, too, so no
+     transparent blanket is needed to reach them from the track. */
+  .qn-bar::after {
+    inset: max(-12px, calc(var(--rail-gap) / -2)) 0;
+    left: auto;
+    width: var(--qn-hit);
+  }
+  .qn-bar-text {
+    right: var(--qn-hit);
+  }
+  .qn-list {
+    right: 100%;
+  }
+}
+
+@media (prefers-contrast: more), (forced-colors: active) {
+  .chat-messages-wrap > nav.qn-rail .qn-bar {
+    opacity: 1;
+  }
+}
