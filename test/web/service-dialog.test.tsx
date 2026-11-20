@@ -2,22 +2,26 @@
 // test/service-maintenance-systemd.test.ts against a real systemd manager.
 import { Children, isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   canUpgrade,
   type MaintenanceJob,
   type ServiceEntry,
   UPGRADE_ROUTES,
 } from "../../src/service/contracts/gateway.ts";
+import {
+  maintenanceOutcome,
+  maintenanceWaitMs,
+  observeMaintenance,
+  unchanged,
+} from "../../web/src/client/maintenance-observation";
 import { ActionDialog } from "../../web/src/components/actions/ActionDialog";
 import { FolderSetup } from "../../web/src/components/workspace/FolderSetup";
 import {
   describeJob,
   installationMessage,
-  maintenanceOutcome,
   ServiceDialog,
   UpgradeOffer,
-  unchanged,
 } from "../../web/src/components/workspace/ServiceDialog";
 import {
   type Locale,
@@ -143,9 +147,13 @@ it("reloads only for the submitted upgrade once its target is ready and serving"
     job: job({}),
   };
   expect(maintenanceOutcome(submitted, current)).toBe("reload");
-  expect(maintenanceOutcome(submitted, { ...current, version: "2.0.28" })).toBe(
-    "changed",
-  );
+  expect(
+    maintenanceOutcome(submitted, { ...current, version: "2.0.28" }),
+  ).toBeUndefined();
+  for (const mismatch of [job({ to: "2.0.30" }), job({ version: "2.0.30" })])
+    expect(maintenanceOutcome(submitted, { ...current, job: mismatch })).toBe(
+      "changed",
+    );
   for (const other of [null, submitted, job({ id: "other" })])
     expect(
       maintenanceOutcome(submitted, { ...current, job: other }),
@@ -163,6 +171,85 @@ it("reloads only for the submitted upgrade once its target is ready and serving"
     restart,
   );
 });
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+it("keeps observing through a proxy error and a version handoff, then reconnects just once without another command", async () => {
+  vi.useFakeTimers();
+  const submitted = job({ state: "running", version: null, endedAt: null });
+  const status = { kind: "service", job: job({}), version: submitted.to };
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(new Response("Bad Gateway", { status: 502 }))
+    .mockResolvedValueOnce(new Response("<html>Starting…</html>"))
+    .mockResolvedValueOnce(Response.json({ ...status, job: submitted }))
+    .mockResolvedValueOnce(
+      Response.json({ ...status, version: submitted.from }),
+    )
+    // The next release's work/installation fields need not be readable to
+    // observe our own job, but could never be used as action confirmation.
+    .mockResolvedValueOnce(
+      Response.json({ ...status, upgrade: "another-manager" }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const waiting = vi.fn(),
+    result = vi.fn();
+  observeMaintenance(submitted, waiting, result);
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(waiting).toHaveBeenCalledTimes(2);
+  expect(result).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(maintenanceWaitMs.upgrade);
+  expect(result).toHaveBeenCalledExactlyOnceWith("reload");
+  expect(fetch).toHaveBeenCalledTimes(5);
+  for (const [path, init] of fetch.mock.calls) {
+    expect(path).toBe("/workbench/v1/service");
+    expect(init?.method ?? "GET").toBe("GET");
+  }
+});
+
+it.each([401, 403])(
+  "an access refusal (%i) stops polling without reloading",
+  async (status) => {
+    vi.useFakeTimers();
+    const result = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status })),
+    );
+    observeMaintenance(job({}), vi.fn(), result);
+    await vi.advanceTimersByTimeAsync(maintenanceWaitMs.upgrade);
+    expect(result).toHaveBeenCalledExactlyOnceWith("access-denied");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  },
+);
+
+it.each([true, false])(
+  "a late matching result after departure or timeout cannot reload (leave=%s)",
+  async (leave) => {
+    vi.useFakeTimers();
+    let reply!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      () =>
+        new Promise<Response>((resolve) => {
+          reply = resolve;
+        }),
+    );
+    const result = vi.fn();
+    const stop = observeMaintenance(job({}), vi.fn(), result);
+    await vi.advanceTimersByTimeAsync(1000);
+    if (leave) stop();
+    await vi.advanceTimersByTimeAsync(maintenanceWaitMs.upgrade);
+    reply(Response.json({ kind: "service", version: "2.0.29", job: job({}) }));
+    await vi.advanceTimersByTimeAsync(1000);
+    if (leave) expect(result).not.toHaveBeenCalled();
+    else expect(result).toHaveBeenCalledExactlyOnceWith("timeout");
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
 it("a dialog without a close handler offers no dismissal while a restart runs", () => {
   const closable = renderToStaticMarkup(
     <ActionDialog title="Cadence service" onClose={() => {}}>

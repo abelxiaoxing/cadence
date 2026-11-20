@@ -2,15 +2,26 @@
  * including the separately loaded run trace. No remote textures or fonts. */
 :root {
   color-scheme: light dark;
-  --bg-canvas: light-dark(#f4f5f7, #090a0d);
-  --bg-elev: light-dark(#fafafb, #141519);
-  --bg-elev2: light-dark(#eeeff2, #1b1c21);
-  --text-primary: light-dark(#111318, #f2f4f8);
-  --text-secondary: light-dark(#5e6675, #8a93a2);
-  --accent: light-dark(#393e48, #cbd0d8);
-  --focus: light-dark(#525964, #adb6c5);
-  --prism-a: light-dark(#445065, #c0ccde);
-  --prism-b: light-dark(#5c5069, #d1c6dc);
+  --bg-canvas: light-dark(#f7f9fc, #080a0f);
+  --bg-elev: light-dark(#fcfdff, #10131a);
+  --bg-elev2: light-dark(#ecf1f7, #1a202b);
+  --text-primary: light-dark(#101722, #eef2f8);
+  --text-body: light-dark(#283447, #d8e2ef);
+  --text-secondary: light-dark(#48586e, #b0bed1);
+  --accent: light-dark(#305bb9, #648dff);
+  --focus: var(--accent);
+  --action-fill: light-dark(#305bb9, #4e86ff);
+  --on-action: #ffffff;
+  --folder-icon: light-dark(#536e95, #7993ba);
+  --segment-face: light-dark(#dfe7f4, #293449);
+  --bubble-face: light-dark(#eaf0f7, #151c27);
+  --inline-code-bg: light-dark(
+    rgba(49, 79, 125, 0.07),
+    rgba(142, 172, 216, 0.1)
+  );
+  --tool-success: light-dark(#11734f, #34d399);
+  --prism-a: light-dark(#39578d, #b0c8ef);
+  --prism-b: light-dark(#45558c, #a6b6eb);
   --lens-silver: light-dark(#949fb1, #c0ccde);
   --lens-violet: light-dark(#ad9cb5, #d1c6dc);
   --on-accent: light-dark(#ffffff, #141519);
@@ -20,8 +31,8 @@
   --red: light-dark(#843f50, #e3a6ae);
   --amber: light-dark(#77532f, #d6b591);
   --blue: light-dark(#445a73, #a9bfd6);
-  --code-bg: light-dark(#e9eaee, #101115);
-  --code-text: light-dark(#23252d, #d5d9e0);
+  --code-bg: light-dark(#edf1f7, #0e121a);
+  --code-text: light-dark(#22344e, #dae6f7);
   --notice-err-bg: light-dark(#f8eaeb, #302125);
   --notice-warn-bg: light-dark(#f6eee5, #29241f);
   --notice-info-bg: light-dark(#e8ecf2, #20232a);
@@ -31,39 +42,36 @@
   --hl-deletion-bg: light-dark(#f1e4e6, #34272b);
   --scroll-thumb: light-dark(#a9adb6, #555963);
   --scroll-thumb-hover: light-dark(#828794, #747984);
-  --glass-surface: light-dark(rgba(255, 255, 255, 0.72), rgba(22, 23, 27, 0.8));
+  --glass-surface: light-dark(rgba(255, 255, 255, 0.8), rgba(16, 19, 26, 0.78));
   --glass-border-top: light-dark(
     rgba(255, 255, 255, 0.94),
     rgba(241, 244, 252, 0.22)
   );
   --glass-border: light-dark(rgba(56, 59, 70, 0.16), rgba(208, 214, 227, 0.1));
   --glass-card-bg: light-dark(
-    rgba(251, 251, 252, 0.92),
-    rgba(23, 24, 28, 0.94)
+    rgba(252, 253, 255, 0.92),
+    rgba(21, 26, 35, 0.94)
   );
   --menu-solid-bg: light-dark(
-    rgba(253, 253, 254, 0.98),
-    rgba(26, 27, 31, 0.98)
+    rgba(253, 254, 255, 0.98),
+    rgba(22, 28, 39, 0.98)
   );
-  --accent-soft: light-dark(
-    rgba(35, 39, 48, 0.055),
-    rgba(214, 221, 234, 0.045)
-  );
+  --accent-soft: light-dark(rgba(48, 91, 185, 0.07), rgba(100, 141, 255, 0.1));
   --green-soft: light-dark(rgba(75, 104, 83, 0.1), rgba(137, 177, 147, 0.1));
   --word-add-bg: light-dark(rgba(75, 104, 83, 0.14), rgba(137, 177, 147, 0.16));
   --word-del-bg: light-dark(rgba(125, 63, 72, 0.14), rgba(209, 151, 161, 0.16));
   --red-soft: light-dark(rgba(125, 63, 72, 0.08), rgba(209, 151, 161, 0.08));
-  --shadow-1: light-dark(rgba(29, 31, 39, 0.07), rgba(0, 0, 0, 0.22));
-  --shadow-2: light-dark(rgba(29, 31, 39, 0.12), rgba(0, 0, 0, 0.34));
-  --shadow-3: light-dark(rgba(29, 31, 39, 0.17), rgba(0, 0, 0, 0.46));
+  --shadow-1: light-dark(rgba(29, 49, 78, 0.06), rgba(0, 0, 0, 0.22));
+  --shadow-2: light-dark(rgba(29, 49, 78, 0.11), rgba(0, 0, 0, 0.34));
+  --shadow-3: light-dark(rgba(29, 49, 78, 0.16), rgba(0, 0, 0, 0.46));
   --scrim: light-dark(rgba(34, 36, 42, 0.4), rgba(0, 0, 0, 0.6));
-  --grain: light-dark(rgba(25, 27, 34, 0.025), rgba(240, 244, 250, 0.025));
+  --grain: light-dark(rgba(30, 47, 70, 0.012), rgba(227, 239, 255, 0.014));
   --bg: var(--bg-canvas);
   --text: var(--text-primary);
   --md-strong: var(--text-primary);
   --link-hover: var(--text-primary);
   --text-dim: var(--text-secondary);
-  --text-faint: var(--text-secondary);
+  --text-faint: light-dark(#56647a, #8d9bb0);
   --control-fg: var(--text-secondary);
   --hl-comment: var(--text-secondary);
   --accent-text: var(--accent);
@@ -134,9 +142,9 @@
   --mono:
     ui-monospace, "SFMono-Regular", Menlo, Consolas, "Microsoft YaHei Mono",
     monospace;
-  --glass-shell-blur: 14px;
+  --glass-shell-blur: 22px;
   --glass-card-blur: 5px;
-  --glass-filter: blur(var(--glass-shell-blur)) saturate(112%);
+  --glass-filter: blur(var(--glass-shell-blur)) saturate(150%);
   --card-filter: blur(var(--glass-card-blur)) saturate(105%);
   --code-pad: 9px 12px;
   --card-body-pad: 4px 14px 12px;

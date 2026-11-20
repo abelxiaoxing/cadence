@@ -213,6 +213,9 @@ No failed API request triggers navigation.
 The service dialog lists the project and identity of each affected workflow or conversation.
 The version button confirms an upgrade, and restart keeps its own confirmation.
 For a mounted page, only the requesting page reloads automatically, after observing its own successful upgrade and the target version serving; no command is replayed.
+Across the restart it checks only the version and job from the authenticated service status, independently of the next release's confirmation fields.
+A transient proxy page, unreadable reply or old instance still serving is not a terminal outcome.
+Auth refusal stops the observation; the deadline or a failed job leaves manual recovery available.
 A Send claims its exact message and image File list, conversation head, mode revision, cwd, displayed model selector and command ID synchronously before preparation or model-selection waits; continuation never rebases these fields.
 An initially unchosen model may be resolved once, or changed by the waiting user's explicit picker choice; a concurrent newer default/selection cannot silently replace the captured selector.
 An unreadable conversation (including half-finished owner setup) permits preparation only: it cannot supply a head or mode revision, so the draft waits for the user to review the restored context and Send again; startup never rebases it.
@@ -542,6 +545,9 @@ The browser transport bounds ordinary requests too, so a stalled fetch cannot fr
 One client-chosen attachment ID survives a lost session header or body; a session read on that same ID recovers CSRF so detach can release it before replacement.
 Retained readonly GET requests do not carry an execution attachment.
 Each observation poll checks the existing session too, so an ordinary chat without a socket keeps its viewer alive and detects owner replacement even when its model list is unchanged; session, workspace, active-roster and snapshot epochs must agree before readiness is reported.
+Routine reconciliation on the same current viewer leaves confirmed controls in place while the reads are pending; it does not flash a disabled history list or interrupt a rename.
+A session that withdraws action capability disables controls immediately, and restoring it requires a completed current observation.
+Explicit refresh still invalidates the previous observation immediately.
 Detach is idempotent after authenticated release, including after a lost reply, so gateways can retire the exact viewer mapping; a refused old CSRF is recovered by a readonly session check on that same ID before the next detach.
 The serialized observer retries transient acquisition/detach failures and Refresh can reconnect it immediately; failed observation never requires a new Send or a page reload.
 Access revocation still stops observation until the user authenticates again.

@@ -12,7 +12,13 @@ import {
   type ReleaseEntry,
   type ServiceEntry,
 } from "../../../../src/service/contracts/gateway.ts";
-import { ContractError } from "../../../../src/service-contract.ts";
+import {
+  type MaintenanceResult,
+  maintenanceWaitMs,
+  observeMaintenance,
+  unchanged,
+} from "../../client/maintenance-observation";
+import { rememberLoginReturn } from "../../client/project-route";
 import {
   readRelease,
   readService,
@@ -26,9 +32,6 @@ import {
 } from "../../i18n/locale";
 import { ActionDialog } from "../actions/ActionDialog";
 
-/** How long the page waits before naming the terminal commands instead. */
-const WAIT_MS = { restart: 3 * 60_000, upgrade: 20 * 60_000 };
-const POLL_MS = 1000;
 const REASONS: Record<MaintenanceReason, MessageKey> = {
   "fetch-failed":
     "The release could not be downloaded; the service kept running.",
@@ -38,28 +41,6 @@ const REASONS: Record<MaintenanceReason, MessageKey> = {
   refused: "The service manager refused the operation.",
   interrupted: "The job ended without reporting.",
 };
-/** Recorded outcome, no report in time, or a different version answering. */
-type Result = MaintenanceJob | "timeout" | "changed";
-/** Only this tab's submitted upgrade, recorded ready and serving its target,
- * may reload the page. Merely discovering a completed job does nothing. */
-export function maintenanceOutcome(
-  submitted: MaintenanceJob,
-  service: ServiceEntry,
-): Result | "reload" | undefined {
-  const job = service.job;
-  if (job?.id !== submitted.id || job.state === "running") return;
-  if (
-    submitted.action === "upgrade" &&
-    job.state === "ready" &&
-    !unchanged(job)
-  )
-    return job.action === "upgrade" &&
-      job.version === submitted.to &&
-      service.version === submitted.to
-      ? "reload"
-      : "changed";
-  return job;
-}
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "unavailable";
@@ -84,15 +65,6 @@ export function describeJob(t: Translator["t"], job: MaintenanceJob): string {
   return job.action === "restart"
     ? t("The restart did not finish: {reason}", { reason })
     : t("The upgrade did not finish: {reason}", { reason });
-}
-
-/** A job that ended before stopping anything leaves this page connected. */
-export function unchanged(job: MaintenanceJob): boolean {
-  return job.state === "failed"
-    ? job.reason === "fetch-failed" || job.reason === "refused"
-    : job.state === "ready" &&
-        job.action === "upgrade" &&
-        job.version === job.from;
 }
 
 /** The same closed route drives the explanation and server/client admission. */
@@ -144,13 +116,9 @@ export function ServiceDialog({
   const [confirmRestart, setConfirmRestart] = useState(false);
   const [stopWork, setStopWork] = useState(false);
   const [sending, setSending] = useState(false);
-  const [submitted, setSubmitted] = useState<{
-    job: MaintenanceJob;
-    since: number;
-  } | null>(null);
-  /** The old service stopped answering. */
+  const [submitted, setSubmitted] = useState<MaintenanceJob>();
   const [down, setDown] = useState(false);
-  const [result, setResult] = useState<Result>();
+  const [result, setResult] = useState<MaintenanceResult>();
   const [revision, observe] = useState(0);
   const work = service?.work ?? null;
   const workUnavailable = service?.unit && !work && (
@@ -178,35 +146,14 @@ export function ServiceDialog({
   // Polls until the job's outcome is recorded; a result ends the loop.
   useEffect(() => {
     if (!submitted) return;
-    const { job, since } = submitted;
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      if (Date.now() - since > WAIT_MS[job.action]) return setResult("timeout");
-      try {
-        const current = await readService(abort.signal);
-        if (abort.signal.aborted) return;
-        const outcome = maintenanceOutcome(job, current);
-        if (outcome === "reload") return window.location.reload();
-        if (outcome !== undefined) return setResult(outcome);
-      } catch (e) {
-        if (abort.signal.aborted) return;
-        // It answered, but in a shape this page's build cannot read, or
-        // without this route: an older version started instead.
-        if (
-          e instanceof ContractError ||
-          (e instanceof Error && e.message === "invalid")
-        )
-          return setResult("changed");
-        setDown(true);
-      }
-      timer = setTimeout(poll, POLL_MS);
-    };
-    timer = setTimeout(poll, POLL_MS);
-    return () => {
-      abort.abort();
-      clearTimeout(timer);
-    };
+    return observeMaintenance(
+      submitted,
+      () => setDown(true),
+      (outcome) => {
+        if (outcome === "reload") window.location.reload();
+        else setResult(outcome);
+      },
+    );
   }, [submitted]);
 
   const check = async () => {
@@ -236,7 +183,7 @@ export function ServiceDialog({
       },
       csrf,
     )
-      .then((job) => setSubmitted({ job, since: Date.now() }))
+      .then(setSubmitted)
       .catch((e: unknown) => {
         setError(message(e));
         // Work started or stopped since the dialog read it: confirm again.
@@ -248,7 +195,7 @@ export function ServiceDialog({
   };
 
   if (submitted) {
-    const { job } = submitted;
+    const job = submitted;
     const failed =
       result !== undefined &&
       (typeof result === "string" || result.state !== "ready");
@@ -268,7 +215,7 @@ export function ServiceDialog({
                   ? t("Cadence is starting again…")
                   : t("Stopping Cadence…")
                 : down
-                  ? t("Installing {to} and starting Cadence…", {
+                  ? t("Waiting for Cadence {to} to reconnect automatically…", {
                       to: job.to ?? "",
                     })
                   : t("Downloading {to}, then stopping Cadence…", {
@@ -282,24 +229,28 @@ export function ServiceDialog({
                 aria-hidden="true"
               />
               {result === "timeout"
-                ? t("Cadence did not report back within {minutes} minutes.", {
-                    minutes: WAIT_MS[job.action] / 60_000,
+                ? t("Could not confirm the result within {minutes} minutes.", {
+                    minutes: maintenanceWaitMs[job.action] / 60_000,
                   })
-                : result === "changed"
-                  ? t("Cadence answered with a different version.")
-                  : describeJob(t, result)}
+                : result === "access-denied"
+                  ? t("Sign-in required")
+                  : result === "changed"
+                    ? t("The reported result does not match this request.")
+                    : describeJob(t, result)}
             </p>
           )}
-          <p>
-            {result === undefined
-              ? t(
-                  "This runs outside the service: closing or reloading the page does not stop it, and running work is stopped in order.",
-                )
-              : kept
-                ? t("The service was not changed; this page stays connected.")
-                : t("Reload the page to reconnect to the new service.")}
-          </p>
-          {failed && unit && (
+          {result === undefined ? (
+            <p>
+              {t(
+                "This runs outside the service: closing or reloading the page does not stop it, and running work is stopped in order.",
+              )}
+            </p>
+          ) : kept ? (
+            <p>
+              {t("The service was not changed; this page stays connected.")}
+            </p>
+          ) : null}
+          {failed && result !== "access-denied" && unit && (
             <p className="service-commands">
               {t("Details in a terminal:")}{" "}
               <code>
@@ -323,9 +274,14 @@ export function ServiceDialog({
               <button
                 type="button"
                 className="primary"
-                onClick={() => window.location.reload()}
+                onClick={() => {
+                  if (result === "access-denied") rememberLoginReturn();
+                  window.location.reload();
+                }}
               >
-                {t("Reload page")}
+                {t(
+                  result === "access-denied" ? "Sign in again" : "Reload page",
+                )}
               </button>
             )}
           </footer>

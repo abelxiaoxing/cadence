@@ -243,7 +243,8 @@ export class WorkspaceObserver {
       if (!current() || !state.attached || blocked || reading) return reading;
       const signal = abort.signal;
       const ticket = readDemand;
-      state.actions = false;
+      // A routine check of the same viewer is not an invalidation. Keep its
+      // confirmed controls stable until the read supplies contrary evidence.
       lastPoll = Date.now();
       reading = read(refreshSession, signal, ticket, repairRevision).then(
         (workspace) => {
@@ -274,7 +275,6 @@ export class WorkspaceObserver {
           }
         },
       );
-      emit();
       return reading;
     };
     const read = async (
@@ -310,6 +310,11 @@ export class WorkspaceObserver {
             return;
           }
           actionCapability = session.value.capabilities.actions;
+          if (!actionCapability && state.actions) {
+            // Withdraw on the session reply; restoring still needs the full read.
+            state.actions = false;
+            emit();
+          }
         }
         // Safety roster is independent of selected history/workspace proof progress.
         // Inconclusive history must not make active work undiscoverable for Cancel.
@@ -485,6 +490,7 @@ export class WorkspaceObserver {
             state.transportStatus = "current";
           } else {
             state.transportStatus = "stale";
+            state.actions = false;
             if (data && compareSequence(data.committedSeq, minimumSeq) > 0)
               minimumSeq = data.committedSeq;
             repairNeeded = true;
@@ -519,8 +525,8 @@ export class WorkspaceObserver {
       readDemand++;
       state.readCurrent = false;
       state.actions = false;
+      emit();
       if (!state.attached) reconnect();
-      else if (reading) emit();
       else void poll();
     };
     timer = setInterval(() => {
