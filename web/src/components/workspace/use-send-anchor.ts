@@ -28,6 +28,11 @@ const draftImage = (blob: Blob, image: ChatImage, index: number) =>
     { type: image.mimeType },
   );
 
+export interface ComposerDraft {
+  text: string;
+  source?: string | symbol;
+}
+
 export function useSendAnchor({
   draftKey,
   draft,
@@ -40,8 +45,8 @@ export function useSendAnchor({
    * so a reload neither loses it nor sends a rewritten message at the branch
    * end. */
   draftKey: string;
-  draft: string;
-  setDraft(next: string | ((value: string) => string)): void;
+  draft: ComposerDraft;
+  setDraft(update: (prior: ComposerDraft) => ComposerDraft): void;
   images: {
     files: readonly File[];
     add(files: File[]): void;
@@ -69,8 +74,11 @@ export function useSendAnchor({
       /* The anchor still applies in memory. */
     }
   }, [draftKey, anchor]);
-  // The image drafts set aside with `anchor.stash`.
-  const stashed = useRef<readonly File[]>([]);
+  // Only the text in `anchor.stash` survives reload. Neither a plan binding
+  // nor a fresh origin inferred from that text belongs to a restored draft.
+  const stashed = useRef<{ files: readonly File[]; source?: symbol } | null>(
+    null,
+  );
   // The rewritten message's whole text and images being read back: Send waits
   // for them, and Cancel or another anchor abandons them.
   const reading = useRef<AbortController | null>(null);
@@ -89,9 +97,10 @@ export function useSendAnchor({
     if (!held) return;
     now.current = null;
     setAnchor(null);
-    setDraft(held.stash);
-    images.replace(stashed.current);
-    stashed.current = [];
+    const saved = stashed.current;
+    setDraft(() => ({ text: held.stash, source: saved?.source }));
+    images.replace(saved?.files ?? []);
+    stashed.current = null;
   };
   const move = (
     turn: LoadedTurn,
@@ -102,7 +111,11 @@ export function useSendAnchor({
     // The first anchor sets the composer's own draft aside; moving the anchor
     // keeps that one, not the text of the message being given up.
     const held = now.current;
-    if (!held) stashed.current = images.files;
+    if (!held)
+      stashed.current = {
+        files: images.files,
+        source: typeof draft.source === "symbol" ? draft.source : undefined,
+      };
     const first = turnParts(turn.steps).user[0];
     const next: SendAnchor = {
       kind,
@@ -111,7 +124,7 @@ export function useSendAnchor({
       from: kind === "edit" ? turn.ordinal : turn.ordinal + 1,
       label: firstLine(first?.step.text ?? ""),
       media: kind === "edit" && turn.header.omitted.media,
-      stash: held ? held.stash : draft,
+      stash: held ? held.stash : draft.text,
     };
     now.current = next;
     setAnchor(next);
@@ -123,7 +136,7 @@ export function useSendAnchor({
   const continueAfter = (turn: LoadedTurn): boolean => {
     if (!turn.header.entry) return false;
     move(turn, "continue", turn.header.entry);
-    setDraft("");
+    setDraft(() => ({ text: "" }));
     return true;
   };
   /** The turn's message goes back into the draft, to be sent beside it. False
@@ -131,14 +144,16 @@ export function useSendAnchor({
   const edit = (
     turn: LoadedTurn,
     previous: LoadedTurn | undefined,
+    // Bind only to the discussion at the explicit edit, never plan approval.
+    discussionSource: symbol | undefined,
   ): boolean => {
     const entry = editHead(turn, previous);
     if (entry === undefined) return false;
     const first = move(turn, "edit", entry);
-    setDraft(first?.step.text ?? "");
+    const preview = { text: first?.step.text ?? "", source: discussionSource };
+    setDraft(() => preview);
     if (!first) return true;
     // The listed text may be a prefix, and the images are read back as bytes.
-    const preview = first.step.text;
     const recorded = first.step.images ?? [];
     const read = new AbortController();
     const whole = messageText(turn, [first], read.signal);
@@ -159,9 +174,12 @@ export function useSendAnchor({
       if (read.signal.aborted || !alive.current) return;
       reading.current = null;
       setAttaching(false);
+      // Replace only this edit's preview, not a later input with equal text.
       if (text.status === "fulfilled")
-        setDraft((value) =>
-          value === preview ? (text.value as string) : value,
+        setDraft((prior) =>
+          prior === preview
+            ? { ...preview, text: text.value as string }
+            : prior,
         );
       const drafts = files.flatMap((file) =>
         file.status === "fulfilled" ? [file.value as File] : [],

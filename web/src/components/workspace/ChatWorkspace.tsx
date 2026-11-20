@@ -136,7 +136,7 @@ import { ChatWelcome, ConversationFeedback } from "./ChatWelcome";
 import "./conversation-entry.css";
 import { DesignCard } from "./DesignCard";
 import { QuestionRail } from "./QuestionRail";
-import { useSendAnchor } from "./use-send-anchor";
+import { type ComposerDraft, useSendAnchor } from "./use-send-anchor";
 import { WaitingMessages } from "./WaitingMessages";
 import {
   type CanCancelWorkflow,
@@ -232,8 +232,7 @@ function liveInputOutcome(
     ? { kind: "unknown" as const, code: "unavailable" }
     : inputOutcome(reply);
 }
-type Draft = { text: string; source?: string | symbol };
-type DraftEntry = Draft & { parked?: Draft };
+type DraftEntry = ComposerDraft & { parked?: ComposerDraft };
 // Native history exposes the restored text, not which edit it came from.
 // Keep short edits, not just finished phrases: undo can restore an unfinished
 // word which the user then completes. Never evict a conflicting source and
@@ -385,7 +384,7 @@ export function ChatWorkspace({
   const [draftKey] = useState(() =>
     selectDraftKey(workspaceId, id, legacyWorkspaceId, ...directoryNamespaces),
   );
-  // Only text survives draft storage and branch edits.
+  // Only text survives draft storage.
   // A plan confirmation gets its source from an explicit composer edit below.
   const [{ entry }, updateEditor] = useState<{
     entry: DraftEntry;
@@ -426,8 +425,8 @@ export function ChatWorkspace({
   // view, and the draft set aside for it.
   const sendAnchor = useSendAnchor({
     draftKey,
-    draft,
-    setDraft,
+    draft: entry,
+    setDraft: setEntry,
     images: imageDraft,
     alive,
     onUnread: () =>
@@ -916,9 +915,11 @@ export function ChatWorkspace({
       ? undefined
       : mode;
   const discussionSource = useMemo(
-    () => discussionPath && Symbol(discussionPath),
+    () => (discussionPath ? Symbol(discussionPath) : undefined),
     [discussionPath],
   );
+  const recoveredSource =
+    discussionPath === "chat" || liveRun ? discussionSource : undefined;
   const phraseSource =
     discussionSource ??
     (cadenceKnown && reviewed && planApprovable && contextKnown && !anchor
@@ -938,8 +939,7 @@ export function ChatWorkspace({
       // separate draft, even when its spelling is identical.
       setEntry((prior) => ({
         text,
-        source:
-          discussionPath === "chat" || liveRun ? discussionSource : undefined,
+        source: recoveredSource,
         parked: prior.parked ?? prior,
       }));
     } else if (origin === "restore") {
@@ -952,9 +952,8 @@ export function ChatWorkspace({
           return {
             text,
             source:
-              (discussionPath === "chat" || !!liveRun) &&
-              origins.get(text.trim()) === discussionSource
-                ? discussionSource
+              origins.get(text.trim()) === recoveredSource
+                ? recoveredSource
                 : undefined,
           };
         const source =
@@ -2102,7 +2101,11 @@ export function ChatWorkspace({
     conversation.refresh();
   };
   const restoreUndelivered = (text: string) => {
-    setDraft((current) => (current.trim() ? `${current}\n${text}` : text));
+    setEntry((prior) =>
+      prior.text.trim()
+        ? { text: `${prior.text}\n${text}` }
+        : { text, source: recoveredSource },
+    );
     textarea.current?.focus();
   };
   const interrupt = async () => {
@@ -2163,7 +2166,7 @@ export function ChatWorkspace({
   const startEdit = (turn: LoadedTurn) => {
     if (!canAnchor) return;
     const previous = turns.find((other) => other.ordinal === turn.ordinal - 1);
-    if (sendAnchor.edit(turn, previous)) toComposer();
+    if (sendAnchor.edit(turn, previous, recoveredSource)) toComposer();
     else
       refuse(
         t(
