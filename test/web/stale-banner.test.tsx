@@ -748,8 +748,14 @@ for (const locale of ["en", "zh"] as const) {
     // A resync frame marks the transport stale, without a socket error.
     viewer.transportStatus = "stale";
     viewer.actions = false;
-    expect(render(locale, options).summary).toContain(updating);
-    expect(sidebar.actionsUnavailable).toBeTruthy();
+    const resync = render(locale, options);
+    const reason = zh
+      ? "当前连接暂不能重命名或归档对话。"
+      : "Renaming and archiving are unavailable on this connection.";
+    expect(resync.summary).toContain(updating);
+    expect(sidebar.actionsUnavailable).toBe(reason);
+    expect(resync.details).toContain(reason);
+    expect(resync.summary).not.toContain(reason);
 
     // A new HTTP snapshot makes the projection current, not the transport.
     taskData("2");
@@ -760,7 +766,9 @@ for (const locale of ["en", "zh"] as const) {
     // Observer accepted a matching live frame for this subscription.
     viewer.transportStatus = "current";
     viewer.actions = true;
-    expect(render(locale, options).summary).toContain(current);
+    const recovered = render(locale, options);
+    expect(recovered.summary).toContain(current);
+    expect(recovered.details).not.toContain(reason);
     expect(sidebar.actionsUnavailable).toBe("");
   });
   it.each(["project", "viewer"] as const)(

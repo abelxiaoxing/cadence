@@ -1,7 +1,7 @@
 // Optional local observation; not a verify/package/release stage.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { browser } from "./optical-fixtures/browser.mjs";
@@ -25,6 +25,7 @@ import {
   observeRetainedCopy,
 } from "./optical-fixtures/detail-observations.mjs";
 import { observeGestures } from "./optical-fixtures/drawer-gestures.mjs";
+import { opticalGroups } from "./optical-fixtures/groups.mjs";
 import {
   contrastPixels,
   controlGeometry,
@@ -79,6 +80,8 @@ import {
 } from "./optical-fixtures/workflow-observations.mjs";
 import { assertVerificationTemp } from "./verification-temp.mjs";
 
+const args = process.argv.slice(2);
+const groups = opticalGroups(args);
 const root = resolve(import.meta.dirname, "..");
 assertVerificationTemp(root);
 const reportDir = await mkdtemp(join(process.env.TMPDIR, "optical-evidence-"));
@@ -88,6 +91,8 @@ const site = fixture(root),
   problems = [],
   performanceRows = [];
 const report = {
+  coverage: args.length ? "targeted" : "full",
+  groups,
   candidate: site.build,
   hitTests: [],
   controls: [],
@@ -131,16 +136,44 @@ const report = {
   performance: performanceRows,
   problems,
 };
+console.log(`Optical ${report.coverage} observation: ${reportDir}`);
+async function observe(group, work) {
+  const start = Date.now();
+  const count = () => problems.length + site.failures.length;
+  const before = count();
+  const record = async (status) => {
+    const entry = {
+      group,
+      status,
+      elapsedMs: Date.now() - start,
+      head: report.head,
+      build: report.candidate.buildId,
+      coverage: report.coverage,
+    };
+    await appendFile(
+      join(reportDir, "progress.ndjson"),
+      `${JSON.stringify(entry)}\n`,
+    );
+    console.log(`${group}: ${status} (${entry.elapsedMs}ms)`);
+  };
+  await record("started");
+  try {
+    await work();
+  } catch (error) {
+    await record("failed");
+    throw error;
+  }
+  await record(count() === before ? "completed" : "failed");
+}
 const q = JSON.stringify;
 let b;
-const limited = [];
 try {
   b = await browser(process.env.TMPDIR);
   report.browser = b.version.product;
   const { evaluate: ev, send } = b;
   const run = (fn, ...args) => ev(`(${fn})(${args.map(q).join(",")})`);
   await send("Page.addScriptToEvaluateOnNewDocument", {
-    source: `window.opticalProbe={draws:0,stableFrames:${stableFrames},glyphSample:${glyphSample}};const draw=WebGLRenderingContext.prototype.drawArrays;WebGLRenderingContext.prototype.drawArrays=function(...args){if(this.canvas.closest('.optical-field'))opticalProbe.draws++;return draw.apply(this,args);};`,
+    source: `window.opticalProbe={stableFrames:${stableFrames},glyphSample:${glyphSample}};`,
   });
   const wait = async (expr) => {
     for (let i = 0; i < 70; i++) {
@@ -703,9 +736,34 @@ try {
     await press(first ? "ArrowDown" : "ArrowUp", first ? 40 : 38);
     await focus(first ? "ArrowDown question" : "ArrowUp question", short);
   };
-  for (theme of ["dark", "light"])
-    for (width of [320, 390, 1440]) {
+  for (const group of groups) {
+    await observe(group, async () => {
+      if (group === "reading") return reading();
+      if (group === "forced-colors") return forcedColors();
+      const [scheme, size] = group.split(":").slice(-2);
+      theme = scheme;
+      width = Number(size);
       await layout(width, theme);
+      if (group.startsWith("agent-scroll:")) {
+        await observeLiveAgent({
+          width,
+          theme,
+          site,
+          go,
+          chat,
+          wait,
+          run,
+          ev,
+          click,
+          send,
+          press,
+          clickPoint,
+          observeButton,
+          rows: report.agentScroll,
+        });
+        await ev(`localStorage.removeItem('cadence-last-project')`);
+        return;
+      }
       await go("/login", "input[type=password]");
       assert.equal(
         await ev(`matchMedia('(prefers-color-scheme: dark)').matches`),
@@ -764,7 +822,7 @@ try {
       );
       await picker("open-folder-action", observeFolderAction, site, true);
       await go(chat("empty"), ".conversation-header");
-      await wait(`document.querySelector('.optical-field[data-scene="hero"]')`);
+      await wait(`document.querySelector('.chat-welcome')`);
       if (width <= 900) {
         await click(".navigation-toggle");
         await audit("navigation", [".drawer-left", ".lp-panel"]);
@@ -843,18 +901,12 @@ try {
       await wait(
         `document.querySelector('.chat-attempt-text')?.innerText===${q(firstAttempt.text)}`,
       );
-      await wait(
-        `!document.querySelector('.chat-welcome') && document.querySelector('.optical-field').dataset.scene==='reading' && +getComputedStyle(document.querySelector('.optical-field')).opacity<=.08`,
-      );
-      const { draws } = await run(frameWindow, 1250, false);
       const attempt = await ev(
-        `({ opacity:+getComputedStyle(document.querySelector('.optical-field')).opacity, hero:!!document.querySelector('.chat-welcome'), body:document.querySelector('.chat-attempt').innerText })`,
+        `({ hero:!!document.querySelector('.chat-welcome'), body:document.querySelector('.chat-attempt').innerText })`,
       );
-      report.attempts.push({ width, theme, draws, ...attempt });
-      assert.equal(draws, 0);
+      report.attempts.push({ width, theme, ...attempt });
       assert.ok(
         !attempt.hero &&
-          attempt.opacity <= 0.08 &&
           attempt.body.includes(firstAttempt.text) &&
           attempt.body.includes(firstAttempt.status),
       );
@@ -899,9 +951,6 @@ try {
         '.msg-text .md p:has(a[href="#specimen-notes"])',
       );
       await go(chat("reading"), ".chat-turn");
-      await wait(
-        `+getComputedStyle(document.querySelector('.optical-field')).opacity<=.08`,
-      );
       await observeComposerGrip({
         width,
         theme,
@@ -1371,137 +1420,29 @@ try {
         report,
       );
       await picker("plan-validation", observeValidation, site);
-      await observeLiveAgent({
-        width,
-        theme,
-        site,
-        go,
-        chat,
-        wait,
-        run,
-        ev,
-        click,
-        send,
-        press,
-        clickPoint,
-        observeButton,
-        rows: report.agentScroll,
-      });
-      // Start the next folder-first observation in this disposable origin only.
-      await ev(`localStorage.removeItem('cadence-last-project')`);
-    }
-  width = 1440;
-  theme = "dark";
-  await layout(width, theme);
-  await go("/app", ".welcome-action:not(:disabled)");
-  const gpu = await ev(
-    `(()=>{const c=document.querySelector('.optical-field canvas'),gl=c.getContext('webgl');if(!gl)return null;const ext=gl.getExtension('WEBGL_debug_renderer_info');return {renderer:gl.getParameter(ext?.UNMASKED_RENDERER_WEBGL??gl.RENDERER),buffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],dpr:devicePixelRatio};})()`,
-  );
-  report.gpu = gpu;
-  if (!gpu)
-    limited.push(
-      "WebGL creation failed; animation/draw comparison unavailable.",
-    );
-  const ambient = async (on) => {
-    await click(".more-menu summary");
-    if (
-      await ev(
-        `document.querySelector('.more-menu-items [aria-pressed]').getAttribute('aria-pressed')!==${q(String(on))}`,
-      )
-    )
-      await click(".more-menu-items [aria-pressed]");
-    await press("Escape", 27);
-    await sleep(500);
-  };
-  const checkClock = async (active) => {
-    const sample = await run(frameWindow, 1250, false);
-    if (gpu && active)
-      assert.ok(
-        sample.draws > 0 && sample.draws <= 31,
-        `Unexpected visible draws ${sample.draws}`,
-      );
-    else assert.equal(sample.draws, 0);
-    return sample.draws;
-  };
-  report.heroDraws = await checkClock(true);
-  if (gpu) {
-    const available = await ev(
-      `(()=>{const gl=document.querySelector('.optical-field canvas').getContext('webgl');const ext=gl.getExtension('WEBGL_lose_context');if(!ext)return false;window.opticalProbe.restore=()=>ext.restoreContext();ext.loseContext();return true})()`,
-    );
-    if (available) {
-      await sleep(100);
-      report.lostDraws = await checkClock(false);
-      await ev(`opticalProbe.restore()`);
-      await sleep(100);
-      report.restoredDraws = await checkClock(true);
-    } else limited.push("Browser did not expose context-loss extension.");
-  }
-
-  await layout(width, theme, "reduce");
-  report.reducedDraws = await checkClock(false);
-  await layout(width, theme);
-  report.afterReducedDraws = await checkClock(true);
-  await ambient(false);
-  report.disabledDraws = await checkClock(false);
-  await ambient(true);
-  report.afterDisabledDraws = await checkClock(true);
-  // A real background target, not a synthetic visibilitychange dispatch.
-  await send("Page.bringToFront");
-  // Open from the measured page: an unrelated CDP target in a separate
-  // window can be active without hiding this one. No profile is reused.
-  await send("Runtime.evaluate", {
-    expression: "void window.open('about:blank', '_blank')",
-    userGesture: true,
-  });
-  const { targetInfos } = await b.call("Target.getTargets");
-  const other = targetInfos.find(
-    (t) => t.type === "page" && t.openerId === b.targetId,
-  );
-  if (other) {
-    const { sessionId } = await b.call("Target.attachToTarget", {
-      targetId: other.targetId,
-      flatten: true,
     });
-    await b.call("Page.bringToFront", {}, sessionId);
-    for (let i = 0; i < 50 && !(await ev("document.hidden")); i++)
-      await sleep(100);
-    if (await ev("document.hidden")) {
-      const initial = await ev("opticalProbe.draws");
-      await sleep(1000);
-      assert.ok(await ev("document.hidden"));
-      assert.equal(await ev("opticalProbe.draws"), initial);
-      report.hiddenDraws = 0;
-    }
-    await b.call("Target.closeTarget", { targetId: other.targetId });
-    await send("Page.bringToFront");
-    if (report.hiddenDraws === 0) {
-      await wait("!document.hidden");
-      report.afterHiddenDraws = await checkClock(true);
-    }
   }
-  if (report.hiddenDraws !== 0)
-    limited.push(
-      "The browser did not open and foreground a sibling tab that hid this document; background draw count unmeasured.",
-    );
-  // Summarize main-thread Paint events while the trace streams; never save a
-  // raw trace. A shared layer is not evidence every glyph in it was repainted.
-  let paints = [],
-    traceEnd;
-  b.on("Tracing.dataCollected", ({ value }) => {
-    for (const e of value)
-      if (e.name === "Paint" && e.ph === "X")
-        paints.push(e.args?.data?.nodeId ?? 0);
-  });
-  b.on("Tracing.tracingComplete", () => traceEnd?.());
-  for (const scenario of ["idle", "scroll", "increment"])
-    for (const on of [true, false, false, true]) {
+  async function reading() {
+    width = 1440;
+    theme = "dark";
+    await layout(width, theme);
+    // Summarize main-thread Paint events while the trace streams; never save a
+    // raw trace. A shared layer is not evidence every glyph in it was repainted.
+    let paints = [],
+      traceEnd;
+    b.on("Tracing.dataCollected", ({ value }) => {
+      for (const e of value)
+        if (e.name === "Paint" && e.ph === "X")
+          paints.push(e.args?.data?.nodeId ?? 0);
+    });
+    b.on("Tracing.tracingComplete", () => traceEnd?.());
+    for (const scenario of ["idle", "scroll", "increment"]) {
       feed.increment = 0;
       const stream = scenario === "increment";
       await go(
         chat(scenario === "idle" ? "empty" : stream ? "stream" : "reading"),
         scenario === "idle" ? ".chat-welcome" : ".chat-turn",
       );
-      await ambient(on);
       await sleep(250);
       const roll = stream ? setInterval(() => feed.increment++, 520) : null;
       paints = [];
@@ -1539,8 +1480,7 @@ try {
         }
         attribution[name] = (attribution[name] ?? 0) + count;
       }
-      performanceRows.push({ scenario, on, ...stats, paint: attribution });
-      if (scenario !== "idle" || !on) assert.equal(stats.draws, 0);
+      performanceRows.push({ scenario, ...stats, paint: attribution });
       if (stream) {
         assert.ok(
           await ev(
@@ -1554,31 +1494,34 @@ try {
         );
       }
     }
-  const top = await ev(
-    `(()=>{const e=document.querySelector('.chat-messages');e.scrollTop=150;return e.scrollTop})()`,
-  );
-  feed.increment += 6;
-  await sleep(1350);
-  assert.equal(
-    await ev(`document.querySelector('.chat-messages').scrollTop`),
-    top,
-  );
-  await click(".scroll-bottom");
-  await wait(
-    `(()=>{const e=document.querySelector('.chat-messages');return e.scrollHeight-e.clientHeight-e.scrollTop<3})()`,
-  );
-  report.scrollFollow =
-    "followed increments; retained up-scroll after growth; Latest returned to end";
-  width = 320;
-  theme = "light";
-  await layout(width, theme, "reduce", "active");
-  await go("/login?error", "#key");
-  assert.ok(await ev(`matchMedia('(forced-colors: active)').matches`));
-  await audit("forced-colors password", [
-    "main",
-    "input[type=password]",
-    "button",
-  ]);
+    const top = await ev(
+      `(()=>{const e=document.querySelector('.chat-messages');e.scrollTop=150;return e.scrollTop})()`,
+    );
+    feed.increment += 6;
+    await sleep(1350);
+    assert.equal(
+      await ev(`document.querySelector('.chat-messages').scrollTop`),
+      top,
+    );
+    await click(".scroll-bottom");
+    await wait(
+      `(()=>{const e=document.querySelector('.chat-messages');return e.scrollHeight-e.clientHeight-e.scrollTop<3})()`,
+    );
+    report.scrollFollow =
+      "followed increments; retained up-scroll after growth; Latest returned to end";
+  }
+  async function forcedColors() {
+    width = 320;
+    theme = "light";
+    await layout(width, theme, "reduce", "active");
+    await go("/login?error", "#key");
+    assert.ok(await ev(`matchMedia('(forced-colors: active)').matches`));
+    await audit("forced-colors password", [
+      "main",
+      "input[type=password]",
+      "button",
+    ]);
+  }
 } catch (error) {
   problems.push(String(error));
 } finally {
@@ -1586,7 +1529,6 @@ try {
   await site.close();
 }
 problems.push(...site.failures);
-report.unavailable = limited;
 await writeFile(
   join(reportDir, "summary.json"),
   JSON.stringify(report, null, 2),
@@ -1594,11 +1536,11 @@ await writeFile(
 console.log(
   JSON.stringify({
     reportDir,
+    coverage: report.coverage,
     build: report.candidate.buildId,
     scenes: rows.length,
     problems: problems.length,
     last: problems.slice(-1),
-    unavailable: limited,
   }),
 );
-if (problems.length || limited.length) process.exitCode = 1;
+if (problems.length) process.exitCode = 1;

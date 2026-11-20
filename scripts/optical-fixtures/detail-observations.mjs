@@ -360,12 +360,8 @@ function panelPixels(panel, control) {
           `Expected static Timeline selection and separate Tools focus: ${JSON.stringify(viewState)}`,
         );
       glyph('[aria-pressed="true"]', "timeline");
-    } else if (panel === ".more-menu-items") {
-      glyph("[aria-pressed]", "Ambient light");
-      const state = button.getAttribute("aria-pressed");
-      glyph("[aria-pressed] > span", state === "true" ? "●" : "○");
-    } else
-      glyph(".img-lightbox-name", "Attached image", ".img-lightbox-toolbar");
+    } else if (panel === ".more-menu-items") glyph(control, "Refresh status");
+    else glyph(".img-lightbox-name", "Attached image", ".img-lightbox-toolbar");
   }
   if (mention || views) {
     const selected = el.querySelector(
@@ -426,7 +422,7 @@ export async function observeOpenMaterial(probe, row, panel) {
   const controls = {
     ".mention-menu": ".mention-item.active",
     ".view-menu-items": "button:first-child",
-    ".more-menu-items": "button[aria-pressed]",
+    ".more-menu-items": 'button[aria-label="Observe current state"]',
     ".img-lightbox-panel": 'button[aria-label="Zoom out"]',
   };
   const control = controls[panel];

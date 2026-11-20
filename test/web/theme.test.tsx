@@ -24,7 +24,6 @@ const SHEETS = [
   "reference.css",
   "styles.css",
   "timeline/timeline.css",
-  "optics/ambient.css",
   "components/workspace/design.css",
   "components/rich/reading.css",
 ].map(source);
@@ -699,17 +698,11 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     expect(declaration(link, "overflow-wrap")).toBe("anywhere");
     expect(declaration(link, "text-decoration")).toBe("underline");
     const bg = ruleColor("body", "background", scheme);
-    const [r, g, b] = color(
-      scheme === "dark" ? "--lens-violet" : "--lens-silver",
-      scheme,
-    );
-    for (const surface of [bg, over([r, g, b, 0.08], bg)]) {
-      const mark = over(ruleColor(".qn-bar", "background", scheme), surface);
-      expect(contrast(mark, surface)).toBeGreaterThanOrEqual(GRAPHIC);
-      expect(
-        contrast(ruleColor(link, "color", scheme), surface),
-      ).toBeGreaterThanOrEqual(AA);
-    }
+    const mark = over(ruleColor(".qn-bar", "background", scheme), bg);
+    expect(contrast(mark, bg)).toBeGreaterThanOrEqual(GRAPHIC);
+    expect(
+      contrast(ruleColor(link, "color", scheme), bg),
+    ).toBeGreaterThanOrEqual(AA);
   });
   it("keeps the shared Markdown link readable on plan and preview materials", () => {
     const link = ruleColor(":is(.msg-text, .md) a[href]", "color", scheme);
@@ -776,9 +769,7 @@ it.each(["dark", "light"] as const)(
   "%s: nested wing, card, menu, selected options, trace chips and focus",
   (scheme) => {
     const c = (key: string) => color(`--${key}`, scheme);
-    // Upper bound on the caustic contribution, including its static lens.
-    const [r, g, b] = c(scheme === "dark" ? "lens-violet" : "lens-silver");
-    const base = over([r, g, b, 0.1], over(c("grain"), c("bg")));
+    const base = c("bg");
     const wing = over(c("glass-surface"), base);
     const card = over(c("glass-card-bg"), wing);
     const menu = over(c("menu-solid-bg"), card);

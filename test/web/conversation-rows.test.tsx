@@ -194,7 +194,7 @@ it("a history row offers rename and archive by name, and shows them disabled wit
   expect(zh).toContain('aria-label="重命名“Train the model”"');
   expect(zh).toContain("正在归档…");
 });
-it("the sidebar gives history rows their actions, Running work none, and states the reason once", () => {
+it("a readiness change disables only history controls without inserting text between the filter and rows", () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2026, 10, 10, 12));
   const chats = [
@@ -230,20 +230,16 @@ it("the sidebar gives history rows their actions, Running work none, and states 
   expect(running).not.toContain("session-action");
   expect(history.match(/aria-label="Rename /g)).toHaveLength(2);
   expect(history.match(/aria-label="Archive /g)).toHaveLength(2);
-  expect(history).not.toContain("lp-actions-hint");
   // The archived view is one press away and reads nothing until opened.
   expect(history).toContain(
     '<button type="button" class="lp-section-action" aria-pressed="false" title="Show archived" aria-label="Show archived">',
   );
   expect(history).not.toContain("Back to history");
-  const reason =
-    "Rename and archive are unavailable until the execution service is observed.";
+  const reason = "Renaming and archiving are unavailable on this connection.";
   const unready = sidebar(reason).split("Conversation history")[1];
-  expect(unready.match(/<p class="panel-hint lp-actions-hint">/g)).toHaveLength(
-    1,
-  );
-  expect(unready).toContain(`<p class="panel-hint lp-actions-hint">${reason}`);
+  expect(unready.replace(/<[^>]+>/g, "")).toBe(history.replace(/<[^>]+>/g, ""));
   expect(unready.match(/class="session-action" disabled=""/g)).toHaveLength(4);
+  expect(unready.split(`aria-description="${reason}"`)).toHaveLength(5);
 });
 it("the archived view lists what was read, and a failed read is never an empty list", () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -264,7 +260,6 @@ it("the archived view lists what was read, and a failed read is never an empty l
     renderToStaticMarkup(
       <ArchivedList
         list={list(over)}
-        unavailable={unavailable}
         onBack={() => {}}
         row={(entry) => (
           <ConversationRow
@@ -305,10 +300,11 @@ it("the archived view lists what was read, and a failed read is never an empty l
   const stale = view({ value: page([old]), error: "unavailable" });
   expect(stale).toContain("Old migration notes");
   expect(stale).toContain("This is not an empty list.");
-  // Stopped: Unarchive is shown disabled, its reason above the rows.
+  // Stopped: only Unarchive changes, not the list's visible text.
   const reason =
     "Rename and archive need the execution service; it starts with your next Send.";
   const stopped = view({ value: page([old]) }, reason);
-  expect(stopped).toContain(`<p class="panel-hint lp-actions-hint">${reason}`);
+  expect(stopped.replace(/<[^>]+>/g, "")).toBe(read.replace(/<[^>]+>/g, ""));
+  expect(stopped).toContain(`aria-description="${reason}"`);
   expect(stopped).toContain('class="session-action" disabled=""');
 });

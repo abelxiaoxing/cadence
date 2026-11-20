@@ -92,7 +92,6 @@ export function FolderSetup({
         >
           <div className="chat-messages">
             <ChatWelcome
-              visible={ready && !(restoring && pending)}
               hint={t(
                 "Choose a working folder to start. You can write a draft below.",
               )}

@@ -314,6 +314,7 @@ export function ChatWorkspace({
   onDraftApplied?(): void;
   /** An explicit model choice changed the owner configuration. */
   onModelChanged(): void;
+  /** Refresh owner state after a user command, not after a transcript read. */
   onChanged(): void;
   reference?: string;
   onReferenceUsed(): void;
@@ -808,7 +809,6 @@ export function ChatWorkspace({
     if (!hidden && scroll.current && !stick.current)
       scroll.current.scrollTop = lastTop.current;
   }, [hidden]);
-  const observedHead = useRef("");
   const sentDraft = useRef(draft);
 
   useEffect(() => {
@@ -859,11 +859,6 @@ export function ChatWorkspace({
     }
   }, [reference, onReferenceUsed]);
   useEffect(() => {
-    const signature = summary ? `${summary.leaf}:${summary.status}` : "";
-    if (signature && observedHead.current !== signature) {
-      observedHead.current = signature;
-      onChanged();
-    }
     if (attempted.current && state?.runs.includes(attempted.current)) {
       rememberApproval("");
       setError("");
@@ -886,14 +881,12 @@ export function ChatWorkspace({
       // The composer stayed locked since that Send, so an anchor still set is
       // the one it used: the reply's branch is followed as the latest.
       acts.current.followAnchor();
-      onChanged();
     }
   }, [
     summary,
     turns,
     pending,
     modelCommand,
-    onChanged,
     state,
     conversation,
     removeImages,
@@ -2173,7 +2166,6 @@ export function ChatWorkspace({
             !conversation.error &&
             !activitySelected && (
               <ChatWelcome
-                visible={!hidden}
                 hint={t(
                   modeHint ??
                     "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",

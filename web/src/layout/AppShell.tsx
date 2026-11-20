@@ -18,12 +18,6 @@ import {
 } from "react-icons/fi";
 import { localBuild } from "../client/build-identity";
 import { type MessageKey, Template, useT } from "../i18n/locale";
-import {
-  AmbientShader,
-  ambientPreference,
-  HeroScene,
-  saveAmbient,
-} from "../optics/AmbientShader";
 import { Crystal } from "../optics/Crystal";
 import { ResizeHandle } from "./ResizeHandle";
 import { ToastStack } from "./ToastStack";
@@ -78,8 +72,6 @@ export function AppShell({
   content: ReactNode;
 }) {
   const { t, locale, setLocale } = useT();
-  const [ambient, setAmbient] = useState(ambientPreference);
-  const [hero, setHero] = useState<HTMLElement | null>(null);
   const [theme, setTheme] = useState(currentTheme);
   const [ThemeIcon, themeName] = THEMES[theme];
   const themeTip = t("Theme: {current}. Switch to {next}.", {
@@ -101,7 +93,6 @@ export function AppShell({
   useDrawerFocus(layout, drawer, !!drawer, closeDrawer);
   return (
     <div className={`app${panels.className} antialiased`}>
-      <AmbientShader enabled={ambient} hero={hero} />
       <header className="topbar">
         <button
           type="button"
@@ -170,18 +161,6 @@ export function AppShell({
                 <FiMoreHorizontal aria-hidden="true" />
               </summary>
               <div className="more-menu-items">
-                <button
-                  type="button"
-                  aria-pressed={ambient}
-                  onClick={() => {
-                    saveAmbient(!ambient);
-                    setAmbient(!ambient);
-                  }}
-                >
-                  <FiSun aria-hidden="true" />
-                  {locale === "zh" ? "环境光" : "Ambient light"}
-                  <span aria-hidden="true">{ambient ? "●" : "○"}</span>
-                </button>
                 <button
                   type="button"
                   aria-label={t("Observe current state")}
@@ -294,7 +273,7 @@ export function AppShell({
           onResize={(width) => panels.resize("left", width)}
         />
         <main className="main" inert={drawer !== null}>
-          <HeroScene.Provider value={setHero}>{content}</HeroScene.Provider>
+          {content}
         </main>
         <ResizeHandle
           side="right"

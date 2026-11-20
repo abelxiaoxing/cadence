@@ -725,6 +725,13 @@ export function App({
     [viewCurrent, renderedSignal, attached, workspace.epoch],
   );
   const actionsReady = observationFresh && workspace.actions;
+  const historyActionsUnavailable = actionsReady
+    ? ""
+    : executionStopped
+      ? t(
+          "Rename and archive need the execution service; it starts with your next Send.",
+        )
+      : t("Renaming and archiving are unavailable on this connection.");
   const actions = useRef(new ViewLifetime());
   actions.current.select(String(actionsReady));
   const actionId = actions.current.ticket();
@@ -1246,17 +1253,7 @@ export function App({
                 onConversation={selectChat}
                 onNewConversation={() => selectChat()}
                 actionCurrent={ticket.current}
-                actionsUnavailable={
-                  actionsReady
-                    ? ""
-                    : executionStopped
-                      ? t(
-                          "Rename and archive need the execution service; it starts with your next Send.",
-                        )
-                      : t(
-                          "Rename and archive are unavailable until the execution service is observed.",
-                        )
-                }
+                actionsUnavailable={historyActionsUnavailable}
                 onConversationsChanged={(id) => {
                   // The lists and the open conversation's head say what is
                   // recorded; nothing here is changed ahead of those reads.
@@ -1681,6 +1678,9 @@ export function App({
               projectStatus={project && execution.readiness}
               projectError={projectError}
               viewerError={viewerError}
+              historyActionsUnavailable={
+                conversationAvailable ? historyActionsUnavailable : undefined
+              }
               prepareOnly={chatIssues?.prepareOnly}
               readErrors={[
                 ["Project directories: {code}.", projects.error],

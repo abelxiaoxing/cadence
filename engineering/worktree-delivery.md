@@ -95,7 +95,7 @@ Every local verification round:
 1. Checks owned placement and the last owner-recorded HEAD, preserving legitimate uncommitted partial work.
 2. Commits only the run's current write scope (the agreement's plus what recorded revisions added), including approved documents and owner-generated delivery notes when applicable.
 3. Records the exact candidate commit/tree and invalidates earlier acceptance.
-4. Runs the declared real checks and a separate readonly Agent review.
+4. Runs the declared real checks and, if the gating checks pass, a separate readonly Agent review (unchanged accepted candidates follow the [exact-evidence reuse rules](checks-review.md)).
 5. Rechecks source identity, candidate HEAD, index, worktree and complete committed scope before recording current check/review references bound to the agreement and execution context.
 
 Checks that change approved source require a new candidate and fresh verification; changes during readonly review refuse stale evidence.

@@ -1269,3 +1269,10 @@ The regression covers concurrent conversations, copied history IDs, missing attr
 Source commit `61df9d0` keeps the requesting tab connected to its upgrade across temporary proxy errors and reloads it once the target version answers.
 Routine workspace polls keep confirmed controls usable unless the server withdraws access.
 The release also updates the light and dark WebUI themes.
+
+## 2.2.5 release candidate
+
+Failed acceptance checks now go to recovery before Agent review.
+When a review names an in-scope blocker and how to verify its fix, the owner can send it directly to repair.
+The WebUI removes the animated welcome background and keeps rename and archive controls stable during transcript reads.
+Disabled controls explain why the action is unavailable without shifting the history list.

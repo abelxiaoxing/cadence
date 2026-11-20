@@ -207,8 +207,9 @@ export function ConversationRow({
       )}
     </span>
   );
+  const disabled = !!unavailable || !!row?.pending;
   const commit = () => {
-    if (draft === null) return;
+    if (draft === null || disabled) return;
     const name = conversationName(draft);
     if (name === null) {
       // The browser itself refuses this; the field stays open for a fix.
@@ -225,7 +226,6 @@ export function ConversationRow({
     setDraft(null);
     if (name !== chat.title) onRename?.(name);
   };
-  const disabled = !!unavailable || !!row?.pending;
   const note = row?.pending
     ? t(PENDING[row.pending])
     : row?.unknown
@@ -263,8 +263,10 @@ export function ConversationRow({
           <button
             type="submit"
             className="session-action"
-            title={t("Save name")}
+            disabled={disabled}
+            title={unavailable || t("Save name")}
             aria-label={t("Save name")}
+            aria-description={unavailable || undefined}
             onMouseDown={(event) => event.preventDefault()}
           >
             <FiCheck aria-hidden="true" />
@@ -320,6 +322,7 @@ export function ConversationRow({
               className="session-action"
               disabled={disabled}
               title={unavailable || t("Rename")}
+              aria-description={unavailable || undefined}
               aria-label={t("Rename {title}", { title: chat.title })}
               onClick={() => setDraft(chat.title)}
             >
@@ -331,6 +334,7 @@ export function ConversationRow({
             className="session-action"
             disabled={disabled}
             title={unavailable || t(chat.archived ? "Unarchive" : "Archive")}
+            aria-description={unavailable || undefined}
             aria-label={t(
               chat.archived ? "Unarchive {title}" : "Archive {title}",
               { title: chat.title },
@@ -359,13 +363,10 @@ export function ConversationRow({
  * stay in place. */
 export function ArchivedList({
   list,
-  unavailable,
   onBack,
   row,
 }: {
   list: ReturnType<typeof useConversationHistory>;
-  /** Why Unarchive cannot be requested now; empty when it can. */
-  unavailable: string;
   onBack(): void;
   row(chat: ChatSummary): ReactNode;
 }) {
@@ -382,9 +383,6 @@ export function ArchivedList({
           "Archiving only leaves a conversation out of the history. Its session file is not moved or deleted.",
         )}
       </p>
-      {unavailable && rows.length > 0 && (
-        <p className="panel-hint lp-actions-hint">{unavailable}</p>
-      )}
       {list.error && (
         <p role="alert" className="panel-hint">
           {t(

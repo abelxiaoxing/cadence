@@ -288,6 +288,45 @@ it("a deviation is recorded on the run, shown to later workers and the review, a
   expect(prompts.at(-1)).toContain("Checks set aside: format");
 });
 
+it("hands complete review conditions directly to a focused repair and accepts only the next full round", async () => {
+  const { owner, live, proposal, replies, prompts, cwd } = fixture();
+  owner.check = async (_l: unknown, _cwd: string, c: { name: string }) => {
+    const step = owner.step(live, c.name, "check");
+    owner.finishStep(live, step, settled);
+    return { step, result: settled };
+  };
+  const issue = {
+    id: "reading-position",
+    evidence: "已核对候选。".repeat(50),
+    verify: "two polls preserve scroll offset",
+    writes: ["a.txt"],
+  };
+  replies.push(
+    { approved: false, summary: "one gap", blockingIssues: [issue] },
+    { approved: true, summary: "fixed", blockingIssues: [] },
+  );
+  owner.editAttempt = vi.fn(async (_l, _c, _p, _id, prompt, writes) => {
+    expect(prompt).toContain(issue.evidence);
+    expect(prompt).toContain(issue.verify);
+    expect(writes).toEqual(issue.writes);
+    tree.files.set("a.txt", "changed");
+  });
+  await owner.verifyAndRepair(live, cwd, proposal, false);
+  expect(prompts).toHaveLength(2);
+  expect(prompts[1]).toContain(issue.id);
+  expect(owner.editAttempt).toHaveBeenCalledTimes(1);
+  expect(live.run.steps.map((s) => s.kind)).toEqual([
+    "check",
+    "check",
+    "review",
+    "check",
+    "check",
+    "review",
+  ]);
+  expect(live.run).toMatchObject({
+    verification: { steps: live.run.steps.slice(3).map((s) => s.id) },
+  });
+});
 it("acceptance records which checks were set aside and never accepts a candidate whose every check was", () => {
   const check = (name: string, ok: boolean) => ({
     id: `${name}-${randomUUID()}`,

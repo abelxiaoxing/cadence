@@ -857,6 +857,28 @@ it("review never approves contradictory duplicate keys or an uninspected suffix"
     reviewVerdict(`${Array(64).fill(positive).join("\n")}\n${negative}`),
   ).toBeNull();
 });
+it("retains complete actionable findings within the result budget, but never dispatches a redacted path", () => {
+  const issue = {
+    id: "reading",
+    evidence: "有条件的阻塞".repeat(40),
+    verify: "the reading position stays put",
+    writes: ["src/private-literal.ts"],
+  };
+  const reply = JSON.stringify({
+    approved: true,
+    summary: "one issue",
+    blockingIssues: [issue],
+  });
+  const full = reviewReport(reply, []);
+  expect(full.truncated).toBe(false);
+  expect(reviewVerdict(full.text)).toMatchObject({
+    approved: false,
+    blockingIssues: [issue],
+  });
+  const safe = reviewReport(reply, ["private-literal"]);
+  expect(safe.text).not.toContain("private-literal");
+  expect(typeof reviewVerdict(safe.text)?.blockingIssues[0]).toBe("string");
+});
 it("large review fields are projected as valid JSON without changing their complete verdict", () => {
   const issues = Array.from({ length: 40 }, () =>
     "Concrete missing behavior. ".repeat(40),

@@ -130,8 +130,6 @@ export async function browser(root) {
     await send("Page.enable");
     return {
       version,
-      call,
-      targetId,
       send,
       evaluate,
       close,

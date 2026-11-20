@@ -65,7 +65,12 @@ It checks the browser build identity and asset digests, serves synthetic public 
 No provider, execution command, installation, auth submission or user profile participates.
 `OPTICAL_CHROME` may name an already-installed executable.
 Use the same private temporary environment as for `verify`.
-The script prints the directory containing `summary.json` under that scope: branch, HEAD and canonical browser build identity, viewports, geometry, contrast samples, draw counts, frame windows and paint attribution.
+For a repair, select one named group, for example `node scripts/qualify-optical.mjs --group=agent-scroll:dark:390`, `--group=dark:320`, `--group=reading` or `--group=forced-colors`; `--group=agent-scroll` checks that behavior across all six views.
+A selected run is labelled targeted even on success.
+With no arguments the full matrix remains one process under its original command deadline.
+The report directory is printed before observation; `progress.ndjson` records each group's start and settlement against its build and HEAD.
+A start without settlement is partial evidence, not a completed group.
+The script prints the directory containing `summary.json` under that scope: branch, HEAD and canonical browser build identity, viewports, geometry, contrast samples, frame windows and paint attribution.
 For the design submission, implementation/confirmation and code/tool controls, `controls` records the actual button after scrolling and stable layout: name, four edges and size, viewport, intersections with clipping ancestors, disabled state, center and four inset edge hits.
 Enabled buttons must receive visible focus via Tab; disabled ones have no keyboard-operability claim.
 No submit or confirmation is activated.
@@ -83,7 +88,7 @@ The `expand` conversation does not stream: its folded head is already reachable 
 Before activation and after real detail growth and stable frames, record the pane's scrollTop, client/scroll heights, bottom distance and first fully visible reading block/offset, without any corrective scrolling or focus between samples.
 Check Latest only after the up-scroll comparison: shorten the viewport after the click to distinguish resumed follow from a one-time jump.
 Incremental follow remains a separate observation.
-A missing browser, unavailable draw scenario or failed observation is not a pass.
+A missing browser or failed observation is not a pass.
 
 ### Earlier optical build (historical observation)
 

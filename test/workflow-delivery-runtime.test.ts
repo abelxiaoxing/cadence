@@ -474,6 +474,23 @@ it("one named stable worktree combines implementation, verified knowledge and fi
     "Verified",
   );
 });
+it.each([false, true])(
+  "reuses only an unchanged accepted verification in its original revision (revised=%s)",
+  async (revised) => {
+    const f = fixture();
+    const verify = f.engine.verifyAndRepair.bind(f.engine);
+    f.engine.verifyAndRepair = async (...args: unknown[]) => {
+      await verify(...args);
+      const exact = f.run.verification;
+      if (revised) f.run.revision = (f.run.revision ?? 0) + 1;
+      await verify(...args);
+      expect(f.run.verification === exact).toBe(!revised);
+    };
+    await f.execute();
+    expect(f.counts().reviews).toBe(revised ? 2 : 1);
+    expect(f.counts().postChecks).toBe(1);
+  },
+);
 it("isolated implementations overlap and one may deliver while the other is still working", async () => {
   const first = fixture();
   const second = fixture();

@@ -8,7 +8,7 @@ vi.mock("../src/service/workflow-git.ts", async (original) => ({
   ...(await original<typeof import("../src/service/workflow-git.ts")>()),
   sourceIdentityAsync: async () => observation.value,
 }));
-it.each(["stable", "check-change", "review-change"])(
+it.each(["stable", "check-failed", "check-change", "review-change"])(
   "verification binds actual source and step identities: %s",
   async (scenario) => {
     observation.value = "a".repeat(64);
@@ -45,7 +45,7 @@ it.each(["stable", "check-change", "review-change"])(
         live.run.steps.push(check);
         observed.push(check);
         if (scenario === "check-change") observation.value = "c".repeat(64);
-        return true;
+        return scenario !== "check-failed";
       },
       review: vi.fn(async () => {
         live.run.steps.push(review);
@@ -73,7 +73,9 @@ it.each(["stable", "check-change", "review-change"])(
         proposal,
         false,
       );
-      if (scenario === "check-change")
+      if (scenario === "check-failed")
+        await expect(attempt).rejects.toThrow("Acceptance checks failed");
+      else if (scenario === "check-change")
         await expect(attempt).rejects.toThrow("Checks changed");
       else
         await expect(attempt).rejects.toMatchObject({
@@ -82,7 +84,7 @@ it.each(["stable", "check-change", "review-change"])(
         });
       expect(live.run.verification).toBeUndefined();
       expect(records).toEqual([]);
-      if (scenario === "check-change")
+      if (scenario !== "review-change")
         expect(owner.review).not.toHaveBeenCalled();
     }
   },
