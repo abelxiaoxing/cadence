@@ -16,10 +16,34 @@ import {
 } from "react";
 import { useT } from "../../i18n/locale";
 import { questionNavLayout } from "../../transcript/question-nav";
+import "./question-track.css";
 
 export interface RailQuestion {
   id: string;
   text: string;
+}
+
+/** Measure the native gutter, not a guessed scrollbar width. The marks are a
+ * sibling of the scroller, so its wheel and thumb stay entirely native. */
+export function observeQuestionTrack(
+  rail: HTMLElement,
+  size: (height: number) => void,
+) {
+  const transcript =
+    rail.parentElement?.querySelector<HTMLElement>(".chat-messages");
+  const update = () => {
+    if (transcript) {
+      const gutter = transcript.offsetWidth - transcript.clientWidth;
+      rail.style.setProperty("--qn-scrollbar", `${gutter}px`);
+    }
+    size(rail.clientHeight);
+  };
+  update();
+  if (typeof ResizeObserver === "undefined") return;
+  const observer = new ResizeObserver(update);
+  observer.observe(rail);
+  if (transcript) observer.observe(transcript);
+  return () => observer.disconnect();
 }
 
 export function QuestionRail({
@@ -39,13 +63,7 @@ export function QuestionRail({
   const rail = useRef<HTMLElement>(null);
   const [height, setHeight] = useState(0);
   useLayoutEffect(() => {
-    const el = rail.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const update = () => setHeight(el.clientHeight);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
+    if (rail.current) return observeQuestionTrack(rail.current, setHeight);
   }, []);
   const { indices, gap, many } = useMemo(
     () => questionNavLayout(questions.length, height, active),
