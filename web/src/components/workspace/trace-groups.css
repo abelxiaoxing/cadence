@@ -1,0 +1,35 @@
+/* Keep the turn's flat 32px heads and 20px optical slots, including the
+   fixed chevron column, when a completed stretch becomes one disclosure. */
+.trace-summary {
+  --trace-inset: 6px;
+  --node-size: 20px;
+  width: 100%;
+  min-width: 0;
+}
+.trace-group-head .chead-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace-group-head .chead-icon {
+  color: var(--text-dim);
+}
+
+/* A keyed entry stays in the same parent through regrouping. Join adjacent
+   entries just clear of the two glyphs; prose is never on this rail. */
+.trace-entry {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.trace-entry:has(+ .trace-entry)::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: 16px;
+  top: 26px;
+  bottom: -6px;
+  width: 1px;
+  background: var(--border-soft);
+  pointer-events: none;
+}
