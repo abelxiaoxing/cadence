@@ -26,7 +26,8 @@ import {
 
 const card = "[data-plan-proposal]",
   trigger = ".conversation-header .current-plan-trigger",
-  input = ".chat-composer textarea";
+  composer = ".chat-workspace[data-entry] form.chat-composer",
+  input = `${composer} textarea`;
 const q = JSON.stringify;
 const ok = (value) => ({ kind: "ok", value });
 const refused = () => ({ kind: "error", error: publicError("invalid") });
@@ -729,14 +730,16 @@ async function observeBootstrap(p, row) {
     await pasteFixtureImage(run);
     await wait(`document.querySelector('.chat-image-draft img')`);
     const editor = () =>
-      run(() => ({
-        same:
-          document.activeElement === opticalProbe.editor &&
-          opticalProbe.editor ===
-            document.querySelector(".chat-composer textarea"),
-        draft: opticalProbe.editor.value,
-        images: document.querySelectorAll(".chat-image-draft").length,
-      }));
+      run(
+        (sel) => ({
+          same:
+            document.activeElement === opticalProbe.editor &&
+            opticalProbe.editor === document.querySelector(sel),
+          draft: opticalProbe.editor.value,
+          images: document.querySelectorAll(".chat-image-draft").length,
+        }),
+        input,
+      );
     const held = await editor();
     assert.deepEqual(held, { same: true, draft: text, images: 1 });
     s.firstWorkspace.resolve();
@@ -955,18 +958,58 @@ async function observeBootstrap(p, row) {
 
 // Use the browser's editor and capture the actual input it delivers. An
 // application history prompt or an untrusted input cannot satisfy restore().
-async function nativeEditor({ run, send, wait, ev, press }) {
+async function nativeEditor({ run, send, ev, press }, steps) {
   await run((sel) => {
-    opticalProbe.nativeEdits = [];
-    document.querySelector(sel).addEventListener("input", (e) => {
-      opticalProbe.nativeEdits.push({
+    const field = document.querySelector(sel),
+      edits = [];
+    opticalProbe.nativeEdits = edits;
+    field.addEventListener("input", (e) => {
+      edits.push({
         type: e.inputType,
-        text: e.target.value,
+        text: field.value,
         trusted: e.isTrusted,
-        focused: document.activeElement === e.target,
+        focused: document.activeElement === field,
       });
     });
+    opticalProbe.nativeFrame = (from = edits.length) => {
+      const fields = document.querySelectorAll(sel);
+      return {
+        route: location.hash,
+        connected: field.isConnected,
+        matches: fields.length,
+        same: field === fields[0],
+        focused: document.activeElement === field,
+        value: field.value,
+        currentValue: fields[0]?.value,
+        count: edits.length,
+        events: edits.slice(from),
+      };
+    };
   }, input);
+  const checkField = (f) =>
+    assert.ok(
+      f.connected && f.matches === 1 && f.same && f.focused,
+      `Native editor changed: ${q(f)}`,
+    );
+  // CDP delivers these native inputs before the command returns. Keep both
+  // frames in the report even if the action fails or the event is missing.
+  const edit = async (operation, type, text, act) => {
+    const before = await ev("opticalProbe.nativeFrame()");
+    const step = { operation, type, text, before };
+    steps.push(step);
+    checkField(before);
+    try {
+      await act();
+    } finally {
+      step.after = await ev(`opticalProbe.nativeFrame(${before.count})`);
+    }
+    checkField(step.after);
+    assert.deepEqual(step.after.events, [
+      { type, text, trusted: true, focused: true },
+    ]);
+    assert.equal(step.after.value, text);
+    return step.after.events[0];
+  };
   const nativeKey = async (key, code, modifiers, editCommand) => {
     for (const type of ["keyDown", "keyUp"])
       await send("Input.dispatchKeyEvent", {
@@ -978,41 +1021,20 @@ async function nativeEditor({ run, send, wait, ev, press }) {
         ...(type === "keyDown" ? { commands: [editCommand] } : {}),
       });
   };
-  const replace = async (text) => {
-    await nativeKey("a", 65, 2, "SelectAll");
-    await send("Input.insertText", { text });
-    await wait(
-      `document.activeElement.matches(${q(input)}) && document.activeElement.value===${q(text)}`,
-    );
-  };
-  const restore = async (redo, text) => {
-    const type = redo ? "historyRedo" : "historyUndo";
-    const n = await ev("opticalProbe.nativeEdits.length");
-    await nativeKey("z", 90, redo ? 10 : 2, redo ? "Redo" : "Undo");
-    await wait(
-      `opticalProbe.nativeEdits.length===${n + 1} && document.activeElement.value===${q(text)}`,
-    );
-    const event = await ev("opticalProbe.nativeEdits.at(-1)");
-    assert.deepEqual(event, {
-      type,
-      text,
-      trusted: true,
-      focused: true,
+  const replace = (text) =>
+    edit("replace", "insertText", text, async () => {
+      await nativeKey("a", 65, 2, "SelectAll");
+      await send("Input.insertText", { text });
     });
-    return event;
-  };
-  const append = async (suffix, expected) => {
-    await press("End", 35);
-    await send("Input.insertText", { text: suffix });
-    const event = await ev("opticalProbe.nativeEdits.at(-1)");
-    assert.deepEqual(event, {
-      type: "insertText",
-      text: expected,
-      trusted: true,
-      focused: true,
+  const restore = (redo, text) =>
+    edit("restore", redo ? "historyRedo" : "historyUndo", text, () =>
+      nativeKey("z", 90, redo ? 10 : 2, redo ? "Redo" : "Undo"),
+    );
+  const append = (suffix, expected) =>
+    edit("append", "insertText", expected, async () => {
+      await press("End", 35);
+      await send("Input.insertText", { text: suffix });
     });
-    return event;
-  };
   return { replace, restore, append };
 }
 
@@ -1025,13 +1047,14 @@ async function observeOrdinaryPhrase(p, row, paths) {
   const stop = await intercept(p, s);
   try {
     await go(`/app#chat=${s.id}`, input);
-    const editor = await nativeEditor(p);
+    let editor;
     for (const via of paths) {
       await wait(
-        `document.querySelector('.mode-toggle.off') && document.querySelector('.model-trigger-text')?.innerText==='optical'`,
+        `location.hash===${q(`#chat=${s.id}`)} && document.querySelector('${composer} .mode-toggle.off') && document.querySelector('${composer} .model-trigger-text')?.innerText==='optical'`,
       );
       const before = s.commands.length;
       await click(input);
+      editor ??= await nativeEditor(p, row.nativeEditorSteps);
       const attachment = via === "remove image";
       if (attachment) {
         await pasteFixtureImage(run);
@@ -1586,7 +1609,7 @@ async function observeProposal(p, s, row, shot) {
   }
   await click(input);
   const retypePrefix = s.commands.length;
-  const authored = await nativeEditor(p);
+  const authored = await nativeEditor(p, row.nativeEditorSteps);
   await authored.replace(discussion);
   await authored.replace(phrase);
   await witnessPreparation(ready, "retypedAfterWhitespace", retypePrefix);
@@ -1604,11 +1627,15 @@ async function observeProposal(p, s, row, shot) {
   await send("Page.reload", { ignoreCache: true });
   await wait(`performance.timeOrigin !== ${before}`);
   await collapsed(next.plan.goal);
-  const history = await run(() => ({
-    entry: document.querySelector(".chat-workspace").dataset.entry,
-    welcome: !!document.querySelector(".chat-welcome"),
-    draft: document.querySelector(".chat-composer textarea").value,
-  }));
+  const history = await run(
+    (sel) => ({
+      entry: document.querySelector(".chat-workspace[data-entry]").dataset
+        .entry,
+      welcome: !!document.querySelector(".chat-welcome"),
+      draft: document.querySelector(sel).value,
+    }),
+    input,
+  );
   assert.deepEqual(history, {
     entry: "history",
     welcome: false,
@@ -1657,7 +1684,7 @@ async function observeProposal(p, s, row, shot) {
   // event or application draft callback is used. Capture the trusted input.
   const nativePrefix = s.commands.length;
   await click(input);
-  const { replace, restore } = await nativeEditor(p);
+  const { replace, restore } = await nativeEditor(p, row.nativeEditorSteps);
   await replace(phrase);
   await replace(discussion);
   await replace(phrase);
@@ -1747,7 +1774,8 @@ async function observeDirectReply(p, row) {
     await wait(
       `document.querySelector('${stopButton}:enabled') && document.querySelector('.mode-toggle.off')`,
     );
-    const editor = await nativeEditor(p);
+    await click(input);
+    const editor = await nativeEditor(p, row.nativeEditorSteps);
     const reason =
       "Cannot steer or queue: Current action context unavailable; observe again.";
     const frame = () =>
@@ -1771,7 +1799,6 @@ async function observeDirectReply(p, row) {
       );
     row.directReply = { id: s.id, live: s.live, inputs: [] };
     for (const mode of ["steer", "queue"]) {
-      await click(input);
       await editor.replace(phrase);
       await editor.replace(discussion);
       const restored = await editor.restore(false, phrase);
@@ -2694,6 +2721,7 @@ export async function observeQuietWorkspace(p) {
     id,
     entry: {},
     ordinaryPhrase: [],
+    nativeEditorSteps: [],
     plan: {},
     background: [],
     screenshots: [],
