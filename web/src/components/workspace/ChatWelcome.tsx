@@ -53,11 +53,11 @@ export function ConversationFeedback({
 }) {
   const { t } = useT();
   const prior = useRef({ receipt, semantic });
-  const [message, setMessage] = useState<
-    "Message received" | "Conversation updated" | null
-  >(null);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  const [notice, setNotice] = useState<{
+    message: "Message received" | "Conversation updated";
+    sequence: number;
+    count: number;
+  } | null>(null);
   useEffect(() => {
     const last = prior.current;
     prior.current = { receipt, semantic };
@@ -69,17 +69,36 @@ export function ConversationFeedback({
       last.semantic !== undefined &&
       semantic !== last.semantic;
     if (!accepted && !changed) return;
-    setMessage(accepted ? "Message received" : "Conversation updated");
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setMessage(null), 1400);
+    const message = accepted ? "Message received" : "Conversation updated";
+    setNotice((visible) => ({
+      message,
+      sequence: (visible?.sequence ?? 0) + 1,
+      count: visible?.message === message ? visible.count + 1 : 1,
+    }));
   }, [receipt, semantic]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => {
+      setNotice((visible) => (visible === notice ? null : visible));
+    }, 1400);
+    return () => clearTimeout(timer);
+  }, [notice]);
   return (
     <span
       role="status"
       className="conversation-feedback"
-      data-event={message || undefined}
+      data-event={notice?.message}
+      data-replay={notice && notice.sequence % 2 === 0 ? "" : undefined}
     >
-      {message && t(message)}
+      {notice &&
+        (notice.count === 1
+          ? t(notice.message)
+          : t(
+              notice.message === "Message received"
+                ? "{count} messages received"
+                : "Conversation updated {count} times",
+              { count: notice.count },
+            ))}
     </span>
   );
 }

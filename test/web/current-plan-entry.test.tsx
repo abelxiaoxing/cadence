@@ -536,22 +536,53 @@ it("Enter cannot transfer A's phrase to approvable B; a fresh edit after reviewi
   }
 });
 
-// A real textarea key handler wired to the workspace's current draft/target.
+// Drive the composer's textarea handlers, retaining its recall cursor when the
+// workspace re-renders. The native events here are fixtures, not a browser.
+function useField(props: ChatComposerProps) {
+  const form = ChatComposer(props);
+  const field = Children.toArray(form.props.children).find(
+    (el) => isValidElement(el) && el.type === "textarea",
+  );
+  if (
+    !isValidElement<{
+      onChange(event: unknown): void;
+      onKeyDown(event: unknown): void;
+    }>(field)
+  )
+    throw Error("missing textarea");
+  const target = (value: string) => ({
+    value,
+    selectionStart: value.length,
+    selectionEnd: value.length,
+  });
+  return {
+    change(value: string, inputType = "insertText") {
+      field.props.onChange({
+        target: target(value),
+        nativeEvent: { inputType },
+      });
+    },
+    key(key: string, altKey = false) {
+      field.props.onKeyDown({
+        key,
+        altKey,
+        currentTarget: target(props.draft),
+        nativeEvent: {},
+        preventDefault() {},
+      });
+    },
+  };
+}
+
 function pressEnter(props: ChatComposerProps, altKey = false) {
-  let keyDown: ((event: unknown) => void) | undefined;
+  let field: ReturnType<typeof useField> | undefined;
   function Keys() {
-    const form = ChatComposer(props);
-    const field = Children.toArray(form.props.children).find(
-      (el) => isValidElement(el) && el.type === "textarea",
-    );
-    if (!isValidElement<{ onKeyDown(event: unknown): void }>(field))
-      throw Error("missing textarea");
-    keyDown = field.props.onKeyDown;
+    field = useField(props);
     return null;
   }
   renderToStaticMarkup(<Keys />);
-  if (!keyDown) throw Error("missing Enter handler");
-  keyDown({ key: "Enter", altKey, nativeEvent: {}, preventDefault() {} });
+  if (!field) throw Error("missing Enter handler");
+  field.key("Enter", altKey);
 }
 
 function usePhraseWorkspace(
@@ -665,6 +696,171 @@ it.each([2, undefined] as const)(
         }),
       ]),
     );
+  },
+);
+
+const phrase = "按计划实施";
+const discussionText = "Discuss another option.";
+
+function historyFixture(prompt: string) {
+  vi.stubGlobal("sessionStorage", {
+    getItem: (key: string) =>
+      key === "cadence:prompt-history:workspace"
+        ? JSON.stringify([prompt])
+        : null,
+  });
+}
+
+it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown"])(
+  "%s restores A's text but not B's approval",
+  (restore) => {
+    const a = proposal("First agreement"),
+      b = proposal("Replacement agreement");
+    const state = {
+      id: "chat",
+      head: "turn-1",
+      enabled: true,
+      revision: 1,
+      runs: [],
+      proposal: a,
+    };
+    f.state = state;
+    f.catalog = b.model;
+    const native = restore.startsWith("history");
+    const { client, command, prepare, model } = discussionFixture(b.model);
+    historyFixture(discussionText);
+    function Probe() {
+      const [step, advance] = useState(0);
+      const tree = usePhraseWorkspace(client, prepare),
+        edit = composer(tree),
+        field = useField(edit);
+      switch (step) {
+        case 0:
+          toggleTitle(tree);
+          break;
+        case 1:
+          field.change(phrase);
+          break;
+        case 2:
+          expect(edit.draft).toBe(phrase);
+          if (native)
+            field.change(
+              discussionText,
+              restore === "historyRedo" ? "historyUndo" : "insertText",
+            );
+          else field.key("ArrowUp");
+          break;
+        case 3:
+          expect(edit.draft).toBe(discussionText);
+          f.state = { ...state, revision: 2, proposal: b };
+          break;
+        case 4:
+          toggleTitle(tree);
+          break;
+        case 5:
+          expect(titleButton(tree)).toMatchObject({
+            title: b.plan.goal,
+            "aria-expanded": true,
+          });
+          if (native) field.change(phrase, restore);
+          else field.key(restore);
+          break;
+        case 6:
+          expect(edit.canSend).toBe(true);
+          expect(edit.draft).toBe(phrase);
+          field.key("Enter");
+          expect(currentToasts().at(-1)?.text).toContain(
+            "Review it from the conversation title",
+          );
+          break;
+        default:
+          expect(edit.draft).toBe(phrase);
+          return null;
+      }
+      advance(step + 1);
+      return null;
+    }
+    try {
+      renderToStaticMarkup(<Probe />);
+      expect(command).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
+      expect(model).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      f.catalog = undefined;
+    }
+  },
+);
+
+it.each(["Escape", "ArrowDown", "remove image"])(
+  "%s: a phrase typed as ordinary discussion sends once as its original text",
+  async (restore) => {
+    f.state = {
+      id: "chat",
+      head: "turn-1",
+      enabled: false,
+      revision: 1,
+      runs: [],
+      proposal: null,
+    };
+    const { client, command, prepare } = discussionFixture(proposal("").model);
+    const image = new File(["image fixture"], "example.png", {
+      type: "image/png",
+    });
+    // A recalled phrase is text only, even though our own parked draft is discussion.
+    const recalled = "approve and execute";
+    historyFixture(recalled);
+    let fresh: ChatComposerProps | undefined;
+    function Probe() {
+      const [step, advance] = useState(0);
+      const edit = composer(usePhraseWorkspace(client, prepare)),
+        field = useField(edit);
+      if (restore === "remove image") {
+        if (step === 0) edit.onAddImages([image]);
+        if (step === 1) {
+          expect(edit.images).toEqual([image]);
+          field.change(phrase);
+        }
+        if (step === 2) edit.onRemoveImage(image);
+      } else {
+        if (step === 0) field.change(phrase);
+        if (step === 1) field.key("ArrowUp");
+        if (step === 2) {
+          expect(edit.draft).toBe(recalled);
+          field.key("Enter");
+          expect(currentToasts().at(-1)?.text).toBe(
+            "No plan is awaiting approval.",
+          );
+          field.key(restore);
+        }
+      }
+      if (step === 3) {
+        fresh = edit;
+        return null;
+      }
+      advance(step + 1);
+      return null;
+    }
+    try {
+      renderToStaticMarkup(<Probe />);
+      expect(prepare).not.toHaveBeenCalled();
+      expect(command).not.toHaveBeenCalled();
+      if (!fresh?.canSend) throw Error("missing ordinary Send");
+      expect(fresh.images).toEqual([]);
+      expect(fresh.draft).toBe(phrase);
+      pressEnter(fresh);
+      await vi.waitFor(() =>
+        expect(command.mock.calls.map(([c]) => c)).toEqual([
+          expect.objectContaining({
+            kind: "send",
+            text: phrase,
+            conversationId: "chat",
+          }),
+        ]),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   },
 );
 

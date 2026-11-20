@@ -128,7 +128,7 @@ import { LazyMount } from "../transcript/LazyMount";
 import type { ConversationAgents, WorkflowAgent } from "./AgentDock";
 import type { BranchesView } from "./BranchesPanel";
 import { composerMode, modeHints } from "./CadenceModeButton";
-import { ChatComposer } from "./ChatComposer";
+import { ChatComposer, type ChatComposerProps } from "./ChatComposer";
 import { useImageDraft } from "./ChatImages";
 import { turnParts } from "./ChatSteps";
 import { ChatTurnView } from "./ChatTurnView";
@@ -330,7 +330,8 @@ export function ChatWorkspace({
   );
   // Only text survives storage, recall by the workspace, and branch edits.
   // A plan confirmation gets its source from an explicit composer edit below.
-  const [entry, setEntry] = useState<{ text: string; source?: string }>(() => ({
+  type Draft = { text: string; source?: string };
+  const [entry, setEntry] = useState<Draft & { parked?: Draft }>(() => ({
     text: stored(draftKey, initialDraft?.text),
   }));
   const draft = entry.text;
@@ -851,6 +852,28 @@ export function ChatWorkspace({
             draftModel,
           ])
         : undefined;
+  const editDraft: ChatComposerProps["onDraft"] = (text, origin = "edit") => {
+    if (origin === "history") {
+      // Keep the entry we left in memory; the displayed history prompt is text only.
+      setEntry((prior) => ({ text, parked: prior.parked ?? prior }));
+    } else if (origin === "restore") {
+      setEntry((prior) =>
+        prior.parked?.text === text ? prior.parked : { text },
+      );
+    } else {
+      // Native undo/redo restores text, not intent. Pictures rule out a
+      // new plan confirmation, but not a phrase typed as ordinary discussion.
+      setEntry({
+        text,
+        source:
+          origin === "edit" &&
+          cadenceApproval(text) &&
+          (phraseSource === "discussion" || !imageDraft.files.length)
+            ? phraseSource
+            : undefined,
+      });
+    }
+  };
   const latestSource = useRef(phraseSource);
   latestSource.current = phraseSource;
   const phraseCurrent = () =>
@@ -2671,17 +2694,7 @@ export function ChatWorkspace({
           flow={flow}
           inputRef={textarea}
           draft={draft}
-          onDraft={(text, origin) =>
-            setEntry({
-              text,
-              source:
-                origin !== "history" &&
-                cadenceApproval(text) &&
-                !imageDraft.files.length
-                  ? phraseSource
-                  : undefined,
-            })
-          }
+          onDraft={editDraft}
           locked={busy || !!pending || awaitingModel}
           images={imageDraft.files}
           imageKey={imageDraft.key}

@@ -78,7 +78,10 @@ const heightCap = () =>
 export interface ChatComposerProps {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   draft: string;
-  onDraft(text: string, origin?: "history"): void;
+  onDraft(
+    text: string,
+    origin?: "edit" | "native-history" | "history" | "restore",
+  ): void;
   /** A Send is in flight or unconfirmed: its text stays as it was sent. */
   locked: boolean;
   images: readonly File[];
@@ -233,10 +236,10 @@ export function ChatComposer({
     setCaret(caretTo.current);
     caretTo.current = null;
   }, [draft, inputRef]);
-  const show = (text: string) => {
+  const show = (text: string, origin: "history" | "restore") => {
     recalled.current = text;
     caretTo.current = text.length;
-    onDraft(text, "history");
+    onDraft(text, origin);
   };
 
   // ---- `@` popup: a path reference from the folder's bounded listing. ----
@@ -326,14 +329,14 @@ export function ChatComposer({
       if (!step) return;
       event.preventDefault();
       recall.current = step.cursor;
-      show(step.text);
+      show(step.text, step.cursor.index === -1 ? "restore" : "history");
       return;
     }
     if (event.key === "Escape" && recall.current.index !== -1) {
       event.preventDefault();
       const own = recall.current.draft;
       recall.current = HISTORY_IDLE;
-      show(own);
+      show(own, "restore");
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
@@ -534,9 +537,12 @@ export function ChatComposer({
         placeholder={t("Message")}
         rows={2}
         onChange={(event) => {
+          const { inputType } = event.nativeEvent as InputEvent;
+          const restored =
+            inputType === "historyUndo" || inputType === "historyRedo";
           setCaret(event.target.selectionStart);
-          setTyped(event.target.value);
-          onDraft(event.target.value);
+          setTyped(restored ? null : event.target.value);
+          onDraft(event.target.value, restored ? "native-history" : "edit");
         }}
         onSelect={(event) => {
           const { selectionStart, selectionEnd } = event.currentTarget;
