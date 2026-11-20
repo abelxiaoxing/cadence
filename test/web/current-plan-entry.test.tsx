@@ -363,178 +363,226 @@ function composer(tree: ReturnType<typeof ChatWorkspace>) {
   return editor.props;
 }
 
-it("Enter cannot transfer A's phrase to approvable B; a fresh edit after reviewing B names only B", async () => {
-  const model = {
-    ...proposal("").model,
-    epoch: crypto.randomUUID(),
-    catalogId: crypto.randomUUID(),
-  };
-  const first = decodeWorkflowProposal({
-    ...proposal("Ship text export"),
-    epoch: model.epoch,
-    model,
-  });
-  const second = decodeWorkflowProposal({
-    ...first,
-    id: crypto.randomUUID(),
-    digest: "c".repeat(64),
-    plan: { ...first.plan, goal: "Replace export with import" },
-  });
-  const state = {
-    id: "chat",
-    head: "turn-1",
-    revision: 1,
-    enabled: true,
-    proposal: first,
-    runs: [],
-  };
-  f.state = state;
-  f.catalog = model;
-  const commands: WorkbenchCommand[] = [],
-    grant = crypto.randomUUID(),
-    prepare = vi.fn();
-  let allowB = false;
-  const client = new ServiceClient(
-    transport({
-      workbenchCommand: async (cmd) => {
-        commands.push(cmd);
-        if (
-          !allowB ||
-          (cmd.kind !== "cadence-prepare" && cmd.kind !== "cadence-approve") ||
-          cmd.conversationId !== state.id ||
-          cmd.revision !== 2 ||
-          cmd.proposalId !== second.id ||
-          cmd.digest !== second.digest
-        )
-          throw Error("not the reviewed fixture proposal");
-        if (commands.length === 1 && cmd.kind === "cadence-prepare")
-          return {
-            kind: "ok",
-            value: {
-              kind: "cadence-grant",
-              commandId: cmd.commandId,
-              revision: 2,
-              proposal: second,
-              expiresAt: Date.now() + 60_000,
-              grant,
-            },
-          };
-        if (
-          commands.length === 2 &&
-          cmd.kind === "cadence-approve" &&
-          cmd.grant === grant
-        )
-          return {
-            kind: "ok",
-            value: { kind: "accepted", commandId: cmd.commandId },
-          };
-        throw Error("unexpected command");
-      },
-    }),
-  );
-  const phrase = "按计划实施";
-  let fresh: ChatComposerProps | undefined;
-  const reviewed: ReturnType<typeof ChatWorkspace>[] = [];
-  function Probe() {
-    const [step, advance] = useState(0);
-    const tree = ChatWorkspace({
-      client,
-      id: "chat",
-      workspaceId: "workspace",
-      initialCwd: "/fixture",
-      enabled: true,
-      modelAvailability: {
-        status: "ready",
-        epoch: model.epoch,
-        attachmentVersion: 1,
-      },
-      prepareForPlan: prepare,
-      prepareForSend: prepare,
-      onModelChanged: f.no,
-      onChanged: f.no,
-      onReferenceUsed: f.no,
+it.each(["clear then type", "full replacement"])(
+  "only %s, not a whitespace edit to A's phrase, can confirm approvable B",
+  async (reentry) => {
+    const model = {
+      ...proposal("").model,
+      epoch: crypto.randomUUID(),
+      catalogId: crypto.randomUUID(),
+    };
+    const first = decodeWorkflowProposal({
+      ...proposal("Ship text export"),
+      epoch: model.epoch,
+      model,
     });
-    const edit = composer(tree),
-      title = titleButton(tree);
-    switch (step) {
-      case 0:
-        title.onClick();
-        break;
-      case 1:
-        reviewed.push(tree);
-        edit.onDraft(phrase);
-        break;
-      case 2:
-        expect(edit.draft).toBe(phrase);
-        f.state = { ...state, revision: 2, proposal: second };
-        break;
-      case 3:
-      case 4:
-        expect(title.title).toBe(second.plan.goal);
-        expect(title["aria-expanded"]).toBe(step === 4);
+    const second = decodeWorkflowProposal({
+      ...first,
+      id: crypto.randomUUID(),
+      digest: "c".repeat(64),
+      plan: { ...first.plan, goal: "Replace export with import" },
+    });
+    const state = {
+      id: "chat",
+      head: "turn-1",
+      revision: 1,
+      enabled: true,
+      proposal: first,
+      runs: [],
+    };
+    f.state = state;
+    f.catalog = model;
+    const commands: WorkbenchCommand[] = [],
+      grant = crypto.randomUUID(),
+      prepare = vi.fn();
+    let allowB = false;
+    const client = new ServiceClient(
+      transport({
+        workbenchCommand: async (cmd) => {
+          commands.push(cmd);
+          if (
+            !allowB ||
+            (cmd.kind !== "cadence-prepare" &&
+              cmd.kind !== "cadence-approve") ||
+            cmd.conversationId !== state.id ||
+            cmd.revision !== 2 ||
+            cmd.proposalId !== second.id ||
+            cmd.digest !== second.digest
+          )
+            throw Error("not the reviewed fixture proposal");
+          if (commands.length === 1 && cmd.kind === "cadence-prepare")
+            return {
+              kind: "ok",
+              value: {
+                kind: "cadence-grant",
+                commandId: cmd.commandId,
+                revision: 2,
+                proposal: second,
+                expiresAt: Date.now() + 60_000,
+                grant,
+              },
+            };
+          if (
+            commands.length === 2 &&
+            cmd.kind === "cadence-approve" &&
+            cmd.grant === grant
+          )
+            return {
+              kind: "ok",
+              value: { kind: "accepted", commandId: cmd.commandId },
+            };
+          throw Error("unexpected command");
+        },
+      }),
+    );
+    const phrase = "按计划实施";
+    let submit: (() => void) | undefined;
+    const reviewed: ReturnType<typeof ChatWorkspace>[] = [];
+    function Probe() {
+      const [step, advance] = useState(0);
+      const tree = ChatWorkspace({
+        client,
+        id: "chat",
+        workspaceId: first.id,
+        initialCwd: "/fixture",
+        enabled: true,
+        modelAvailability: {
+          status: "ready",
+          epoch: model.epoch,
+          attachmentVersion: 1,
+        },
+        prepareForPlan: prepare,
+        prepareForSend: prepare,
+        onModelChanged: f.no,
+        onChanged: f.no,
+        onReferenceUsed: f.no,
+      });
+      const edit = composer(tree),
+        title = titleButton(tree),
+        field = useField(edit);
+      const refused = (expected: string) => {
         expect(edit.canSend).toBe(true);
-        expect(edit.draft).toBe(phrase);
-        edit.onSend();
+        expect(edit.draft).toBe(expected);
+        const before = currentToasts().at(-1)?.id;
+        field.key("Enter");
+        expect(currentToasts().at(-1)?.id).not.toBe(before);
         expect(currentToasts().at(-1)?.text).toContain(
           "Review it from the conversation title",
         );
         expect(commands).toEqual([]);
-        if (step === 3) title.onClick();
-        else {
+        expect(prepare).not.toHaveBeenCalled();
+      };
+      switch (step) {
+        case 0:
+          title.onClick();
+          break;
+        case 1:
           reviewed.push(tree);
-          edit.onDraft("");
-        }
-        break;
-      case 5:
-        edit.onDraft(phrase);
-        break;
-      case 6:
-        // A poll returns new objects, not a new proposal or grant.
-        f.state = structuredClone(f.state);
-        f.catalog = structuredClone(f.catalog);
-        break;
-      default:
-        fresh = edit;
-        return tree;
+          field.change(phrase);
+          break;
+        case 2:
+          expect(edit.draft).toBe(phrase);
+          f.state = { ...state, revision: 2, proposal: second };
+          break;
+        case 3:
+        case 4:
+          expect(title.title).toBe(second.plan.goal);
+          expect(title["aria-expanded"]).toBe(step === 4);
+          refused(phrase);
+          if (step === 3) title.onClick();
+          else {
+            reviewed.push(tree);
+            field.change(`${phrase} `, "insertText", " ");
+          }
+          break;
+        case 5:
+          refused(`${phrase} `);
+          field.change(phrase, "deleteContentBackward");
+          break;
+        case 6:
+          refused(phrase);
+          field.change(`${phrase}\n`, "insertLineBreak");
+          break;
+        case 7:
+          refused(`${phrase}\n`);
+          field.change(phrase, "deleteContentBackward");
+          break;
+        case 8:
+          refused(phrase);
+          field.change(phrase.slice(0, -1), "deleteContentBackward");
+          break;
+        case 9:
+          field.change(phrase, "insertText", phrase.slice(-1));
+          break;
+        case 10:
+          refused(phrase);
+          if (reentry === "clear then type")
+            field.change("", "deleteContentBackward");
+          else field.change(phrase, "insertText", phrase); // replace even identical text
+          break;
+        case 11:
+          if (reentry === "clear then type") {
+            expect(edit.draft).toBe("");
+            field.change(phrase.slice(0, -1));
+          }
+          break;
+        case 12:
+          if (reentry === "clear then type")
+            field.change(phrase, "insertText", phrase.slice(-1));
+          break;
+        case 13:
+          // Whitespace must not lose B's own binding either.
+          field.change(` ${phrase}`, "insertText", " ");
+          break;
+        case 14:
+          // A poll returns new objects, not a new proposal or grant.
+          f.state = structuredClone(f.state);
+          f.catalog = structuredClone(f.catalog);
+          break;
+        default:
+          expect(edit.draft).toBe(` ${phrase}`);
+          submit = () => field.key("Enter");
+          return tree;
+      }
+      advance(step + 1);
+      return tree;
     }
-    advance(step + 1);
-    return tree;
-  }
-  try {
-    renderToStaticMarkup(<Probe />);
-    expect(commands).toEqual([]);
-    expect(reviewed).toHaveLength(2);
-    for (const tree of reviewed)
-      expect(renderToStaticMarkup(tree)).toMatch(
-        /class="primary"(?![^>]*disabled)[^>]*>Implement this plan</,
+    try {
+      renderToStaticMarkup(<Probe />);
+      expect(commands).toEqual([]);
+      expect(reviewed).toHaveLength(2);
+      for (const tree of reviewed)
+        expect(renderToStaticMarkup(tree)).toMatch(
+          /class="primary"(?![^>]*disabled)[^>]*>Implement this plan</,
+        );
+      if (!submit) throw Error("missing confirmation field");
+      allowB = true;
+      submit();
+      await vi.waitFor(() =>
+        expect(commands).toEqual([
+          expect.objectContaining({
+            kind: "cadence-prepare",
+            proposalId: second.id,
+            digest: second.digest,
+            conversationId: "chat",
+            revision: 2,
+          }),
+          expect.objectContaining({
+            kind: "cadence-approve",
+            proposalId: second.id,
+            digest: second.digest,
+            conversationId: "chat",
+            revision: 2,
+            grant,
+          }),
+        ]),
       );
-    expect(fresh?.draft).toBe(phrase);
-    allowB = true;
-    fresh?.onSend();
-    await vi.waitFor(() =>
-      expect(commands).toEqual([
-        expect.objectContaining({
-          kind: "cadence-prepare",
-          proposalId: second.id,
-          digest: second.digest,
-          conversationId: "chat",
-          revision: 2,
-        }),
-        expect.objectContaining({
-          kind: "cadence-approve",
-          proposalId: second.id,
-          digest: second.digest,
-          conversationId: "chat",
-          revision: 2,
-          grant,
-        }),
-      ]),
-    );
-    expect(prepare).not.toHaveBeenCalled();
-  } finally {
-    f.catalog = undefined;
-  }
-});
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      f.catalog = undefined;
+    }
+  },
+);
 
 // Drive the composer's textarea handlers, retaining its recall cursor when the
 // workspace re-renders. The native events here are fixtures, not a browser.
@@ -545,7 +593,7 @@ function useField(props: ChatComposerProps) {
   );
   if (
     !isValidElement<{
-      onChange(event: unknown): void;
+      onInput(event: unknown): void;
       onKeyDown(event: unknown): void;
     }>(field)
   )
@@ -556,10 +604,14 @@ function useField(props: ChatComposerProps) {
     selectionEnd: value.length,
   });
   return {
-    change(value: string, inputType = "insertText") {
-      field.props.onChange({
-        target: target(value),
-        nativeEvent: { inputType },
+    change(
+      value: string,
+      inputType = "insertText",
+      data: string | null = null,
+    ) {
+      field.props.onInput({
+        currentTarget: target(value),
+        nativeEvent: { inputType, data },
       });
     },
     key(key: string, altKey = false) {
@@ -772,6 +824,21 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown"])(
           expect(currentToasts().at(-1)?.text).toContain(
             "Review it from the conversation title",
           );
+          // The same old text must not fall back to an ordinary Send, even
+          // when the native restoration happens after the mode has changed.
+          if (native)
+            field.change(discussionText, "insertText", discussionText);
+          f.state = { ...state, revision: 3, enabled: false, proposal: null };
+          break;
+        case 7:
+          if (native) field.change(phrase, restore);
+          break;
+        case 8:
+          expect(edit.draft).toBe(phrase);
+          field.key("Enter");
+          expect(currentToasts().at(-1)?.text).toBe(
+            "No plan is awaiting approval.",
+          );
           break;
         default:
           expect(edit.draft).toBe(phrase);
@@ -792,7 +859,7 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown"])(
   },
 );
 
-it.each(["Escape", "ArrowDown", "remove image"])(
+it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown", "remove image"])(
   "%s: a phrase typed as ordinary discussion sends once as its original text",
   async (restore) => {
     f.state = {
@@ -810,7 +877,7 @@ it.each(["Escape", "ArrowDown", "remove image"])(
     // A recalled phrase is text only, even though our own parked draft is discussion.
     const recalled = "approve and execute";
     historyFixture(recalled);
-    let fresh: ChatComposerProps | undefined;
+    let submit: (() => void) | undefined;
     function Probe() {
       const [step, advance] = useState(0);
       const edit = composer(usePhraseWorkspace(client, prepare)),
@@ -822,6 +889,19 @@ it.each(["Escape", "ArrowDown", "remove image"])(
           field.change(phrase);
         }
         if (step === 2) edit.onRemoveImage(image);
+      } else if (restore === "historyUndo" || restore === "historyRedo") {
+        const redo = restore === "historyRedo";
+        if (step === 0) field.change(redo ? discussionText : phrase);
+        if (step === 1) {
+          const replacement = redo ? phrase : discussionText;
+          field.change(replacement, "insertText", replacement);
+        }
+        if (step === 2)
+          field.change(redo ? discussionText : phrase, "historyUndo");
+        if (step === 3 && redo) {
+          expect(edit.draft).toBe(discussionText);
+          field.change(phrase, "historyRedo");
+        }
       } else {
         if (step === 0) field.change(phrase);
         if (step === 1) field.key("ArrowUp");
@@ -834,8 +914,11 @@ it.each(["Escape", "ArrowDown", "remove image"])(
           field.key(restore);
         }
       }
-      if (step === 3) {
-        fresh = edit;
+      if (step === (restore === "historyRedo" ? 4 : 3)) {
+        expect(edit.canSend).toBe(true);
+        expect(edit.images).toEqual([]);
+        expect(edit.draft).toBe(phrase);
+        submit = () => field.key("Enter");
         return null;
       }
       advance(step + 1);
@@ -845,10 +928,8 @@ it.each(["Escape", "ArrowDown", "remove image"])(
       renderToStaticMarkup(<Probe />);
       expect(prepare).not.toHaveBeenCalled();
       expect(command).not.toHaveBeenCalled();
-      if (!fresh?.canSend) throw Error("missing ordinary Send");
-      expect(fresh.images).toEqual([]);
-      expect(fresh.draft).toBe(phrase);
-      pressEnter(fresh);
+      if (!submit) throw Error("missing ordinary Send");
+      submit();
       await vi.waitFor(() =>
         expect(command.mock.calls.map(([c]) => c)).toEqual([
           expect.objectContaining({
@@ -858,6 +939,67 @@ it.each(["Escape", "ArrowDown", "remove image"])(
           }),
         ]),
       );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it.each(["identical recalled prompt", "mode round trip"])(
+  "%s: native history cannot borrow an ordinary origin for ambiguous or obsolete text",
+  (conflict) => {
+    const state = {
+      id: "chat",
+      head: "turn-1",
+      enabled: false,
+      revision: 1,
+      runs: [],
+      proposal: null,
+    };
+    f.state = state;
+    historyFixture(phrase);
+    const { client, command, prepare, model } = discussionFixture(
+      proposal("").model,
+    );
+    function Probe() {
+      const [step, advance] = useState(0);
+      const edit = composer(usePhraseWorkspace(client, prepare)),
+        field = useField(edit);
+      switch (step) {
+        case 0:
+          field.change(phrase);
+          break;
+        case 1:
+          if (conflict === "identical recalled prompt") field.key("ArrowUp");
+          else f.state = { ...state, enabled: true, revision: 2 };
+          break;
+        case 2:
+          field.change(discussionText, "insertText", discussionText);
+          f.state = { ...state, revision: 3 };
+          break;
+        case 3:
+          field.change(phrase, "historyUndo");
+          break;
+        case 4:
+          field.change(` ${phrase}`, "insertText", " ");
+          break;
+        default:
+          expect(edit.canSend).toBe(true);
+          expect(edit.draft).toBe(` ${phrase}`);
+          field.key("Enter");
+          expect(currentToasts().at(-1)?.text).toBe(
+            "No plan is awaiting approval.",
+          );
+          return null;
+      }
+      advance(step + 1);
+      return null;
+    }
+    try {
+      renderToStaticMarkup(<Probe />);
+      expect(command).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
+      expect(model).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

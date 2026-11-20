@@ -72,7 +72,7 @@ it("shows distinct terminal and owner rows without a visible heading, counts or 
   expect(html).toContain("recovering");
   expect(html).not.toMatch(/Stop|Cancel|completed/);
 });
-it("identifies unattributed workflows in the selected project's loading sidebar before any viewer roster", () => {
+it("groups the selected project's associated work on first discovery, before history or any viewer roster", () => {
   const project = {
     id: "a".repeat(64),
     path: "/project",
@@ -88,29 +88,81 @@ it("identifies unattributed workflows in the selected project's loading sidebar 
     phase: "implementing",
   });
   const b = { ...a, id: randomUUID(), freshness: "stale" as const };
-  const value = discovery([a, b]);
-  value.projects.push({
-    path: "/other",
-    activities: [{ ...a, cwd: "/other" }],
-  });
+  const reply = activity({ source: "turn", instance: null, epoch });
+  const run = { ...reply, source: "workflow" as const, id: randomUUID() };
+  const secondRun = { ...run, id: randomUUID() };
+  const local = [secondRun, a, reply, b, run];
   vi.stubGlobal("window", {
     location: new URL(`http://127.0.0.1:43210/app?project=${project.id}`),
   });
-  const html = renderToStaticMarkup(
-    <App
-      project={project}
-      discovery={{
-        project: project.path,
-        value,
-        error: "",
-        opening: false,
-        onOpen() {},
-      }}
-    />,
+  const draw = (reports: Activity[], error = "", otherFirst = false) => {
+    const value = discovery(reports);
+    value.projects.push({
+      path: "/other",
+      activities: [a, run].map((report) => ({ ...report, cwd: "/other" })),
+    });
+    if (otherFirst) value.projects.reverse();
+    const html = renderToStaticMarkup(
+      <App
+        project={project}
+        discovery={{
+          project: project.path,
+          value,
+          error,
+          opening: false,
+          onOpen() {},
+        }}
+      />,
+    );
+    expect(html).toContain("Reading conversation history…");
+    return (
+      html.match(/aria-label="Active Pi work">(.*?)<\/section>/s)?.[1] ?? ""
+    );
+  };
+  const list = draw(local);
+  expect(list.match(/class="conversation-row"/g)).toHaveLength(1);
+  expect(list).toContain(
+    'class="session-title">Conversation pi-session</span>',
   );
-  expect(html).toContain("Reading conversation history…");
-  const list = html.match(/aria-label="Active Pi work">(.*?)<\/section>/s)?.[1];
-  const details = list?.match(
+  expect(list).toContain(
+    'class="status-dot busy history-activity-mark" role="img" aria-label="Working"',
+  );
+  const work = (html: string) =>
+    html.match(/<details class="history-workflows">(.*?)<\/details>/s)?.[1];
+  expect(work(list)).toContain(
+    'aria-label="Details · Conversation pi-session (3)"',
+  );
+  expect(work(list)?.match(/<button/g)).toHaveLength(3);
+  for (const report of [reply, run, secondRun]) {
+    const source = report.source === "turn" ? "Owner turn" : "Owner workflow";
+    expect(work(list)).toContain(
+      `title="${source} · ${report.cwd} · ${report.leaf} · ${report.epoch} · ${report.id}"`,
+    );
+  }
+  expect(work(list)).not.toContain("disabled");
+  expect(list).not.toMatch(/Stop|Cancel/i);
+  const next = draw(
+    [...local].reverse().map((r) => ({
+      ...r,
+      phase: "verifying",
+      observedAt: r.observedAt + 60_000,
+    })),
+    "",
+    true,
+  );
+  expect(next.indexOf(">Conversation pi-session<")).toBeLessThan(
+    next.indexOf(">/other<"),
+  );
+  const primary = (html: string) =>
+    html.match(/<div class="conversation-row">(.*?)<\/button>/s)?.[1];
+  expect(primary(next)).toBe(primary(list));
+  const targets = (html: string) =>
+    work(html)?.match(/<button[^>]*title="[^"]*"/g);
+  expect(targets(next)).toEqual(targets(list));
+  const disconnected = draw(local, "unavailable");
+  expect(disconnected).toContain("Missing work is not known to have finished");
+  expect(primary(disconnected)).toContain('aria-label="Stale observation"');
+  const details = list.match(
     /<details class="history-unlinked">(.*?)<\/details>/s,
   )?.[1];
   expect(details).toContain("Unattributed work · 2");
@@ -121,11 +173,43 @@ it("identifies unattributed workflows in the selected project's loading sidebar 
     `<code>${b.id}</code><br/>implementing · Stale observation`,
   );
   expect(details).not.toMatch(/<button|Stop|Cancel/i);
-  // Only the other directory keeps its original disabled discovery row.
-  expect(list?.match(/<button/g)).toHaveLength(1);
-  expect(list).toMatch(
+  // The other directory keeps its ordinary rows, even for the very same
+  // producer, session and run. Only its unattributed one is disabled.
+  expect(list.match(/<button/g)).toHaveLength(6);
+  const other = list.split('<p class="panel-hint">/other</p>')[1];
+  expect(other.match(/<button/g)).toHaveLength(2);
+  expect(other.match(/disabled/g)).toHaveLength(1);
+  expect(other).toContain('class="session-title">pi-session</span>');
+  expect(other).toMatch(
     /<button[^>]+disabled[^>]*>.*?Unattributed work.*?Owner workflow · implementing · Current observation.*?\/other<\/span>/s,
   );
+});
+it("requires shared history and the matching kind of producer identity to group cold reports", () => {
+  const terminal = activity();
+  const second = { ...terminal, instance: randomUUID() };
+  const raw = [
+    { ...terminal, instance: null, epoch },
+    { ...terminal, instance: randomUUID(), history: "unavailable" as const },
+    { ...terminal, source: "workflow" as const }, // Instance, but no epoch.
+  ];
+  const html = renderToStaticMarkup(
+    <ActivityList
+      project="/project"
+      awaitingHistory
+      value={discovery([terminal, second, terminal, ...raw])}
+      error=""
+      opening={false}
+      onOpen={() => {}}
+    />,
+  );
+  // Exact duplicate removed; same activity ID from a different instance kept.
+  expect(html).toContain('aria-label="Details · Conversation pi-session (2)"');
+  for (const a of [terminal, second])
+    expect(html).toContain(`${a.instance} · ${a.id}"`);
+  expect(html.match(/class="session-title">pi-session</g)).toHaveLength(
+    raw.length,
+  );
+  expect(html).toContain("History configuration differs");
 });
 it("partial empty observation never claims everything finished; Chinese text and unattributed rows stay explicit", () => {
   const value = {

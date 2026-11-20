@@ -1,8 +1,12 @@
+import type { ReactNode } from "react";
+import { FiChevronRight } from "react-icons/fi";
 import type {
   Activity,
   ActivityDiscovery,
+  ActivityProject,
 } from "../../../../src/service/contracts/activity.ts";
 import { useT } from "../../i18n/locale";
+import { ConversationRow } from "./ConversationRow";
 
 export interface ActivityListProps {
   value?: ActivityDiscovery;
@@ -23,6 +27,63 @@ export function activityKey(
     a.source === "terminal" ? a.instance : a.epoch,
     a.id,
   ]);
+}
+
+/** Take only the selected project's attributable reports (and its orphan
+ * workflows) out of discovery, whether or not its history has loaded. The
+ * viewer's exact roster identities, when available, already occupy `seen`. */
+export function groupProjectActivity(
+  project: ActivityProject | undefined,
+  seen: Set<string>,
+) {
+  const sessions = new Map<string, Activity[]>();
+  const unlinked: Activity[] = [];
+  if (project) {
+    for (const a of project.activities) {
+      const key = activityKey(project.path, a);
+      if (seen.has(key)) continue;
+      if (a.source === "workflow" && !a.sessionId) unlinked.push(a);
+      else if (
+        a.sessionId &&
+        a.history === "shared" &&
+        (a.source === "terminal" ? a.instance : a.epoch)
+      ) {
+        const group = sessions.get(a.sessionId) ?? [];
+        group.push(a);
+        sessions.set(a.sessionId, group);
+      } else continue;
+      seen.add(key);
+    }
+    for (const reports of [...sessions.values(), unlinked])
+      reports.sort((a, b) =>
+        activityKey(project.path, a).localeCompare(
+          activityKey(project.path, b),
+        ),
+      );
+  }
+  return { sessions, unlinked };
+}
+
+export function SessionWorkDetails({
+  label,
+  title,
+  count,
+  children,
+}: {
+  label: string;
+  title: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <details className="history-workflows">
+      <summary title={label} aria-label={`${label} · ${title} (${count})`}>
+        <span>{count}</span>
+        <FiChevronRight aria-hidden="true" />
+      </summary>
+      {children}
+    </details>
+  );
 }
 
 export function ActivityRow({
@@ -54,49 +115,65 @@ export function ActivityRow({
   const producer =
     activity.source === "terminal" ? activity.instance : activity.epoch;
   // Discovery carries identity and location, not access to this owner's run.
-  if (grouped && !activity.sessionId)
-    return (
+  const item =
+    grouped && !activity.sessionId ? (
       <p className="panel-hint">
         {source} · <code>{activity.id}</code>
         <br />
         {tx(activity.phase)} · {fresh} · {activity.cwd}
         {activity.executionCwd ? ` → ${activity.executionCwd}` : ""}
       </p>
-    );
-  return (
-    <button
-      type="button"
-      className="session-item"
-      disabled={opening || !activity.sessionId || activity.history !== "shared"}
-      title={
-        grouped
-          ? `${source} · ${activity.cwd} · ${activity.leaf ?? activity.sessionId} · ${producer} · ${activity.id}`
-          : undefined
-      }
-      onClick={() => onOpen(path, activity)}
-    >
-      <span className="session-info">
-        <span className="session-title">
-          {grouped
-            ? [activity.leaf, source].filter(Boolean).join(" · ")
-            : (activity.sessionId ?? t("Unattributed work"))}
-        </span>
-        <span className="session-sub">
-          {grouped
-            ? `${fresh} · ${producer?.slice(0, 8)} · ${activity.id.slice(0, 8)}`
-            : `${source} · ${tx(activity.phase)} · ${fresh}`}
-        </span>
-        {activity.history === "unavailable" && (
-          <span className="session-sub">
-            {t("History configuration differs. Activity remains observe-only.")}
+    ) : (
+      <button
+        type="button"
+        className="session-item"
+        disabled={
+          opening || !activity.sessionId || activity.history !== "shared"
+        }
+        title={
+          grouped
+            ? `${source} · ${activity.cwd} · ${activity.leaf ?? activity.sessionId} · ${producer} · ${activity.id}`
+            : undefined
+        }
+        onClick={() => onOpen(path, activity)}
+      >
+        <span className="session-info">
+          <span className="session-title">
+            {grouped
+              ? [activity.leaf, source].filter(Boolean).join(" · ")
+              : (activity.sessionId ?? t("Unattributed work"))}
           </span>
-        )}
-        <span className="session-sub">
-          {activity.cwd}
-          {activity.executionCwd ? ` → ${activity.executionCwd}` : ""}
+          <span className="session-sub">
+            {grouped
+              ? `${fresh} · ${producer?.slice(0, 8)} · ${activity.id.slice(0, 8)}`
+              : `${source} · ${tx(activity.phase)} · ${fresh}`}
+          </span>
+          {activity.history === "unavailable" && (
+            <span className="session-sub">
+              {t(
+                "History configuration differs. Activity remains observe-only.",
+              )}
+            </span>
+          )}
+          <span className="session-sub">
+            {activity.cwd}
+            {activity.executionCwd ? ` → ${activity.executionCwd}` : ""}
+          </span>
         </span>
-      </span>
-    </button>
+      </button>
+    );
+  return grouped ? (
+    <div
+      className={
+        activity.source === "terminal"
+          ? "history-run history-terminal"
+          : "history-run"
+      }
+    >
+      {item}
+    </div>
+  ) : (
+    item
   );
 }
 
@@ -114,27 +191,25 @@ export function ActivityList({
   awaitingHistory?: boolean;
 }) {
   const { t } = useT();
+  const seen = new Set(represented);
   const visible = value?.projects
-    .map(({ path, activities }) => {
-      const rows: Activity[] = [],
-        unlinked: Activity[] = [];
-      for (const a of activities) {
-        if (represented?.has(activityKey(path, a))) continue;
-        if (
-          awaitingHistory &&
-          path === project &&
-          a.source === "workflow" &&
-          !a.sessionId
-        )
-          unlinked.push(a);
-        else rows.push(a);
-      }
-      unlinked.sort((a, b) =>
-        activityKey(path, a).localeCompare(activityKey(path, b)),
+    .map((p) => {
+      const { sessions, unlinked } = groupProjectActivity(
+        awaitingHistory && p.path === project ? p : undefined,
+        seen,
       );
-      return { path, rows, unlinked };
+      const rows = p.activities.filter(
+        (a) => !seen.has(activityKey(p.path, a)),
+      );
+      return { path: p.path, rows, sessions, unlinked };
     })
-    .filter((p) => p.rows.length || p.unlinked.length);
+    .filter((p) => p.rows.length || p.sessions.size || p.unlinked.length);
+  // Independent project observations may arrive in a different order on
+  // every poll. Keep the selected history prefix in place above other paths.
+  if (awaitingHistory)
+    visible?.sort(
+      (a, b) => Number(b.path === project) - Number(a.path === project),
+    );
   const partial = !!error || value?.completeness === "partial";
   if (!visible?.length && !partial) return null;
   const row = (path: string, activity: Activity, grouped = false) => (
@@ -158,9 +233,37 @@ export function ActivityList({
             {error ? ` (${error})` : ""}
           </p>
         )}
-        {visible?.map(({ path, rows, unlinked }) => (
+        {visible?.map(({ path, rows, sessions, unlinked }) => (
           <div key={path}>
             <p className="panel-hint">{path}</p>
+            {[...sessions]
+              .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+              .map(([id, reports]) => {
+                const title = t("Conversation {id}", { id });
+                return (
+                  <div key={id} className="history-entry has-workflows">
+                    <ConversationRow
+                      chat={{ id, title }}
+                      selected={false}
+                      activityLabel={
+                        !error && reports.some((a) => a.freshness === "current")
+                          ? t("Working")
+                          : t("Stale observation")
+                      }
+                      onOpen={() => {
+                        if (!opening) onOpen(path, reports[0]);
+                      }}
+                    />
+                    <SessionWorkDetails
+                      label={t("Details")}
+                      title={title}
+                      count={reports.length}
+                    >
+                      {reports.map((a) => row(path, a, true))}
+                    </SessionWorkDetails>
+                  </div>
+                );
+              })}
             {unlinked.length > 0 && (
               <details className="history-unlinked">
                 <summary>

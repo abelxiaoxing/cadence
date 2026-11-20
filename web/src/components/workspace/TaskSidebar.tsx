@@ -42,6 +42,8 @@ import {
   type ActivityListProps,
   ActivityRow,
   activityKey,
+  groupProjectActivity,
+  SessionWorkDetails,
 } from "./ActivityList";
 import { ConversationActions } from "./ConversationActions";
 import {
@@ -375,8 +377,6 @@ export function TaskSidebar({
     } else unlinked.push(run);
   }
   const project = discovery?.project;
-  const discovered = new Map<string, Activity[]>();
-  const unlinkedReports: Activity[] = [];
   const represented = new Set<string>();
   if (project) {
     for (const run of roster)
@@ -396,33 +396,12 @@ export function TaskSidebar({
             epoch: chat.live.epoch,
           }),
         );
-    // The gateway groups by canonical project, not the terminal's launch cwd.
-    // An independent owner can appear here before we have its viewer roster.
-    const local = discovery.value?.projects.find((p) => p.path === project);
-    for (const a of local?.activities ?? []) {
-      const key = activityKey(project, a);
-      if (represented.has(key)) continue;
-      if (a.source === "workflow" && !a.sessionId) {
-        unlinkedReports.push(a);
-        represented.add(key);
-        continue;
-      }
-      if (
-        !(a.source === "terminal" ? a.instance : a.epoch) ||
-        a.history !== "shared" ||
-        !a.sessionId
-      )
-        continue;
-      const group = discovered.get(a.sessionId) ?? [];
-      group.push(a);
-      discovered.set(a.sessionId, group);
-      represented.add(key);
-    }
-    for (const group of [...discovered.values(), unlinkedReports])
-      group.sort((a, b) =>
-        activityKey(project, a).localeCompare(activityKey(project, b)),
-      );
   }
+  const { sessions: discovered, unlinked: unlinkedReports } =
+    groupProjectActivity(
+      discovery?.value?.projects.find((p) => p.path === project),
+      represented,
+    );
   const unlinkedCount = unlinked.length + unlinkedReports.length;
   const unlinkedCurrent =
     (unlinked.length > 0 && !workflowError) ||
@@ -488,22 +467,14 @@ export function TaskSidebar({
   const reportRow = (a: Activity) =>
     project &&
     discovery && (
-      <div
+      <ActivityRow
         key={activityKey(project, a)}
-        className={
-          a.source === "terminal"
-            ? "history-run history-terminal"
-            : "history-run"
-        }
-      >
-        <ActivityRow
-          grouped
-          path={project}
-          activity={a}
-          opening={discovery.opening}
-          onOpen={discovery.onOpen}
-        />
-      </div>
+        grouped
+        path={project}
+        activity={a}
+        opening={discovery.opening}
+        onOpen={discovery.onOpen}
+      />
     );
   const chatRow = (id: string, chat?: ChatSummary) => {
     const flows = linked.get(id);
@@ -569,17 +540,14 @@ export function TaskSidebar({
           }
         />
         {workCount > 0 && (
-          <details className="history-workflows">
-            <summary
-              title={details}
-              aria-label={`${details} · ${label.title} (${workCount})`}
-            >
-              <span>{workCount}</span>
-              <FiChevronRight aria-hidden="true" />
-            </summary>
+          <SessionWorkDetails
+            label={details}
+            title={label.title}
+            count={workCount}
+          >
             {flows?.map(workflowRow)}
             {reports?.map(reportRow)}
-          </details>
+          </SessionWorkDetails>
         )}
       </div>
     );
