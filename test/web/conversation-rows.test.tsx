@@ -224,8 +224,14 @@ it("a readiness change disables only history controls without inserting text bet
       />,
     );
   const [running, history] = sidebar().split("Conversation history");
-  expect(running).toContain('title="Admitted reply"');
-  expect(running).toContain('session-state starting">starting</span>');
+  const admitted = running.match(
+    /<button\b[^>]* title="Admitted reply"[^>]*>.*?<\/button>/gs,
+  );
+  expect(admitted).toHaveLength(1);
+  expect(admitted?.[0]).toContain(
+    'history-activity-mark" role="img" aria-label="Working"',
+  );
+  expect(admitted?.[0]).not.toMatch(/session-sub|>starting</);
   expect(history).not.toContain("Admitted reply");
   expect(running).not.toContain("session-action");
   expect(history.match(/aria-label="Rename /g)).toHaveLength(2);

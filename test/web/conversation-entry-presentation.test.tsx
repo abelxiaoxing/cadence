@@ -7,6 +7,7 @@ import { ServiceClient } from "../../src/service-client.ts";
 import { publicError } from "../../src/service-contract.ts";
 import type { ChatComposerProps } from "../../web/src/components/workspace/ChatComposer";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
+import { currentToasts } from "../../web/src/layout/toasts";
 import { transport } from "./fixtures";
 
 const f = vi.hoisted(() => ({
@@ -247,3 +248,30 @@ it.each(["accepted", "refused", "uncertain"] as const)(
     expect(w.command).toHaveBeenCalledTimes(1);
   },
 );
+
+it("explains the running reply's image lock and refuses pasted files without changing or sending the draft", () => {
+  const w = workspace();
+  f.summary = {
+    id: "chat",
+    title: "First reply",
+    origin: "webui",
+    leaf: null,
+    updatedAt: 1,
+    status: "running",
+  };
+  const photo = new File(["fixture"], "sample.png", { type: "image/png" });
+  const { input, html } = w.draw();
+  const reason = "Wait for the current reply to finish before adding images.";
+  expect(html).toContain(
+    `disabled="" aria-label="Add images" title="${reason}" aria-description="${reason}"`,
+  );
+  input.onAddImages([photo]);
+  expect(currentToasts().at(-1)?.text).toBe(reason);
+  expect(w.draw().input).toMatchObject({ draft: "", images: [] });
+  f.summary.status = "completed";
+  const settled = w.draw();
+  expect(settled.html).not.toContain(reason);
+  settled.input.onAddImages([photo]);
+  expect(w.draw().input.images).toEqual([photo]);
+  expect(w.command).not.toHaveBeenCalled();
+});

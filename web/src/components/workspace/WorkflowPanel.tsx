@@ -398,7 +398,7 @@ export function PlanCard({
   canApprove,
   approvalHint,
   onApprove,
-  action = "approve",
+  action = proposal.plan.version === 3 ? "approve" : "readonly",
   canValidate = false,
   validating = false,
   previous,
@@ -406,7 +406,7 @@ export function PlanCard({
 }: {
   proposal: WorkflowProposal;
   canApprove: boolean;
-  action?: "restore" | "validate" | "approve";
+  action?: "restore" | "validate" | "approve" | "readonly";
   canValidate?: boolean;
   validating?: boolean;
   previous?: WorkflowProposal;
@@ -422,24 +422,29 @@ export function PlanCard({
     validating || (action === "approve" ? !canApprove : !canValidate);
   const prior =
     previous?.id === proposal.revalidatedFrom ? previous : undefined;
-  const status = validating
-    ? t("Validating plan…")
-    : disabled
-      ? (approvalHint ??
-        t(
-          action === "approve"
-            ? "Plan approval is currently unavailable."
-            : "Plan validation is currently unavailable.",
-        ))
-      : action === "restore"
-        ? t("Restore execution before approval.")
-        : action === "validate"
-          ? t("Validation required before approval.")
-          : proposal.revalidatedFrom
-            ? t(
-                "The plan content is unchanged. Its execution context was revalidated; review it below and confirm implementation. Nothing was approved.",
-              )
-            : t("Awaiting plan approval");
+  const status =
+    action === "readonly"
+      ? t(
+          "This plan is read-only. A new proposal is required for implementation.",
+        )
+      : validating
+        ? t("Validating plan…")
+        : disabled
+          ? (approvalHint ??
+            t(
+              action === "approve"
+                ? "Plan approval is currently unavailable."
+                : "Plan validation is currently unavailable.",
+            ))
+          : action === "restore"
+            ? t("Restore execution before approval.")
+            : action === "validate"
+              ? t("Validation required before approval.")
+              : proposal.revalidatedFrom
+                ? t(
+                    "The plan content is unchanged. Its execution context was revalidated; review it below and confirm implementation. Nothing was approved.",
+                  )
+                : t("Awaiting plan approval");
   return (
     <section
       className="workflow-plan"
@@ -487,52 +492,56 @@ export function PlanCard({
         <pre>{readableWorkflowPlan(plan)}</pre>
         {proposal.delivery && <pre>{readableDelivery(proposal.delivery)}</pre>}
       </details>
-      <button
-        type="button"
-        className="primary"
-        aria-describedby={statusId}
-        aria-busy={validating || undefined}
-        disabled={disabled}
-        onClick={action === "approve" ? onApprove : onValidate}
-      >
-        {t(
-          validating
-            ? "Validating plan…"
-            : action === "restore"
-              ? "Restore execution and validate plan"
-              : action === "validate"
-                ? "Validate plan again"
-                : proposal.revalidatedFrom
-                  ? "Confirm implementation"
-                  : "Implement this plan",
-        )}
-      </button>
-      {action === "approve" && onValidate && (
+      {action !== "readonly" && (
         <>
-          {" "}
           <button
             type="button"
-            disabled={validating || !canValidate}
-            title={
-              validating
-                ? status
-                : !canValidate
-                  ? (approvalHint ??
-                    t("Plan validation is currently unavailable."))
-                  : undefined
-            }
-            onClick={onValidate}
+            className="primary"
+            aria-describedby={statusId}
+            aria-busy={validating || undefined}
+            disabled={disabled}
+            onClick={action === "approve" ? onApprove : onValidate}
           >
-            {t("Validate plan again")}
+            {t(
+              validating
+                ? "Validating plan…"
+                : action === "restore"
+                  ? "Restore execution and validate plan"
+                  : action === "validate"
+                    ? "Validate plan again"
+                    : proposal.revalidatedFrom
+                      ? "Confirm implementation"
+                      : "Implement this plan",
+            )}
           </button>
-        </>
-      )}
-      {action !== "approve" && (
-        <p className="inspector-note">
-          {t(
-            "Validation may start the execution service and install the displayed model choice. It sends no message and runs no implementation; confirmation comes afterward.",
+          {action === "approve" && onValidate && (
+            <>
+              {" "}
+              <button
+                type="button"
+                disabled={validating || !canValidate}
+                title={
+                  validating
+                    ? status
+                    : !canValidate
+                      ? (approvalHint ??
+                        t("Plan validation is currently unavailable."))
+                      : undefined
+                }
+                onClick={onValidate}
+              >
+                {t("Validate plan again")}
+              </button>
+            </>
           )}
-        </p>
+          {action !== "approve" && (
+            <p className="inspector-note">
+              {t(
+                "Validation may start the execution service and install the displayed model choice. It sends no message and runs no implementation; confirmation comes afterward.",
+              )}
+            </p>
+          )}
+        </>
       )}
       <p>
         {t(

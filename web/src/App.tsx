@@ -340,9 +340,17 @@ export function App({
   const historyClient = retained.history?.client ?? api.client;
   const historyKey = `${independent ? "retained" : "viewer"}:${project?.id ?? "direct"}:${historyWorkspace?.epoch ?? ""}:${historyWorkspace?.storeId ?? ""}`;
   const chatWorkspace = useRef<string | null>(null);
-  if (workspace.workspace || execution.value?.workspaceId)
-    chatWorkspace.current =
-      workspace.workspace?.workspaceId ?? execution.value?.workspaceId ?? null;
+  // On a direct owner the authenticated active roster already names the
+  // workspace before the slower workspace read. Don't mount an editable
+  // draft under a provisional namespace (or replace it when history arrives).
+  const observedWorkspaceId =
+    workspace.workspace?.workspaceId ??
+    workspace.activeRuns?.workspaceId ??
+    execution.value?.workspaceId;
+  if (observedWorkspaceId) chatWorkspace.current = observedWorkspaceId;
+  const draftNamespace = project
+    ? `checkout:${project.path}`
+    : chatWorkspace.current;
   const chats = useConversationHistory(api.client, conversationAvailable);
   const observingRoster =
     workspace.attached && workspace.workspace && !detached && !signInRequired;
@@ -374,6 +382,36 @@ export function App({
     workflowActivity.value?.kind === "workflow-active"
       ? workflowActivity.value
       : undefined;
+  // A roster belongs to the project, not to one viewer allocation. Keep its
+  // last observation for history display only while the replacement reads.
+  // Fresh reads (including empty ones) replace the two rosters independently.
+  const lastRoster = useRef<{
+    project?: string;
+    workspace?: string | null;
+    chats?: typeof activeChats;
+    workflows?: typeof background;
+  }>({});
+  const rosterScope = project
+    ? (expectedWorkspace ?? (wrongWorkspace ? null : chatWorkspace.current))
+    : chatWorkspace.current;
+  const historyAllowed =
+    !detached && !signInRequired && !executionStopped && !independent;
+  if (
+    !historyAllowed ||
+    lastRoster.current.project !== project?.id ||
+    lastRoster.current.workspace !== rosterScope
+  ) {
+    lastRoster.current = { project: project?.id, workspace: rosterScope };
+  }
+  if (historyAllowed && !wrongWorkspace) {
+    if (activeChats) lastRoster.current.chats = activeChats;
+    if (background) lastRoster.current.workflows = background;
+  }
+  const historyRoster = lastRoster.current;
+  const showSidebar =
+    conversationAvailable ||
+    !!historyRoster.chats?.length ||
+    !!historyRoster.workflows?.runs.length;
   const activeWorkflowIds = useMemo(
     () =>
       background?.links
@@ -741,8 +779,13 @@ export function App({
     }),
     [renderedSignal, workspace.epoch, allocated, actionsReady, actionId],
   );
+  // Same-allocation poll errors do not revoke an otherwise valid safety
+  // viewer. Rows carried across allocations, however, are not its roster.
+  const carriedRuns = !background ? historyRoster.workflows?.runs : undefined;
   const canCancelWorkflow: CanCancelWorkflow = (run) =>
-    allocated(run.epoch) && workflowLive(run);
+    allocated(run.epoch) &&
+    workflowLive(run) &&
+    !carriedRuns?.some((last) => last.id === run.id);
   const latestRoster = useRef(roster);
   latestRoster.current = roster;
   // Only the explicit operation that requested a new observation may receive
@@ -1139,7 +1182,7 @@ export function App({
         }
         navigation={
           <>
-            {!conversationAvailable && !background?.runs.length && (
+            {!showSidebar && (
               <aside className="panel panel-left lp-panel">
                 {discovery && <ActivityList {...discovery} />}
                 {activeRuns.length > 0 && (
@@ -1189,7 +1232,7 @@ export function App({
                 </p>
               </aside>
             )}
-            {(conversationAvailable || !!background?.runs.length) && (
+            {showSidebar && (
               <TaskSidebar
                 key={`${historyKey}:${independent ? (taskId ?? "chat") : ""}`}
                 discovery={discovery}
@@ -1206,10 +1249,11 @@ export function App({
                 canceling={canceling}
                 onCancel={cancel}
                 chats={chats.value?.entries}
-                activeChats={activeChats}
+                activeChats={historyRoster.chats}
                 chatActivityKnown={
                   chatActivity.value?.kind === "conversation-active" &&
-                  !chatActivity.error
+                  !chatActivity.error &&
+                  !wrongWorkspace
                 }
                 chatHistoryPartial={
                   !chats.value ||
@@ -1266,9 +1310,11 @@ export function App({
                   chats.refresh();
                   if (id === chatId) setSummaryChanges((count) => count + 1);
                 }}
-                workflows={background?.runs}
-                workflowLinks={background?.links}
-                workflowError={!background || !!workflowActivity.error}
+                workflows={historyRoster.workflows?.runs}
+                workflowLinks={historyRoster.workflows?.links}
+                workflowError={
+                  !background || !!workflowActivity.error || wrongWorkspace
+                }
                 selectedWorkflow={agent?.runId}
                 onWorkflow={(run, conversationId) => {
                   if (conversationId) selectChat(conversationId);
@@ -1331,7 +1377,7 @@ export function App({
         }
         content={
           <>
-            {chatId && project && !projectObserved && (
+            {chatId && (!draftNamespace || (project && !projectObserved)) && (
               <p className="panel-empty" role="status">
                 {t("Reading this conversation…")}
               </p>
@@ -1353,9 +1399,9 @@ export function App({
                 onOpenAgent={setAgent}
               />
             )}
-            {chatId && (!project || projectObserved) && (
+            {chatId && draftNamespace && (!project || projectObserved) && (
               <ChatWorkspace
-                key={`${project?.id ?? chatWorkspace.current ?? "connecting"}:${chatId}:${activitySelection.leaf ?? ""}`}
+                key={`${project?.id ?? draftNamespace}:${chatId}:${activitySelection.leaf ?? ""}`}
                 client={api.client}
                 id={chatId}
                 activitySelected={activitySelection.selected}
@@ -1369,11 +1415,7 @@ export function App({
                 onAgents={onAgents}
                 onBranches={setBranchView}
                 onOpenBranches={openBranches}
-                workspaceId={
-                  project
-                    ? `checkout:${project.path}`
-                    : (chatWorkspace.current ?? "connecting")
-                }
+                workspaceId={draftNamespace}
                 directoryNamespaces={directoryNamespaces}
                 legacyWorkspaceId={
                   project

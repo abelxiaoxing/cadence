@@ -13,6 +13,8 @@ export const zh = {
   "Hide current plan": "收起当前计划",
   "Wait for the current reply before changing mode.":
     "请等当前回复结束后再切换模式。",
+  "This plan is read-only. A new proposal is required for implementation.":
+    "此计划只读。要实施，请先在对话中提出新计划。",
   "What approval allows": "批准范围",
   "Edit the working copy directly; keep edits on failure. No commit or merge.":
     "直接编辑工作副本；失败时保留改动。不提交或合并。",
@@ -301,6 +303,8 @@ export const zh = {
   applying: "合回中",
 
   "Invalid image.": "图片格式无效。",
+  "Wait for the current reply to finish before adding images.":
+    "当前回复进行中，请等回复结束后再添加图片。",
   "Add images": "添加图片",
   "Remove image: {name}": "移除图片：{name}",
   "Attached image": "附加图片",

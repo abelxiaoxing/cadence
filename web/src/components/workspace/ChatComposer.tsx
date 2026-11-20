@@ -84,6 +84,7 @@ export interface ChatComposerProps {
   images: readonly File[];
   imageKey(file: File): string | undefined;
   imagesLocked: boolean;
+  imageLockReason?: string;
   onAddImages(files: File[]): void;
   onRemoveImage(file: File): void;
   /** What the next message continues, when that is not simply the end of the
@@ -126,6 +127,7 @@ export function ChatComposer({
   images,
   imageKey,
   imagesLocked,
+  imageLockReason,
   onAddImages,
   onRemoveImage,
   anchor,
@@ -558,7 +560,8 @@ export function ChatComposer({
           className="ghost icon"
           disabled={imagesLocked}
           aria-label={t("Add images")}
-          title={t("Add images")}
+          title={imageLockReason ?? t("Add images")}
+          aria-description={imageLockReason}
           onClick={() => fileInput.current?.click()}
         >
           <FiImage aria-hidden="true" />

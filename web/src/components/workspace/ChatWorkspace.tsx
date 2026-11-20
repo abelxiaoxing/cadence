@@ -744,7 +744,8 @@ export function ChatWorkspace({
     !!draftModel &&
     canonicalJson(draftModel) !== canonicalJson(context?.model ?? null);
   const planApprovable =
-    !!state?.proposal &&
+    state?.proposal?.plan.version === 3 &&
+    state.enabled &&
     state.id === id &&
     !!summary &&
     summary.id === id &&
@@ -766,14 +767,15 @@ export function ChatWorkspace({
     : "";
   const planOpen = !!binding && openPlan === binding;
   const planPanelId = `current-plan-${id}`;
-  const approvalAction = state?.proposal
-    ? planAction(
-        state.proposal,
-        actionsReady,
-        modelRead.catalog?.version,
-        modelPending || invalidatedPlan === state.proposal.id,
-      )
-    : "approve";
+  const approvalAction =
+    state?.proposal?.plan.version === 3
+      ? planAction(
+          state.proposal,
+          actionsReady,
+          modelRead.catalog?.version,
+          modelPending || invalidatedPlan === state.proposal.id,
+        )
+      : "readonly";
   const validationPending =
     !!validation && !!state && state.revision < validation.after.revision;
   const canValidatePlan =
@@ -1285,6 +1287,7 @@ export function ChatWorkspace({
       refuse(t("No plan is awaiting approval."));
       return;
     }
+    if (approvalAction === "readonly") return;
     if (approvalAction !== "approve") {
       await validatePlan();
       return;
@@ -2026,10 +2029,13 @@ export function ChatWorkspace({
         : busy
           ? t("Working…")
           : undefined;
-  const imagesLocked =
-    busy || awaitingModel || !!pending || running || attaching;
+  const imageLockReason = running
+    ? t("Wait for the current reply to finish before adding images.")
+    : attaching
+      ? t("Reading the message's images…")
+      : waitingReason;
   const addImages = (files: File[]) => {
-    if (imagesLocked) return;
+    if (imageLockReason) return refuse(imageLockReason);
     try {
       imageDraft.add(files);
       clearError();
@@ -2382,6 +2388,7 @@ export function ChatWorkspace({
                       continue from; a message may be rewritten where the
                       entry it continued is known. */}
                   <ChatTurnView
+                    reading={away && !hidden && !planOpen}
                     turn={turn}
                     onContinue={
                       canAnchor &&
@@ -2554,7 +2561,8 @@ export function ChatWorkspace({
           locked={busy || !!pending || awaitingModel}
           images={imageDraft.files}
           imageKey={imageDraft.key}
-          imagesLocked={imagesLocked}
+          imagesLocked={!!imageLockReason}
+          imageLockReason={imageLockReason}
           onAddImages={addImages}
           onRemoveImage={(file) => removeImages([file])}
           anchor={strip}

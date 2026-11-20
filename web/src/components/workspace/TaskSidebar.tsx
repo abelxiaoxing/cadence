@@ -456,9 +456,7 @@ export function TaskSidebar({
           state={
             staleReply
               ? t("Not observed")
-              : status &&
-                  status !== "completed" &&
-                  (!unsettled(status) || status === "starting")
+              : status && status !== "completed" && !unsettled(status)
                 ? tx(status)
                 : ""
           }

@@ -12,6 +12,8 @@ import { project } from "./optical-fixtures/records.mjs";
 
 const traceId = "polish-trace";
 const bookId = "polish-reading";
+const pausedId = "polish-paused";
+const longBookId = "polish-long-index";
 const finalLine = "The last sentence is readable.";
 const pages = Array.from({ length: 8 }, (_, i) => ({
   id: `question-${i}`,
@@ -70,11 +72,19 @@ function traceSteps(revision) {
 
 /** Only synthetic, bounded public read results. Other requests (including
  * model/context) keep the shared fixture behavior. No action interceptor. */
-function readFixture(q, { revision, turnReads, detailReads }) {
+function readFixture(q, { revision, settled, turnReads, detailReads }) {
   const { id, kind } = q;
-  if (id !== traceId && id !== bookId) return null;
-  const live = id === traceId;
-  const leaf = live ? "trace-leaf" : pages.at(-1).entry;
+  if (![traceId, bookId, pausedId, longBookId].includes(id)) return null;
+  const live = id === traceId || id === pausedId;
+  const book =
+    id === longBookId
+      ? Array.from({ length: 120 }, (_, i) => ({
+          id: `long-${i}`,
+          entry: `long-answer-${i}`,
+          text: `Indexed question ${i + 1}`,
+        }))
+      : pages;
+  const leaf = live ? "trace-leaf" : book.at(-1).entry;
   if (kind === "conversation")
     return {
       kind,
@@ -88,7 +98,7 @@ function readFixture(q, { revision, turnReads, detailReads }) {
       },
       leaf,
       continues: true,
-      turns: live ? 1 : pages.length,
+      turns: live ? 1 : book.length,
       branches: 1,
       runs: [],
       attempt: null,
@@ -99,7 +109,7 @@ function readFixture(q, { revision, turnReads, detailReads }) {
       conversationId: id,
       nodes: live
         ? []
-        : pages.map(({ id, text }, i) => ({
+        : book.map(({ id, text }, i) => ({
             id,
             text,
             parent: pages[i - 1]?.id ?? null,
@@ -110,16 +120,29 @@ function readFixture(q, { revision, turnReads, detailReads }) {
       truncated: false,
     };
   if (kind === "conversation-turn") {
-    const page = live
-      ? { id: "trace-question", entry: null }
-      : pages[q.ordinal];
+    const page = live ? { id: "trace-question", entry: null } : book[q.ordinal];
     const steps = live
-      ? traceSteps(revision)
+      ? id === pausedId
+        ? [
+            step("trace-question", "user", {
+              text: "Look at the first two results.",
+            }),
+            tool("visible-first.ts", 0),
+            tool("visible-second.ts", 1),
+            tool("third.ts", 2, settled ? "completed" : "running"),
+            step("long-answer", "assistant", { text: dense }),
+            tool("offscreen.ts", 3),
+            tool("also-offscreen.ts", 4, settled ? "completed" : "running"),
+            step("last-answer", "assistant", {
+              text: settled ? "Finished." : "More to come.",
+            }),
+          ]
+        : traceSteps(revision)
       : [
           step(page.id, "user", { text: page.text }),
           step(page.entry, "assistant", {
             text:
-              q.ordinal >= pages.length - 2
+              q.ordinal >= book.length - 2
                 ? `${dense}\n\n${finalLine}`
                 : `Answer ${q.ordinal + 1}.`,
           }),
@@ -424,6 +447,63 @@ async function observeTrace(ctx, row, source) {
   );
 }
 
+// First crossing of the folding threshold, without focusing or opening a row.
+async function observePausedTrace(ctx, row, source) {
+  const { go, chat, run, send, wait } = ctx;
+  await go(chat(pausedId), '.toolcall-path[title="visible-first.ts"]');
+  const frame = () =>
+    run(() =>
+      opticalProbe.stableFrames(() => {
+        const pane = document.querySelector(".chat-messages"),
+          bounds = pane.getBoundingClientRect();
+        const rows = ["visible-first.ts", "visible-second.ts"].map((path) => {
+          const e = document.querySelector(`.toolcall-path[title="${path}"]`),
+            r = e?.getBoundingClientRect();
+          return (
+            r && {
+              top: r.top,
+              hit: e.contains(
+                document.elementFromPoint(r.left + 1, r.top + r.height / 2),
+              ),
+            }
+          );
+        });
+        return {
+          rows,
+          top: pane.scrollTop,
+          x: bounds.left + 12,
+          y: bounds.top + 60,
+          paneTop: bounds.top,
+          focused: !!document.activeElement?.closest(".trace-entry"),
+        };
+      }, "unfocused visible results"),
+    );
+  const start = await frame();
+  assert.ok(start.top > 100 && start.rows.every((r) => !r.hit));
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseWheel",
+    x: start.x,
+    y: start.y,
+    deltaX: 0,
+    deltaY: Math.round(start.rows[0].top - start.paneTop - 50),
+  });
+  await wait(`document.querySelector('${latest}')`);
+  const before = await frame();
+  assert.ok(!before.focused && before.rows.every((r) => r.hit));
+  source.settled = true;
+  await wait(
+    `document.querySelector('.msg-assistant').innerText.includes('Finished.')`,
+  );
+  const after = await frame();
+  assert.deepEqual(after, before);
+  assert.deepEqual(
+    (await run(entries)).filter((text) => text?.includes("steps completed")),
+    ["2 steps completed · Show steps"],
+  );
+  assert.deepEqual(source.detailReads, []);
+  row.unfocusedReading = { start, before, after };
+}
+
 function railFrame() {
   const nav = document.querySelector(".qn-rail"),
     pane = document.querySelector(".chat-messages");
@@ -498,6 +578,36 @@ async function observeRail(ctx, row, turnReads) {
       row.rail.hover.opacity > rest.opacity &&
       row.rail.hover.edgeClear,
   );
+  // Wheel on a mark and in the actual gap, not on surrounding prose. No
+  // wheel should activate a question or load a jump target.
+  row.rail.wheel = [];
+  for (const [target, y] of [
+    [".qn-bar", rest.y],
+    [".qn-rail", rest.y + 15],
+  ]) {
+    await move(rest.x, y);
+    assert.ok(
+      await ev(
+        `document.elementFromPoint(${rest.x},${y}).matches(${JSON.stringify(target)})`,
+      ),
+    );
+    const before = await run(scrollPosition);
+    await send("Input.dispatchMouseEvent", {
+      type: "mouseWheel",
+      x: rest.x,
+      y,
+      deltaY: -170,
+      deltaX: 0,
+    });
+    await wait(
+      `document.querySelector('.chat-messages').scrollTop<${before.top - 1}`,
+    );
+    const after = await run(scrollPosition);
+    assert.ok(!(await ev(`document.querySelector('.msg-flash') !== null`)));
+    row.rail.wheel.push({ target, y, before, after });
+  }
+  await ctx.click(latest);
+  await wait(`!document.querySelector('${latest}')`);
   await move(1, 1);
   // Drag the real scrollbar thumb off its bottom stop. Geometry alone would
   // miss an enlarged pseudo-element stealing the mouse outside the rail.
@@ -576,6 +686,11 @@ async function observeRail(ctx, row, turnReads) {
       row.rail.destination.text === pages[0].text,
   );
   row.rail.readsAfterJump = [...turnReads];
+  // A pointer still activates a mark, independently of its wheel handling.
+  await ctx.click('.qn-bar[data-question="1"]');
+  await wait(
+    `document.querySelector('[data-lazy-id="${pages[1].id}"].msg-flash')`,
+  );
   await ctx.click(latest);
 }
 
@@ -901,12 +1016,47 @@ async function observeReading(ctx, row, turnReads) {
   await press("Home", 36);
 }
 
+async function observeLongIndex(ctx, row) {
+  const { go, chat, ev, send, run, wait } = ctx;
+  await go(chat(longBookId), ".qn-rail.many .qn-bar");
+  const where = (selector) =>
+    run((s) => {
+      const r = document.querySelector(s).getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, selector);
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    ...(await where(".qn-bar")),
+  });
+  await wait(
+    `getComputedStyle(document.querySelector('.qn-list')).opacity==='1'`,
+  );
+  const point = await where(".qn-list"),
+    before = await run(scrollPosition);
+  const listTop = () => ev(`document.querySelector('.qn-list').scrollTop`);
+  const from = await listTop();
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseWheel",
+    ...point,
+    deltaX: 0,
+    deltaY: from > 200 ? -140 : 140,
+  });
+  await wait(`document.querySelector('.qn-list').scrollTop!==${from}`);
+  assert.deepEqual(await run(scrollPosition), before);
+  row.longIndex = { from, to: await listTop(), point };
+}
+
 export async function observeTranscriptPolish(ctx) {
   const { width, theme, layout, ev, rows } = ctx;
   const motion = width === 390 ? "reduce" : "no-preference";
   const row = { width, theme, motion };
   rows.push(row);
-  const source = { revision: 0, turnReads: [], detailReads: [] };
+  const source = {
+    revision: 0,
+    settled: false,
+    turnReads: [],
+    detailReads: [],
+  };
   const stopReads = await installReads(ctx, source);
   try {
     await layout(width, theme, motion);
@@ -916,7 +1066,9 @@ export async function observeTranscriptPolish(ctx) {
         `matchMedia('(prefers-color-scheme: ${theme})').matches && matchMedia('(prefers-reduced-motion: ${motion})').matches && innerWidth===${width}`,
       ),
     );
+    await observePausedTrace(ctx, row, source);
     await observeReading(ctx, row, source.turnReads);
+    if (width > 900) await observeLongIndex(ctx, row);
   } finally {
     await stopReads();
     await layout(width, theme);

@@ -16,7 +16,7 @@ Source: this delivery, 2026-11-20
 
 Kind: pitfall
 
-Why: Even a DTO-only edit under `src/service/contracts` changes `contractIdentity`, which feeds the owner bundle, the native client's generated identity and the browser manifest.
+Why: A change to a DTO under `src/service/contracts`, the worker protocol, or the shared client/wire transport outside that directory changes `contractIdentity`, which feeds the owner bundle, the native client's generated identity and the browser manifest.
 
 Anchors: `scripts/build-identity.mjs#contractIdentity`, `scripts/build-service.mjs#nativeIdentity`, `scripts/build-identity.mjs#browserIdentity`, `web/dist/manifest.json#contractHash`
 

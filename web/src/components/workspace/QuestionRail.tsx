@@ -23,8 +23,7 @@ export interface RailQuestion {
   text: string;
 }
 
-/** Measure the native gutter, not a guessed scrollbar width. The marks are a
- * sibling of the scroller, so its wheel and thumb stay entirely native. */
+/** Measure the native gutter, not a guessed scrollbar width. */
 export function observeQuestionTrack(
   rail: HTMLElement,
   size: (height: number) => void,
@@ -63,7 +62,35 @@ export function QuestionRail({
   const rail = useRef<HTMLElement>(null);
   const [height, setHeight] = useState(0);
   useLayoutEffect(() => {
-    if (rail.current) return observeQuestionTrack(rail.current, setHeight);
+    const nav = rail.current;
+    if (!nav) return;
+    const stop = observeQuestionTrack(nav, setHeight);
+    // The spine is outside the scroller. Direct its wheel to the same native
+    // scrollport as the transcript; leave zoom and the full list's own wheel
+    // behavior alone. The resulting scroll event owns follow intent as usual.
+    const pane =
+      nav.parentElement?.querySelector<HTMLElement>(".chat-messages");
+    const wheel = (event: WheelEvent) => {
+      if (
+        !pane ||
+        event.ctrlKey ||
+        (event.target instanceof Element && event.target.closest(".qn-list"))
+      )
+        return;
+      const unit =
+        event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? pane.clientHeight
+          : event.deltaMode === WheelEvent.DOM_DELTA_LINE
+            ? parseFloat(getComputedStyle(pane).lineHeight) || 16
+            : 1;
+      event.preventDefault();
+      pane.scrollBy(event.deltaX * unit, event.deltaY * unit);
+    };
+    nav.addEventListener("wheel", wheel, { passive: false });
+    return () => {
+      stop?.();
+      nav.removeEventListener("wheel", wheel);
+    };
   }, []);
   const { indices, gap, many } = useMemo(
     () => questionNavLayout(questions.length, height, active),
