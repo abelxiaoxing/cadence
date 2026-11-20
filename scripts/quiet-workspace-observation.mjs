@@ -69,6 +69,7 @@ function specimen(id) {
     unexpected: [],
     firstHead: Promise.withResolvers(),
     pending: null,
+    waiting: [],
     permit: null,
     revision: 1,
     proposal: null,
@@ -288,6 +289,7 @@ function specimen(id) {
         turns: turns.length,
         branches: leaf ? 1 : 0,
         commands: turns.map((t) => t.commandId),
+        pending: s.waiting,
       };
     }
     if (kind === "conversation-turn") {
@@ -351,9 +353,11 @@ function specimen(id) {
     if (
       c.conversationId === id &&
       ((["send", "cadence-send"].includes(kind) && s.permit === kind) ||
-        (kind === "conversation-input" &&
-          s.replying &&
-          c.mode === s.permit &&
+        (s.replying &&
+          ((kind === "conversation-input" && c.mode === s.permit) ||
+            (kind === "conversation-input-cancel" &&
+              s.permit === kind &&
+              s.waiting.some((w) => w.commandId === c.inputId))) &&
           c.turnId === live.commandId &&
           c.epoch === live.epoch))
     ) {
@@ -1061,7 +1065,12 @@ async function observeOrdinaryPhrase(p, row, paths) {
         await wait(`document.querySelector('.chat-image-draft img')`);
       }
       let restored, continued;
-      if (via === "complete restored prefix") {
+      if (via === "recall confirmed Send") {
+        assert.equal(s.turns.at(-1)?.kind, "send");
+        assert.equal(s.turns.at(-1).text, phrase);
+        assert.equal(await ev(`document.activeElement.value`), "");
+        await press("ArrowUp", 38);
+      } else if (via === "complete restored prefix") {
         await editor.replace("按计划");
         await editor.replace(discussion);
         restored = await editor.restore(false, "按计划");
@@ -1089,6 +1098,7 @@ async function observeOrdinaryPhrase(p, row, paths) {
       await wait(
         `document.activeElement.matches(${q(input)}) && document.activeElement.value===${q(phrase)} && document.querySelector('.chat-composer button[type="submit"]:enabled')`,
       );
+      assert.equal(s.commands.length, before); // local recovery alone sends nothing
       s.permit = "send";
       await press("Enter", 13);
       await until(() => s.pending, `ordinary send after ${via}`);
@@ -1097,6 +1107,7 @@ async function observeOrdinaryPhrase(p, row, paths) {
       assert.equal(command.conversationId, s.id);
       assert.equal(command.text, phrase);
       assert.equal(command.images?.length ?? 0, 0);
+      assert.equal(command.head, s.turns.at(-1)?.entry ?? null);
       s.turns.push({
         ...command,
         entry: s.turns.length ? "00000014" : "00000012",
@@ -1117,6 +1128,7 @@ async function observeOrdinaryPhrase(p, row, paths) {
         restored,
         continued,
         text: command.text,
+        target: command.conversationId,
         commands,
         focusedAfterReceipt: await ev(
           `document.activeElement.matches(${q(input)})`,
@@ -1866,12 +1878,66 @@ async function observeDirectReply(p, row) {
         text: phrase,
         mode,
       });
+      if (mode === "queue")
+        s.waiting = [{ commandId: command.commandId, mode, text: phrase }];
       finish(ok({ kind: "accepted", commandId: command.commandId }));
       s.pending = null;
       await wait(
         `document.activeElement.matches(${q(input)}) && !document.activeElement.value && document.querySelector('${stopButton}:enabled')`,
       );
       row.directReply.inputs.push({ restored, command, after: await frame() });
+    }
+    row.directReply.withdrawals = [];
+    const withdraw =
+      '.chat-waiting button[aria-label="Withdraw and put back in the message box"]';
+    const target = {
+      conversationId: s.id,
+      turnId: s.live.commandId,
+      epoch: s.live.epoch,
+    };
+    for (const mode of ["queue", "steer"]) {
+      const before = s.commands.length;
+      const original = s.waiting[0];
+      assert.equal(original.text, phrase);
+      await wait(`document.querySelector('${withdraw}:enabled')`);
+      s.permit = "conversation-input-cancel";
+      await click(withdraw);
+      await until(() => s.pending, "withdrawing the original input");
+      const cancel = s.pending.command;
+      assert.deepEqual(cancel, {
+        kind: "conversation-input-cancel",
+        commandId: cancel.commandId,
+        ...target,
+        inputId: original.commandId,
+      });
+      assert.equal(await ev(`document.querySelector(${q(input)}).value`), "");
+      s.waiting = [];
+      s.pending.finish(ok({ kind: "accepted", commandId: cancel.commandId }));
+      s.pending = null;
+      await wait(
+        `!document.querySelector('${withdraw}') && document.querySelector('.composer-queue:enabled') && document.querySelector(${q(input)}).value===${q(phrase)}`,
+      );
+      assert.deepEqual(s.commands.slice(before), [
+        { kind: cancel.kind, commandId: cancel.commandId },
+      ]);
+      await click(input);
+      s.permit = mode;
+      await press("Enter", 13, mode === "queue" ? 1 : 0);
+      await until(() => s.pending, `explicit ${mode} after withdrawal`);
+      const next = s.pending.command;
+      assert.deepEqual(next, {
+        kind: "conversation-input",
+        commandId: next.commandId,
+        ...target,
+        mode,
+        text: phrase,
+      });
+      if (mode === "queue")
+        s.waiting = [{ commandId: next.commandId, mode, text: next.text }];
+      s.pending.finish(ok({ kind: "accepted", commandId: next.commandId }));
+      s.pending = null;
+      await wait(`document.querySelector(${q(input)}).value===''`);
+      row.directReply.withdrawals.push({ original, cancel, next });
     }
     const button = `.conversation-row > button[title="${title}"]`;
     if (
@@ -1914,12 +1980,18 @@ async function observeDirectReply(p, row) {
     row.directReply.commands = [...s.commands];
     assert.deepEqual(
       s.commands,
-      row.directReply.inputs.map(({ command: { kind, commandId } }) => ({
-        kind,
-        commandId,
-      })),
+      [
+        ...row.directReply.inputs.map(({ command }) => command),
+        ...row.directReply.withdrawals.flatMap(({ cancel, next }) => [
+          cancel,
+          next,
+        ]),
+      ].map(({ kind, commandId }) => ({ kind, commandId })),
     );
-    assert.notEqual(s.commands[0].commandId, s.commands[1].commandId);
+    assert.equal(
+      new Set(s.commands.map((c) => c.commandId)).size,
+      s.commands.length,
+    );
   } finally {
     await stop();
   }
@@ -2196,6 +2268,14 @@ async function observeTerminalHistory(p, row, shot) {
   };
   const b = { ...a, instance: randomUUID(), leaf: "00000022" };
   const other = { ...a, cwd: recentFolder, leaf: "00000023" };
+  // Deliberately indistinguishable by session, phase or short UUID prefix.
+  const unshared = ["1", "2"].map((suffix) => ({
+    ...a,
+    history: "unavailable",
+    leaf: `0000003${suffix}`,
+    id: a.id.slice(0, -1) + suffix,
+    instance: a.instance.slice(0, -1) + suffix,
+  }));
   // Only the first orphan will have a matching viewer run. Its exact ID and
   // epoch also occur in another directory, where discovery must stay readonly.
   const orphans = [s.runIds[2], randomUUID()].map((id) => ({
@@ -2240,13 +2320,19 @@ async function observeTerminalHistory(p, row, shot) {
         observedAt: stage.at,
         freshness: stage.partial ? "unknown" : "current",
       }));
-      const local = stage.cold
-        ? [...shared, ...unattributed].map((report) => ({
+      const local = stage.unshared
+        ? [unshared[0], ...unshared].map((report) => ({
             ...report,
             observedAt: stage.at,
-            phase: stage.reordered ? stage.phase : report.phase,
+            phase: stage.phase,
           }))
-        : activities;
+        : stage.cold
+          ? [...shared, ...unattributed].map((report) => ({
+              ...report,
+              observedAt: stage.at,
+              phase: stage.reordered ? stage.phase : report.phase,
+            }))
+          : activities;
       const projects = [
         { path: cwd, activities: stage.reordered ? local.reverse() : local },
         {
@@ -2702,6 +2788,109 @@ async function observeTerminalHistory(p, row, shot) {
       reads: [...gateway.reads],
       commands: s.commands,
     };
+    // A fresh document with a held project read: the incompatible reader
+    // scope never becomes local history, even after its namesake is listed.
+    const route = `/app?project=${project}#chat=${s.id}`;
+    const group = `${outside} .history-unlinked`;
+    const namesake = `.task-list button[title="${title}"]`;
+    const selected = [...gateway.selections];
+    s.roster = {
+      ...stage("unshared history", 0, "turn", false, 0, 0),
+      unshared: true,
+    };
+    s.firstProject = Promise.withResolvers();
+    s.projectRequested = false;
+    await go(route, `${group} summary`);
+    await until(() => s.projectRequested, "held local history");
+    const open = async () => {
+      await drawer();
+      await run(
+        (sel) => document.querySelector(sel).focus(),
+        `${group} summary`,
+      );
+      if (await ev(`document.querySelector(${q(group)}).open`))
+        await p.press(" ", 32);
+      await p.press(" ", 32);
+      await wait(`document.querySelector(${q(`${group}[open]`)})`);
+    };
+    const inspect = async (loaded) => {
+      const frame = await run(
+        (sel, namesake, title) => {
+          const details = document.querySelector(sel);
+          const history = document.querySelector(namesake);
+          return {
+            route: location.pathname + location.search + location.hash,
+            focused:
+              details.querySelector("summary") === document.activeElement,
+            summary: details.querySelector("summary").innerText.trim(),
+            namesakes: [
+              ...document.querySelectorAll(".conversation-row > button"),
+            ].filter((e) => e.title === title).length,
+            listed: !!history,
+            promoted: !!history?.querySelector(".history-activity-mark"),
+            actions: details.querySelectorAll("a,button,[role=button]").length,
+            reports: [...details.querySelectorAll(".history-terminal")].map(
+              (row) => ({
+                text: row.innerText,
+                ids: [...row.querySelectorAll("code")].map((e) => ({
+                  text: e.innerText,
+                  visible: e.checkVisibility() && e.getClientRects().length > 0,
+                })),
+              }),
+            ),
+          };
+        },
+        group,
+        namesake,
+        title,
+      );
+      assert.equal(frame.route, route);
+      assert.ok(frame.focused);
+      assert.equal(frame.listed, loaded);
+      assert.equal(frame.namesakes, Number(loaded));
+      assert.equal(frame.promoted, false);
+      assert.equal(frame.actions, 0);
+      assert.equal(frame.summary, "Unattributed work · 2");
+      assert.equal(frame.reports.length, 2);
+      for (const [i, report] of unshared.entries()) {
+        const observed = frame.reports[i];
+        assert.deepEqual(
+          observed.ids,
+          [
+            `instance: ${report.instance}`,
+            `id: ${report.id}`,
+            `leaf: ${report.leaf}`,
+          ].map((text) => ({ text, visible: true })),
+        );
+        assert.ok(
+          observed.text.includes(cwd) && observed.text.includes(background),
+        );
+        assert.ok(
+          observed.text.includes(
+            "History configuration differs. Activity remains observe-only.",
+          ),
+        );
+      }
+      assert.deepEqual(gateway.selections, selected);
+      assert.deepEqual(s.commands, []);
+      return frame;
+    };
+    await open();
+    row.unsharedTerminals = { held: await inspect(false) };
+    s.roster = {
+      ...s.roster,
+      name: "unshared reversed",
+      reordered: true,
+      phase: "settling",
+    };
+    await wait(
+      `document.querySelector(${q(group)}).innerText.includes('settling')`,
+    );
+    row.unsharedTerminals.reordered = await inspect(false);
+    s.firstProject.resolve();
+    await wait(`document.querySelector(${q(namesake)})`);
+    await open();
+    row.unsharedTerminals.loaded = await inspect(true);
   } finally {
     await stop();
   }
@@ -2740,7 +2929,10 @@ export async function observeQuietWorkspace(p) {
   await observeBootstrap(p, row);
   await observeOrdinaryPhrase(p, row, ["park and restore", "remove image"]);
   await observeOrdinaryPhrase(p, row, ["historyUndo", "historyRedo"]);
-  await observeOrdinaryPhrase(p, row, ["complete restored prefix"]);
+  await observeOrdinaryPhrase(p, row, [
+    "complete restored prefix",
+    "recall confirmed Send",
+  ]);
   await observeDirectReply(p, row);
   const stop = await intercept(p, s);
   try {

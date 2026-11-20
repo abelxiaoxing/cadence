@@ -1,11 +1,20 @@
 // React's own SSR render-phase updates let us examine the next render with the
 // same workspace state. All command transports below are in-memory fixtures.
-import { Children, isValidElement, useState } from "react";
+import {
+  act,
+  Children,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+  useState,
+} from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import type { ChoiceVersion } from "../../src/service/contracts/models.ts";
 import type {
   CadenceConversation,
+  ChatPending,
   WorkbenchCommand,
 } from "../../src/service/contracts/workbench.ts";
 import {
@@ -19,6 +28,7 @@ import {
   type ChatComposerProps,
 } from "../../web/src/components/workspace/ChatComposer";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
+import { WaitingMessages } from "../../web/src/components/workspace/WaitingMessages";
 import { currentToasts } from "../../web/src/layout/toasts";
 import { plan } from "../helpers/workflow-plan";
 import { transport } from "./fixtures";
@@ -26,6 +36,8 @@ import { transport } from "./fixtures";
 const f = vi.hoisted(() => ({
   state: undefined as CadenceConversation | undefined,
   pinned: false,
+  turns: [],
+  pending: [] as ChatPending[],
   modeError: false,
   live: undefined as { epoch: string; commandId: string } | undefined,
   catalog: undefined as ChoiceVersion | undefined,
@@ -83,9 +95,10 @@ vi.mock("../../web/src/client/use-conversation", () => ({
     },
     pinned: f.pinned,
     leaf: f.pinned ? "earlier-leaf" : "leaf",
-    turns: [],
+    turns: f.turns,
     runs: [],
-    pending: [],
+    pending: f.pending,
+    choose: f.no,
     undelivered: [],
     commands: [],
     count: 1,
@@ -640,6 +653,7 @@ function pressEnter(props: ChatComposerProps, altKey = false) {
 function usePhraseWorkspace(
   client: ServiceClient,
   prepare: () => Promise<void>,
+  preparePlan = prepare,
 ) {
   return ChatWorkspace({
     client,
@@ -652,7 +666,7 @@ function usePhraseWorkspace(
       epoch: f.state?.proposal?.epoch ?? "fixture",
       attachmentVersion: 1,
     },
-    prepareForPlan: prepare,
+    prepareForPlan: preparePlan,
     prepareForSend: prepare,
     onModelChanged: f.no,
     onChanged: f.no,
@@ -782,7 +796,7 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown"])(
     f.catalog = b.model;
     const native = restore.startsWith("history");
     const { client, command, prepare, model } = discussionFixture(b.model);
-    historyFixture(discussionText);
+    historyFixture(native ? discussionText : phrase);
     function Probe() {
       const [step, advance] = useState(0);
       const tree = usePhraseWorkspace(client, prepare),
@@ -805,8 +819,15 @@ it.each(["historyUndo", "historyRedo", "Escape", "ArrowDown"])(
           else field.key("ArrowUp");
           break;
         case 3:
-          expect(edit.draft).toBe(discussionText);
+          expect(edit.draft).toBe(native ? discussionText : phrase);
           if (native) field.change(phrase, restore);
+          else {
+            // A history selection never inherits even the currently reviewed A.
+            field.key("Enter");
+            expect(currentToasts().at(-1)?.text).toContain(
+              "Review it from the conversation title",
+            );
+          }
           break;
         case 4:
           if (native) {
@@ -898,7 +919,7 @@ it.each([
     const image = new File(["image fixture"], "example.png", {
       type: "image/png",
     });
-    // A recalled phrase is text only, even though our own parked draft is discussion.
+    // Down/Escape leave the selected prompt and return to our parked draft.
     const recalled = "approve and execute";
     historyFixture(recalled);
     let submit: (() => void) | undefined;
@@ -940,10 +961,6 @@ it.each([
         if (step === 1) field.key("ArrowUp");
         if (step === 2) {
           expect(edit.draft).toBe(recalled);
-          field.key("Enter");
-          expect(currentToasts().at(-1)?.text).toBe(
-            "No plan is awaiting approval.",
-          );
           field.key(restore);
         }
       }
@@ -979,6 +996,202 @@ it.each([
       );
     } finally {
       vi.unstubAllGlobals();
+    }
+  },
+);
+
+// Keep the same React state across deferred transport replies. The probe
+// renders no host nodes; browser layout and trusted keys are observed separately.
+function descendant<P>(
+  children: ReactNode,
+  match: (e: ReactElement<P>) => boolean,
+): P | undefined {
+  for (const child of Children.toArray(children)) {
+    if (!isValidElement<P & { children?: ReactNode }>(child)) continue;
+    if (match(child)) return child.props;
+    const nested = descendant<P>(child.props.children, match);
+    if (nested) return nested;
+  }
+}
+
+it.each([
+  "send",
+  "steer",
+  "queue",
+  "changed turn",
+  "changed epoch",
+  "occupied",
+  "unmatched receipt",
+])(
+  "%s: explicit message recovery dispatches only the chosen discussion action",
+  async (path) => {
+    f.state = {
+      id: "chat",
+      head: "turn-1",
+      enabled: false,
+      revision: 1,
+      runs: [],
+      proposal: null,
+    };
+    const live = { commandId: crypto.randomUUID(), epoch: crypto.randomUUID() };
+    f.live = path === "send" ? undefined : live;
+    const { client, command, prepare } = discussionFixture(proposal("").model);
+    const preparePlan = vi.fn(async () => {});
+    const storage = new Map<string, string>();
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    });
+    vi.stubGlobal("window", {
+      location: new URL("http://localhost/app"),
+      HTMLIFrameElement: class {},
+    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal("cancelAnimationFrame", f.no);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = Object.assign(new EventTarget(), {
+      nodeType: 1,
+      tagName: "DIV",
+      ownerDocument: new EventTarget(),
+    });
+    const root = createRoot(container as unknown as HTMLElement);
+    let field!: ReturnType<typeof useField>,
+      editor!: ChatComposerProps,
+      recall: (() => void) | undefined;
+    function Probe() {
+      const tree = usePhraseWorkspace(client, prepare, preparePlan);
+      editor = composer(tree);
+      field = useField(editor);
+      const waiting = descendant<Parameters<typeof WaitingMessages>[0]>(
+        tree,
+        (e) => e.type === WaitingMessages,
+      );
+      if (!waiting) throw Error("missing waiting list");
+      const button = descendant<{
+        "aria-label": string;
+        onClick(): void;
+        disabled: boolean;
+      }>(
+        WaitingMessages(waiting),
+        (e) =>
+          e.type === "button" &&
+          e.props["aria-label"] === "Withdraw and put back in the message box",
+      );
+      recall = button && !button.disabled ? button.onClick : undefined;
+      return null;
+    }
+    const draw = () => act(async () => root.render(<Probe />));
+    const target = {
+      conversationId: "chat",
+      turnId: live.commandId,
+      epoch: live.epoch,
+    };
+    const submit = (alt = false) => act(async () => field.key("Enter", alt));
+    try {
+      await draw();
+      await act(async () => field.change(phrase, "insertText", phrase));
+      await submit(path !== "send");
+      const first = command.mock.calls[0][0];
+      expect(command).toHaveBeenCalledTimes(1);
+      expect(editor.draft).toBe("");
+      if (path === "send") {
+        expect(first).toMatchObject({
+          kind: "send",
+          conversationId: "chat",
+          text: phrase,
+        });
+        await act(async () => field.key("ArrowUp"));
+        expect(editor.draft).toBe(phrase);
+        expect(command).toHaveBeenCalledTimes(1);
+        await submit();
+        expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
+          first,
+          { ...first, commandId: expect.any(String) },
+        ]);
+        expect(command.mock.calls[1][0].commandId).not.toBe(first.commandId);
+        return;
+      }
+      expect(first).toEqual({
+        kind: "conversation-input",
+        commandId: expect.any(String),
+        ...target,
+        mode: "queue",
+        text: phrase,
+      });
+      f.pending = [{ commandId: first.commandId, mode: "queue", text: phrase }];
+      await draw();
+      let release!: () => void;
+      command.mockImplementationOnce(async (c) => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return {
+          kind: "ok",
+          value: {
+            kind: "accepted",
+            commandId:
+              path === "unmatched receipt" ? crypto.randomUUID() : c.commandId,
+          },
+        };
+      });
+      if (!recall) throw Error("missing recall button");
+      await act(async () => recall?.());
+      const cancel = {
+        kind: "conversation-input-cancel",
+        commandId: expect.any(String),
+        ...target,
+        inputId: first.commandId,
+      };
+      expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([first, cancel]);
+      expect(editor.draft).toBe(""); // no restoration before the exact receipt
+      if (path === "changed turn")
+        f.live = { ...live, commandId: crypto.randomUUID() };
+      if (path === "changed epoch")
+        f.live = { ...live, epoch: crypto.randomUUID() };
+      if (path === "occupied") await act(async () => editor.onDraft(" "));
+      f.pending = [];
+      await draw();
+      await act(async () => release());
+      expect(command).toHaveBeenCalledTimes(2);
+      if (path === "occupied" || path === "unmatched receipt") {
+        expect(editor.draft).toBe(path === "occupied" ? " " : "");
+        return;
+      }
+      expect(editor.draft).toBe(phrase);
+      if (path === "changed turn" || path === "changed epoch") {
+        expect(editor.input?.enabled).toBe(true);
+        await submit(path === "changed epoch");
+        expect(currentToasts().at(-1)?.text).toBe(
+          "No plan is awaiting approval.",
+        );
+        expect(command).toHaveBeenCalledTimes(2);
+        return;
+      }
+      await submit(path === "queue");
+      expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
+        first,
+        cancel,
+        {
+          kind: "conversation-input",
+          commandId: expect.any(String),
+          ...target,
+          mode: path,
+          text: phrase,
+        },
+      ]);
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+      f.live = undefined;
+      f.pending = [];
+      expect(preparePlan).not.toHaveBeenCalled();
     }
   },
 );
