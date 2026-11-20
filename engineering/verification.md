@@ -68,9 +68,36 @@ Use the same private temporary environment as for `verify`.
 For a repair, select one named group, for example `node scripts/qualify-optical.mjs --group=agent-scroll:dark:390`, `--group=dark:320`, `--group=reading` or `--group=forced-colors`; `--group=agent-scroll` checks that behavior across all six views.
 For the conversation UI, run `--group=quiet-workspace` and `--group=transcript-polish` against the **same** canonical build.
 Each selects dark/light at 320, 390 and 1440 CSS px, including reduced motion at 390; suffix `:<theme>:<width>` for one view.
-`quietWorkspace` records the one editor across a held/refused Send and an accepted first message, title-only plan review, a synthetic rebind (no execution approval) and linked/unattributed work over 90 seconds of controlled roster time.
-`transcriptPolish` records disclosure edges, focus and exact lazy-read counts, reading offsets, question jumps, and paired glyph/no-glyph screenshots with the composer at two heights.
-Compare `masks[].result`: the visible area must change, but the area from above Latest through the dock and bottom gutter must not.
+In `quietWorkspace`, type a draft and paste an image before the direct owner's first workspace read resolves; compare the focused editor node, text and attachment before and after that read.
+A separate first-message sequence distinguishes a held/refused Send from an accepted one.
+
+- **Plan replacement:** Open A, type `按计划实施`, then publish a different, immediately approvable B before Enter.
+  The command ledger must stay empty for that submission and the editor must keep the phrase and focus.
+  Check again after opening B without editing, after restoring just the text on reload, and after explicitly revalidating a stale plan with a phrase in the editor.
+  Revalidation has its own synthetic receipt; none of these submissions may prepare or approve execution.
+- **History:** Compare row text, order and focus through 90 seconds of controlled roster updates.
+  Include an unwritten first reply changing from starting to running.
+  Close the fixture viewer socket and hold the replacement session and roster reads: off-page and unattributed work must remain visible as stale, with Stop disabled, until an authoritative read.
+- **Terminal discovery:** Give the same session a reply, two owner workflows and two local terminal instances on different leaves; give another folder a report with colliding IDs.
+  Reorder the reports, settle the sources separately and supply a partial observation.
+  Check the single promoted row through the last terminal, its return to history, and the other folder's separate entry.
+  Open each terminal entry and compare the requested project, session and leaf; navigation must issue no workbench command.
+
+`transcriptPolish` records disclosure edges, focus and exact lazy-read counts for a trace with 15 completed calls, a body-free thought and separate unfinished/failed calls.
+It also checks cases that a focused disclosure alone misses:
+
+- **Reading without focus:** Wheel up to two completed rows in the main conversation and then in a subagent transcript.
+  When a third result arrives, compare the visible step IDs, hit-tested rectangles and scroll offset; an offscreen pair past the prose boundary should still fold.
+  In the subagent pane, use Latest and grow the transcript again to distinguish resumed follow from a one-time jump.
+- **Windowed turn:** Expand only the first group, then append a long reply until the older turn is an offscreen, childless `.msg-lazy-ph`.
+  Jump back on the same branch (desktop rail or phone Branches drawer) and compare the exact expanded order, the untouched folded group and zero detail reads.
+  A non-continuing head sharing that first turn must not inherit its expansion.
+- **Rail and composer:** On desktop, wheel over a hit-tested mark and the gap between marks, drag the native scrollbar, and jump by keyboard to an unloaded question.
+  The long index must scroll its own list without moving the transcript.
+  Compare the paired glyph/no-glyph screenshots at two composer heights in `masks[].result`: the visible area must change, but the area from above Latest through the dock and bottom gutter must not.
+
+These are probe conditions, not run results.
+Attribute a result to the `buildId` in the served manifest and the settled report for that group, not a passing report from an earlier build.
 A selected run is labelled targeted even on success.
 With no arguments the full matrix remains one process under its original command deadline.
 The report directory is printed before observation; `progress.ndjson` records each group's start and settlement against its build and HEAD.
@@ -1333,13 +1360,16 @@ These are targeted synthetic observations, not a pass of the no-argument optical
 An additional older `--group=dark:320` run (`optical-evidence-ckqDPw`) stopped at the disabled-model scene: its session advertises `actions: false`, so the real picker disabled all three options, not just the two ineligible entries assumed by the probe.
 That run did not qualify later legacy scenes.
 
-**Final conversation build:** Both conversation groups ran again after the optical repairs below, against `a57d98d4287ffe4fc2f2bbb110e50d27aa0cbdf66b0bbc5083384536fea994a5` in Chrome 151.0.7922.34.
+**Earlier conversation build:** Both conversation groups ran again after the optical repairs below, against `a57d98d4287ffe4fc2f2bbb110e50d27aa0cbdf66b0bbc5083384536fea994a5` in Chrome 151.0.7922.34.
 `optical-evidence-FixLvG` (quiet-workspace) and `optical-evidence-Unfp4d` (transcript-polish) under the session `TMPDIR` each contain six completed views, zero problems and no unexpected requests.
 In both themes the plan opened and closed over the existing transcript at scrollTop 1313/1290/499 for widths 320/390/1440; the editor remained focused on publication and later discussion left no implementation button in the stream.
 After the 90-second controlled roster sequence there was no background brand feedback.
 The trace arrows again had a 0px spread, and resizing the editor while reading left scrollTop unchanged at 6452/4604/2447 before Latest restored a zero bottom gap.
 Across the twelve ink/no-ink pairs the visible region changed at 18,632–66,984 pixels; the protected strip, editor and gutter each changed at zero pixels.
 These reports exercise keyboard input and reduced motion (390px); they do not exercise a physical phone, real provider or execution approval.
+
+On the later build `a848ced3b6b1f32991aebc2bd98f09f44ef227c933727accba990f4df764030c`, `optical-evidence-FRLtZ1` and `optical-evidence-rHce8U` each recorded six completed views and zero problems.
+Those runs predate the approvable replacement draft, gateway terminal-history, subagent threshold and lazy-window remount cases described above; they do not qualify those cases.
 
 ### Legacy probes on the same conversation build (targeted, not a matrix pass)
 

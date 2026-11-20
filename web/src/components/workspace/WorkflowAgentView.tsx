@@ -170,7 +170,7 @@ function AgentView({
           )}
           {agent.stepId &&
             (turn ? (
-              <ChatTurnView turn={turn} />
+              <ChatTurnView turn={turn} reading={away} />
             ) : (
               <p className="inspector-note">
                 {t(

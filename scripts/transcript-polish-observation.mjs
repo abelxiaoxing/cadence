@@ -8,11 +8,12 @@ import {
   controlGeometry,
   glyphSample,
 } from "./optical-fixtures/measure.mjs";
-import { project } from "./optical-fixtures/records.mjs";
+import { epoch, liveDock, project } from "./optical-fixtures/records.mjs";
 
 const traceId = "polish-trace";
 const bookId = "polish-reading";
 const pausedId = "polish-paused";
+const windowId = "polish-window";
 const longBookId = "polish-long-index";
 const finalLine = "The last sentence is readable.";
 const pages = Array.from({ length: 8 }, (_, i) => ({
@@ -70,11 +71,74 @@ function traceSteps(revision) {
   ];
 }
 
+function pausedSteps(settled, growing = false) {
+  return [
+    step("trace-question", "user", { text: "Look at the first two results." }),
+    tool("visible-first.ts", 0),
+    tool("visible-second.ts", 1),
+    tool("third.ts", 2, settled ? "completed" : "running"),
+    step("long-answer", "assistant", { text: dense }),
+    tool("offscreen.ts", 3),
+    tool("also-offscreen.ts", 4, settled ? "completed" : "running"),
+    step("last-answer", "assistant", {
+      text: growing
+        ? `Finished.\n\n${dense}\n\nFollowing again.`
+        : settled
+          ? "Finished."
+          : "More to come.",
+    }),
+  ];
+}
+
 /** Only synthetic, bounded public read results. Other requests (including
  * model/context) keep the shared fixture behavior. No action interceptor. */
-function readFixture(q, { revision, settled, turnReads, detailReads }) {
+function readFixture(
+  q,
+  {
+    revision,
+    settled,
+    agentPhase,
+    windowGrown,
+    windowFork,
+    turnReads,
+    detailReads,
+  },
+) {
   const { id, kind } = q;
-  if (![traceId, bookId, pausedId, longBookId].includes(id)) return null;
+  if (
+    kind === "workflow-transcript" &&
+    id === liveDock.id &&
+    q.stepId === liveDock.steps[0].id
+  )
+    return {
+      kind,
+      runId: id,
+      stepId: q.stepId,
+      turn: {
+        id: liveDock.steps[0].childRunId,
+        epoch,
+        status: "running",
+        notice: "",
+        omitted: { thinking: false, media: false, other: false },
+        items: pausedSteps(agentPhase >= 1, agentPhase >= 2).map(
+          ({ id, renderId, role, name, text, state, target, error }) => ({
+            id,
+            renderId,
+            role,
+            name,
+            state,
+            error,
+            text:
+              role === "tool" && state === "completed"
+                ? "Retained result."
+                : text,
+            args: target ? JSON.stringify({ path: target }) : "",
+          }),
+        ),
+      },
+    };
+  if (![traceId, bookId, pausedId, windowId, longBookId].includes(id))
+    return null;
   const live = id === traceId || id === pausedId;
   const book =
     id === longBookId
@@ -83,8 +147,12 @@ function readFixture(q, { revision, settled, turnReads, detailReads }) {
           entry: `long-answer-${i}`,
           text: `Indexed question ${i + 1}`,
         }))
-      : pages;
+      : id === windowId
+        ? [pages[0], ...(windowGrown ? [pages[windowFork ? 2 : 1]] : [])]
+        : pages;
   const leaf = live ? "trace-leaf" : book.at(-1).entry;
+  const status =
+    live || (id === windowId && !windowFork) ? "running" : "completed";
   if (kind === "conversation")
     return {
       kind,
@@ -92,12 +160,12 @@ function readFixture(q, { revision, settled, turnReads, detailReads }) {
         id,
         title: live ? "Mixed recorded steps" : "Reading specimen",
         leaf,
-        status: live ? "running" : "completed",
+        status,
         origin: "webui",
         updatedAt: 1,
       },
       leaf,
-      continues: true,
+      continues: !(id === windowId && windowFork && q.known === pages[1].entry),
       turns: live ? 1 : book.length,
       branches: 1,
       runs: [],
@@ -121,33 +189,44 @@ function readFixture(q, { revision, settled, turnReads, detailReads }) {
     };
   if (kind === "conversation-turn") {
     const page = live ? { id: "trace-question", entry: null } : book[q.ordinal];
+    const turnStatus =
+      id === windowId && windowGrown && q.ordinal === 0 ? "completed" : status;
     const steps = live
       ? id === pausedId
+        ? pausedSteps(settled)
+        : traceSteps(revision)
+      : id === windowId && q.ordinal === 0
         ? [
-            step("trace-question", "user", {
-              text: "Look at the first two results.",
+            step(page.id, "user", {
+              renderId: "stable-window-turn",
+              text: page.text,
             }),
-            tool("visible-first.ts", 0),
-            tool("visible-second.ts", 1),
-            tool("third.ts", 2, settled ? "completed" : "running"),
-            step("long-answer", "assistant", { text: dense }),
-            tool("offscreen.ts", 3),
-            tool("also-offscreen.ts", 4, settled ? "completed" : "running"),
-            step("last-answer", "assistant", {
-              text: settled ? "Finished." : "More to come.",
+            ...["first", "second", "third"].map((name, i) =>
+              tool(`${name}.ts`, i),
+            ),
+            step("prose", "assistant", { text: "Between groups." }),
+            tool("other-one.ts", 4),
+            tool("other-two.ts", 5),
+            step("closing", "assistant", {
+              text: "End of this trace.",
+              state: windowGrown ? "completed" : "streaming",
             }),
           ]
-        : traceSteps(revision)
-      : [
-          step(page.id, "user", { text: page.text }),
-          step(page.entry, "assistant", {
-            text:
-              q.ordinal >= book.length - 2
-                ? `${dense}\n\n${finalLine}`
-                : `Answer ${q.ordinal + 1}.`,
-          }),
-        ];
-    if (!live) turnReads.push(q.ordinal);
+        : [
+            step(page.id, "user", { text: page.text }),
+            step(page.entry, "assistant", {
+              text:
+                id === windowId
+                  ? Array.from(
+                      { length: 160 },
+                      (_, i) => `More observations from layer ${i}.`,
+                    ).join("\n\n")
+                  : q.ordinal >= book.length - 2
+                    ? `${dense}\n\n${finalLine}`
+                    : `Answer ${q.ordinal + 1}.`,
+            }),
+          ];
+    if (!live && id !== windowId) turnReads.push(q.ordinal);
     const end = q.before ?? steps.length,
       start = Math.max(0, end - STEP_READ);
     return {
@@ -160,14 +239,18 @@ function readFixture(q, { revision, settled, turnReads, detailReads }) {
       turn: {
         id: page.id,
         entry: page.entry,
-        status: live ? "running" : "completed",
+        status: turnStatus,
         at: q.ordinal + 1,
         steps: steps.length,
-        stable: live ? 0 : steps.length,
+        stable: turnStatus === "running" ? 0 : steps.length,
         omitted: { thinking: false, media: false, other: false },
         notice: "",
       },
     };
+  }
+  if (kind === "conversation-step" && id === windowId) {
+    detailReads.push(q.step);
+    throw Error("Windowed disclosure read a detail");
   }
   if (kind === "conversation-step" && live) {
     detailReads.push(q.step);
@@ -260,29 +343,31 @@ const lastTurn = `[data-lazy-id="${pages.at(-1).id}"]`;
 const densePara = `${lastTurn} .msg-assistant .md p:first-child`;
 const latest = ".chat-messages-wrap > .scroll-bottom";
 
-function scrollPosition() {
-  const pane = document.querySelector(".chat-messages");
+function scrollPosition(selector = ".chat-messages") {
+  const pane = document.querySelector(selector);
   return opticalProbe.stableFrames(() => {
     const { scrollTop: top, scrollHeight: height, clientHeight: view } = pane;
     return { top, height, view, gap: height - view - top };
   }, "transcript reading position");
 }
-function entries() {
-  return [...document.querySelectorAll(".msg-assistant .msg-body > *")].map(
-    (el) => {
-      const label = el.querySelector(".trace-group-head .chead-title");
-      if (label) return label.textContent;
-      const card = el.querySelector(".toolcall");
-      if (card)
-        return `${card.className} | ${card.querySelector(".toolcall-path")?.title ?? ""}`;
-      if (el.querySelector(".thinking")) {
-        if (el.querySelector("button,[aria-expanded]"))
-          throw Error("Empty thinking has a disclosure");
-        return el.textContent;
-      }
-      return el.querySelector("p")?.textContent;
-    },
-  );
+function entries(root = "body") {
+  return [
+    ...document
+      .querySelector(root)
+      .querySelectorAll(".msg-assistant .msg-body > *"),
+  ].map((el) => {
+    const label = el.querySelector(".trace-group-head .chead-title");
+    if (label) return label.textContent;
+    const card = el.querySelector(".toolcall");
+    if (card)
+      return `${card.className} | ${card.querySelector(".toolcall-path")?.title ?? ""}`;
+    if (el.querySelector(".thinking")) {
+      if (el.querySelector("button,[aria-expanded]"))
+        throw Error("Empty thinking has a disclosure");
+      return el.textContent;
+    }
+    return el.querySelector("p")?.textContent;
+  });
 }
 function arrows() {
   const body = document
@@ -448,35 +533,38 @@ async function observeTrace(ctx, row, source) {
 }
 
 // First crossing of the folding threshold, without focusing or opening a row.
-async function observePausedTrace(ctx, row, source) {
-  const { go, chat, run, send, wait } = ctx;
-  await go(chat(pausedId), '.toolcall-path[title="visible-first.ts"]');
+// Sample inside the selected pane: AgentView leaves the main chat mounted.
+async function observeThreshold(ctx, pane, latestButton, settle) {
+  const { run, send, wait } = ctx;
   const frame = () =>
-    run(() =>
-      opticalProbe.stableFrames(() => {
-        const pane = document.querySelector(".chat-messages"),
-          bounds = pane.getBoundingClientRect();
-        const rows = ["visible-first.ts", "visible-second.ts"].map((path) => {
-          const e = document.querySelector(`.toolcall-path[title="${path}"]`),
-            r = e?.getBoundingClientRect();
-          return (
-            r && {
-              top: r.top,
-              hit: e.contains(
-                document.elementFromPoint(r.left + 1, r.top + r.height / 2),
-              ),
-            }
-          );
-        });
-        return {
-          rows,
-          top: pane.scrollTop,
-          x: bounds.left + 12,
-          y: bounds.top + 60,
-          paneTop: bounds.top,
-          focused: !!document.activeElement?.closest(".trace-entry"),
-        };
-      }, "unfocused visible results"),
+    run(
+      (selector) =>
+        opticalProbe.stableFrames(() => {
+          const pane = document.querySelector(selector),
+            bounds = pane.getBoundingClientRect();
+          const rows = ["visible-first.ts", "visible-second.ts"].map((path) => {
+            const e = pane.querySelector(`.toolcall-path[title="${path}"]`),
+              r = e?.getBoundingClientRect();
+            return (
+              r && {
+                id: e.closest(".trace-entry").dataset.readingStep,
+                rect: [r.left, r.top, r.right, r.bottom],
+                hit: e.contains(
+                  document.elementFromPoint(r.left + 1, r.top + r.height / 2),
+                ),
+              }
+            );
+          });
+          return {
+            rows,
+            top: pane.scrollTop,
+            x: bounds.left + 12,
+            y: bounds.top + 60,
+            paneTop: bounds.top,
+            focused: !!document.activeElement?.closest(".trace-entry"),
+          };
+        }, "unfocused visible results"),
+      pane,
     );
   const start = await frame();
   assert.ok(start.top > 100 && start.rows.every((r) => !r.hit));
@@ -485,23 +573,175 @@ async function observePausedTrace(ctx, row, source) {
     x: start.x,
     y: start.y,
     deltaX: 0,
-    deltaY: Math.round(start.rows[0].top - start.paneTop - 50),
+    deltaY: Math.round(start.rows[0].rect[1] - start.paneTop - 50),
   });
-  await wait(`document.querySelector('${latest}')`);
+  await wait(`document.querySelector('${latestButton}')`);
   const before = await frame();
   assert.ok(!before.focused && before.rows.every((r) => r.hit));
-  source.settled = true;
+  assert.deepEqual(
+    before.rows.map((r) => r.id),
+    ["call-0", "call-1"],
+  );
+  const offscreen = await run((selector) => {
+    const pane = document.querySelector(selector);
+    return ["offscreen.ts", "also-offscreen.ts"].map(
+      (path) =>
+        pane
+          .querySelector(`.toolcall-path[title="${path}"]`)
+          .getBoundingClientRect().top - pane.getBoundingClientRect().bottom,
+    );
+  }, pane);
+  assert.ok(offscreen.every((offset) => offset > 0));
+  settle();
   await wait(
-    `document.querySelector('.msg-assistant').innerText.includes('Finished.')`,
+    `document.querySelector('${pane} .msg-assistant').innerText.includes('Finished.') && document.querySelector('${pane} .toolcall.ok .toolcall-path[title="third.ts"]')`,
   );
   const after = await frame();
   assert.deepEqual(after, before);
-  assert.deepEqual(
-    (await run(entries)).filter((text) => text?.includes("steps completed")),
-    ["2 steps completed · Show steps"],
+  const summaries = (await run(entries, pane)).filter((text) =>
+    text?.includes("steps completed"),
+  );
+  assert.deepEqual(summaries, ["2 steps completed · Show steps"]);
+  return { start, before, after, offscreen, summaries };
+}
+
+async function observePausedTrace(ctx, row, source) {
+  await ctx.go(ctx.chat(pausedId), '.toolcall-path[title="visible-first.ts"]');
+  row.unfocusedReading = await observeThreshold(
+    ctx,
+    ".chat-messages",
+    latest,
+    () => {
+      source.settled = true;
+    },
   );
   assert.deepEqual(source.detailReads, []);
-  row.unfocusedReading = { start, before, after };
+}
+
+async function observeAgentThreshold(ctx, row, source) {
+  const { go, chat, click, clickPoint, ev, wait, run } = ctx;
+  const dock = `.agent-dock-run[aria-label="${liveDock.goal}"] > .agent-dock-row`;
+  await go(chat("live-dock"), dock);
+  if (
+    await ev(
+      `document.querySelector('.navigation-toggle').ariaExpanded === 'false'`,
+    )
+  )
+    await click(".navigation-toggle");
+  const entry = await run(controlGeometry, dock, false);
+  assert.ok(entry.hit.center.hit);
+  await clickPoint(dock, entry.hit.center);
+  const pane = ".workflow-agent .chat-messages",
+    latestButton = ".workflow-agent .scroll-bottom";
+  await wait(
+    `document.querySelector('${pane} .toolcall-path[title="visible-first.ts"]')`,
+  );
+  row.agentReading = await observeThreshold(ctx, pane, latestButton, () => {
+    source.agentPhase = 1;
+  });
+  await click(latestButton);
+  await wait(`!document.querySelector('${latestButton}')`);
+  const following = await run(scrollPosition, pane);
+  source.agentPhase = 2;
+  await wait(
+    `document.querySelector('${pane} .msg-assistant').innerText.includes('Following again.')`,
+  );
+  const followed = await run(scrollPosition, pane);
+  assert.ok(
+    following.gap <= 1 &&
+      followed.height > following.height &&
+      followed.gap <= 1,
+  );
+  Object.assign(row.agentReading, { following, followed });
+}
+
+async function observeWindowedTrace(ctx, row, source) {
+  const { go, chat, click, ev, wait, run } = ctx;
+  const turn = `[data-lazy-id="${pages[0].id}"]`,
+    head = `${turn} .trace-summary:first-child .chead-main`;
+  await go(chat(windowId), head);
+  const folded = await run(entries, turn);
+  assert.deepEqual(folded, [
+    "3 steps completed · Show steps",
+    "Between groups.",
+    "2 steps completed · Show steps",
+    "End of this trace.",
+  ]);
+  await click(head);
+  const expanded = await run(entries, turn);
+  assert.deepEqual(expanded, [
+    "3 steps completed · Hide steps",
+    ...["first", "second", "third"].map((n) => `toolcall ok | ${n}.ts`),
+    ...folded.slice(1),
+  ]);
+  source.windowGrown = true;
+  const placeholder = `${turn}.msg-lazy-ph`;
+  await wait(
+    `document.querySelector('${placeholder}') && document.querySelector('[data-lazy-id="${pages[1].id}"] .md')`,
+  );
+  const unmounted = await run((s) => {
+    const e = document.querySelector(s),
+      r = e.getBoundingClientRect();
+    return {
+      id: e.dataset.lazyId,
+      cls: e.className,
+      children: e.childElementCount,
+      rect: [r.top, r.bottom],
+      scrollTop: e.closest(".chat-messages").scrollTop,
+    };
+  }, placeholder);
+  assert.ok(
+    unmounted.children === 0 &&
+      unmounted.rect[1] < 0 &&
+      unmounted.scrollTop > 2400,
+  );
+  if (row.width > 900) await click('.qn-bar[data-question="0"]');
+  else {
+    // The phone hides the question rail. Its Branches drawer can navigate
+    // to a message on this very same branch without changing sessions.
+    if (
+      await ev(
+        `document.querySelector('.inspector-toggle').ariaExpanded === 'false'`,
+      )
+    )
+      await click(".inspector-toggle");
+    // The drawer can still be sliding after the opener's click. Target the
+    // settled tab, not the coordinates it briefly travels through.
+    const tab =
+      '.drawer-right.open .rp-tabs[aria-label="Workspace panels"] .rp-tab:nth-child(2)';
+    const geometry = await run(controlGeometry, tab, false);
+    assert.equal(geometry.name, "Branches");
+    assert.ok(geometry.hit.center.hit);
+    await ctx.clickPoint(tab, geometry.hit.center);
+    const choice = `.branch-row[title="${pages[0].text}"]`;
+    await wait(`document.querySelector('${choice}')`);
+    await click(choice);
+  }
+  await wait(`document.querySelector('${turn}.msg-flash .msg-user')`);
+  const restored = await run(entries, turn);
+  assert.deepEqual(restored, expanded);
+  assert.deepEqual(source.detailReads, []);
+  await click(head);
+  assert.deepEqual(await run(entries, turn), folded);
+  // A non-continuing head replaces the latest branch while sharing the
+  // first turn (same read/render IDs). Do not lend it that branch's choice.
+  await click(head);
+  assert.deepEqual(await run(entries, turn), expanded);
+  source.windowFork = true;
+  await wait(
+    `document.querySelector('[data-lazy-id="${pages[2].id}"]') && document.querySelector('${head}').ariaExpanded === 'false'`,
+  );
+  const forked = await run(entries, turn);
+  assert.deepEqual(forked, folded);
+  assert.deepEqual(source.detailReads, []);
+  row.windowedTrace = {
+    folded,
+    forked,
+    expanded,
+    unmounted,
+    restored,
+    detailReads: [...source.detailReads],
+  };
 }
 
 function railFrame() {
@@ -1054,6 +1294,9 @@ export async function observeTranscriptPolish(ctx) {
   const source = {
     revision: 0,
     settled: false,
+    agentPhase: 0,
+    windowGrown: false,
+    windowFork: false,
     turnReads: [],
     detailReads: [],
   };
@@ -1067,6 +1310,8 @@ export async function observeTranscriptPolish(ctx) {
       ),
     );
     await observePausedTrace(ctx, row, source);
+    await observeAgentThreshold(ctx, row, source);
+    await observeWindowedTrace(ctx, row, source);
     await observeReading(ctx, row, source.turnReads);
     if (width > 900) await observeLongIndex(ctx, row);
   } finally {

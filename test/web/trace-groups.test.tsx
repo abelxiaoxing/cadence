@@ -70,6 +70,27 @@ it.each([1, 2, 3, 15])(
   },
 );
 
+it("restores only the group containing a chosen render identity, not an old read id or ordinal", () => {
+  const steps = [
+    ...tools(3, "unselected"),
+    prose("Separate the groups"),
+    ...tools(3, "new-read-id").map((s, i) => ({
+      ...s,
+      renderId: `capture:${i}`,
+    })),
+  ];
+  const html = renderToStaticMarkup(
+    <ChatTurnView
+      turn={source(steps)}
+      expandedSteps={new Set(["capture:1"])}
+    />,
+  );
+  expect(html.match(/class="trace-summary"/g)).toHaveLength(2);
+  expect(html).not.toContain('title="unselected-');
+  for (const i of [0, 1, 2]) expect(html).toContain(`title="new-read-id-${i}"`);
+  expect(html).not.toContain('class="toolcall-body"');
+});
+
 it("prose starts the two-step threshold but always breaks the run; a new turn starts fresh", () => {
   const html = render([
     ...tools(2),

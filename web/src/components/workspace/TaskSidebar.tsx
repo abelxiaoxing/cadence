@@ -14,6 +14,7 @@ import {
   FiSquare,
   FiX,
 } from "react-icons/fi";
+import type { Activity } from "../../../../src/service/contracts/activity.ts";
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import { unsettled } from "../../client/conversation-reader";
@@ -37,6 +38,7 @@ import type {
 } from "../../types";
 import { PageControls } from "../history/PageControls";
 import {
+  ActivityButton,
   ActivityList,
   type ActivityListProps,
   activityKey,
@@ -372,7 +374,49 @@ export function TaskSidebar({
       linked.set(parent, group);
     } else unlinked.push(run);
   }
-  const pinned = new Set([...replying, ...linked.keys()]);
+  const project = discovery?.project;
+  const terminals = new Map<string, Activity[]>();
+  const represented = new Set<string>();
+  if (project) {
+    for (const run of roster)
+      represented.add(
+        activityKey(project, {
+          source: "workflow",
+          id: run.id,
+          epoch: run.epoch,
+        }),
+      );
+    for (const chat of liveChats)
+      if (chat.live)
+        represented.add(
+          activityKey(project, {
+            source: "turn",
+            id: chat.live.commandId,
+            epoch: chat.live.epoch,
+          }),
+        );
+    // The gateway groups by canonical project, not the terminal's launch cwd.
+    // These reports are independent of whether the project's owner is running.
+    const local = discovery.value?.projects.find((p) => p.path === project);
+    for (const a of local?.activities ?? []) {
+      if (
+        a.source !== "terminal" ||
+        !a.instance ||
+        a.history !== "shared" ||
+        !a.sessionId
+      )
+        continue;
+      const group = terminals.get(a.sessionId) ?? [];
+      group.push(a);
+      terminals.set(a.sessionId, group);
+      represented.add(activityKey(project, a));
+    }
+    for (const group of terminals.values())
+      group.sort((a, b) =>
+        activityKey(project, a).localeCompare(activityKey(project, b)),
+      );
+  }
+  const pinned = new Set([...replying, ...linked.keys(), ...terminals.keys()]);
   const pastChats = chats.filter((chat) => !pinned.has(chat.id));
   const activityKnown =
     executionStopped ||
@@ -431,11 +475,20 @@ export function TaskSidebar({
   };
   const chatRow = (id: string, chat?: ChatSummary) => {
     const flows = linked.get(id);
+    const native = terminals.get(id);
+    const workCount = (flows?.length ?? 0) + (native?.length ?? 0);
+    const details = native
+      ? flows
+        ? t("Details")
+        : t("Terminal turn (observe only)")
+      : t("Open workflow details");
     const busy = pinned.has(id);
     const status = chat?.status;
     const staleReply = unsettled(status) && !replying.has(id);
     const activityLabel = busy
-      ? (replying.has(id) && chatActivityKnown) || (flows && !workflowError)
+      ? (replying.has(id) && chatActivityKnown) ||
+        (flows && !workflowError) ||
+        (!discovery?.error && native?.some((a) => a.freshness === "current"))
         ? t("Working")
         : t("Stale observation")
       : undefined;
@@ -447,7 +500,7 @@ export function TaskSidebar({
     return (
       <div
         key={id}
-        className={flows ? "history-entry has-workflows" : "history-entry"}
+        className={workCount ? "history-entry has-workflows" : "history-entry"}
       >
         <ConversationRow
           chat={label}
@@ -461,7 +514,11 @@ export function TaskSidebar({
                 : ""
           }
           tone={staleReply ? "unknown" : status}
-          onOpen={() => onConversation?.(id)}
+          onOpen={() => {
+            if (!chat && native && project && discovery) {
+              if (!discovery.opening) discovery.onOpen(project, native[0]);
+            } else onConversation?.(id);
+          }}
           row={commands.states.get(id)}
           unavailable={actionsUnavailable}
           onArchive={
@@ -479,16 +536,32 @@ export function TaskSidebar({
               : undefined
           }
         />
-        {flows && (
+        {workCount > 0 && (
           <details className="history-workflows">
             <summary
-              title={t("Open workflow details")}
-              aria-label={`${t("Open workflow details")} · ${label.title} (${flows.length})`}
+              title={details}
+              aria-label={`${details} · ${label.title} (${workCount})`}
             >
-              <span>{flows.length}</span>
+              <span>{workCount}</span>
               <FiChevronRight aria-hidden="true" />
             </summary>
-            {flows.map(workflowRow)}
+            {flows?.map(workflowRow)}
+            {project &&
+              discovery &&
+              native?.map((a) => (
+                <div
+                  key={activityKey(project, a)}
+                  className="history-run history-terminal"
+                >
+                  <ActivityButton
+                    grouped
+                    path={project}
+                    activity={a}
+                    opening={discovery.opening}
+                    onOpen={discovery.onOpen}
+                  />
+                </div>
+              ))}
           </details>
         )}
       </div>
@@ -501,6 +574,8 @@ export function TaskSidebar({
   const page = tasks.page && !("kind" in tasks.page) ? tasks.page : undefined;
   const countKnown =
     activityKnown &&
+    (!discovery ||
+      (!discovery.error && discovery.value?.completeness === "complete")) &&
     (archivedOpen
       ? !!archived.value && !archived.error
       : !!listedChats && (!historyWorkspace || (!!page && !tasks.error)));
@@ -518,37 +593,7 @@ export function TaskSidebar({
     : t("Not observed");
   return (
     <aside className="panel panel-left lp-panel">
-      {discovery && (
-        <ActivityList
-          {...discovery}
-          represented={
-            !executionStopped && discovery.project
-              ? [
-                  ...(workflows ?? []).map((r) =>
-                    activityKey(
-                      discovery.project as string,
-                      "workflow",
-                      r.id,
-                      r.epoch,
-                    ),
-                  ),
-                  ...liveChats.flatMap((chat) =>
-                    chat.live
-                      ? [
-                          activityKey(
-                            discovery.project as string,
-                            "turn",
-                            chat.live.commandId,
-                            chat.live.epoch,
-                          ),
-                        ]
-                      : [],
-                  ),
-                ]
-              : []
-          }
-        />
-      )}
+      {discovery && <ActivityList {...discovery} represented={represented} />}
       <ConversationActions onConversation={onNewConversation} />
       {/* One scroll lifetime for every history row. Its live prefix remains
           reachable even with older history filtered, archived or folded. */}

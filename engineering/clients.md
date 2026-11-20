@@ -128,6 +128,8 @@ An ordinary turn shows the user's message, then one speaker label over the reply
 An inactive thinking placeholder with no body can share a group but does not count as a result.
 Failed, unknown and in-flight calls stay visible.
 Revealing the process restores its keyed rows, not their detail bodies; focused or explicitly opened members stay readable through regrouping.
+The main conversation keeps explicit group choices above its lazy window, by turn and member render identity. Advancing the latest leaf does not retire them; switching branches does. No detail body or DOM row is retained to restore a group.
+In both the conversation and a subagent transcript, pausing follow protects individually displayed steps in the viewport when a new result crosses the folding threshold. That visibility is local to the mounted view, not a saved choice.
 A fine rail joins adjacent rows but stops at prose.
 A body-free observation shares the icon slot without offering a disclosure; only an opened detail has a glass backing.
 The disclosure fills the row, keeping the chevron in a fixed end column beside shrinkable text.
@@ -380,7 +382,7 @@ The question rail sits beside, not over, the native scrollbar.
 Its marks reveal labels or the list on hover or keyboard focus; the same arrow-key group jumps to loaded or earlier messages, and phones still hide it.
 Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
 The sidebar lists active conversations before the paged history.
-A reply and its linked active workflows share one conversation row even when it is archived or outside the loaded page.
+A reply, its linked active workflows and shared-history terminal reports from the selected project share one row per session ID, even without a summary or outside the loaded page.
 A static activity mark is separate from the selected background; changing elapsed time or workflow phase does not rewrite the row.
 A stale observation is not a settled run.
 Eligible history rows offer Rename and Archive (`ConversationRow.tsx`), revealed on hover or focus and always shown on touch screens.
@@ -390,7 +392,7 @@ Each request is one command and nothing is changed ahead of it: the row says wha
 A refusal that changed nothing is a toast, and an unknown outcome stays under its row without a retry.
 When the live owner cannot take a history action, the button is disabled and its reason is available on the control and in the footer's connection details; readiness changes never insert a notice into the history or archive list.
 History rows are grouped by this browser's calendar day (today, yesterday, earlier), and a filter box narrows the rows already listed by title and reads nothing: active rows are never filtered, and pages not loaded are not searched.
-A workflow disclosure identifies each linked run; unattributed work has its own compact disclosure rather than a fabricated session.
+The row disclosure keeps each terminal’s explicit session/leaf navigation and each owner workflow’s exact-run controls separate; unattributed work has its own compact disclosure rather than a fabricated session.
 The lower-left Subagents dock follows the open conversation, not the whole activity roster.
 Active candidate IDs come from that conversation's owner-issued roster links; retained IDs in Pi or browser history are hints, not ownership (a fork may copy them).
 The chat lines and dock share one workflow reader.
@@ -711,7 +713,8 @@ Candidate worktrees remain execution locations of their original owner; native r
 One gateway shares a bounded, round-robin cached sweep across tabs; discovery neither prepares owners nor adds Stop associations.
 Native checkout resolution is asynchronous and cancellable; registry owners reuse their already canonical checkout identity without a new Git process.
 Closing or invalidating the observer aborts only its reads; it cannot cancel execution.
-The project sidebar suppresses only exact owner rows already shown by its existing roster; unavailable and unassociated owners remain in discovery.
+Only work represented in the selected project’s history prefix is subtracted from discovery: owner work by source, epoch and run/command ID, terminal work by instance and activity ID.
+Other projects, incompatible reader scopes and reports without a session remain separate, even when their session IDs match.
 Limits and uncertainty windows live beside the constants in these modules.
 A failed/changed-epoch observation retains briefly unknown work, never fabricates completion; capacity, corrupt state and missing observations make the response partial, including empty responses.
 Discovery does not locate idle terminals, other hosts/accounts or another Pi configuration scope.
