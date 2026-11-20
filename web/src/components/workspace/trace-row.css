@@ -1,0 +1,39 @@
+.chat-turn :is(.toolcall, .thinking) {
+  width: 100%;
+  min-width: 0;
+}
+
+.chat-turn :is(.toolcall-head, .thinking-head) {
+  --arrow-width: 20px;
+  --copy-width: 28px;
+
+  .chead-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .chead-toggle {
+    flex: 0 0 var(--arrow-width);
+    margin-inline-start: auto;
+  }
+
+  /* The disclosure fills the head. Its optional copy action is a sibling
+     button in the preceding slot, never a reason to move the chevron. */
+  > .chead-copy {
+    position: absolute;
+    inset-inline-end: calc(var(--trace-inset) + var(--arrow-width) + 4px);
+    width: var(--copy-width);
+  }
+  &:has(> .chead-copy) :is(.toolcall-path, .thinking-label) {
+    margin-inline-end: var(--copy-width);
+  }
+  .toolcall-name {
+    flex-shrink: 1;
+    font-size: 13px;
+  }
+  .toolcall-path {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-body);
+    font-size: 12px;
+  }
+}
