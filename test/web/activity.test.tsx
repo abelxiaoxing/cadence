@@ -7,6 +7,7 @@ import type {
   Activity,
   ActivityDiscovery,
 } from "../../src/service/contracts/activity.ts";
+import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import { App } from "../../web/src/App";
 import { observeActivity, staleActivity } from "../../web/src/client/activity";
@@ -388,10 +389,18 @@ it("pins only the selected directory's exact work through expired and incomplete
   const no = vi.fn(),
     a = activity(),
     b = { ...a, instance: randomUUID() };
-  const first = discovery([a, b, a]);
+  const orphan = activity({
+    source: "workflow",
+    phase: "research",
+    sessionId: null,
+    instance: null,
+    epoch,
+  });
+  let workflows: WorkflowRun[] | undefined;
+  const first = discovery([a, b, a, orphan]);
   first.projects.push({
     path: "/other",
-    activities: [{ ...a, cwd: "/other" }],
+    activities: [a, orphan].map((report) => ({ ...report, cwd: "/other" })),
   });
   let response: ActivityDiscovery | undefined = first;
   let selected = "/project",
@@ -417,6 +426,7 @@ it("pins only the selected directory's exact work through expired and incomplete
       onTask: no,
       onScope: no,
       discovery: feed,
+      workflows,
       canCancelWorkflow: () => true,
       onCancelWorkflow: no,
       chats: ["Earlier", "Local"].map((title, i) => ({
@@ -468,14 +478,45 @@ it("pins only the selected directory's exact work through expired and incomplete
   };
   try {
     await tick(0);
-    check(2, "Working", true);
+    expect(check(2, "Working", true)).toContain(`<code>${orphan.id}</code>`);
     response = undefined;
     await tick();
     check(2, "Stale observation", true);
     await tick(120000);
     expect(read.mock.calls.length).toBeGreaterThan(40);
     expect(observed.value?.projects).toEqual([]);
-    check(2, "Stale observation");
+    const expired = check(2, "Stale observation");
+    const details = (html: string) =>
+      html.match(/<details class="history-unlinked">(.*?)<\/details>/s)?.[1];
+    expect(details(expired)).toContain("Unattributed work · 1");
+    expect(details(expired)).toContain(
+      `<code>${orphan.id}</code><br/>research · Stale observation`,
+    );
+    expect(details(expired)).not.toMatch(/<button|Current observation/);
+    // The gateway is still unavailable. A matching real roster replaces that
+    // exact display identity; only its row can offer the owner's Stop.
+    workflows = [
+      {
+        id: orphan.id,
+        epoch,
+        goal: "Inspect",
+        phase: "research",
+        status: "running",
+        steps: [],
+        notice: "",
+        mergedCommit: null,
+        humanReviewed: false,
+      },
+    ];
+    await act(async () => render());
+    const joined = details(renderToStaticMarkup(tree));
+    expect(joined).toContain("Unattributed work · 1");
+    expect(joined).toContain(`Open workflow details · Inspect · ${orphan.id}`);
+    expect(joined).toContain(
+      `aria-label="Cancel workflow — request stop · Inspect · ${orphan.id}">`,
+    );
+    expect(joined).not.toContain(`<code>${orphan.id}</code>`);
+    workflows = [];
     response = { ...discovery([]), completeness: "partial", unavailable: 1 };
     await tick();
     const partial = check(2, "Stale observation");
@@ -486,7 +527,9 @@ it("pins only the selected directory's exact work through expired and incomplete
     expect(check(2, "Working")).toContain("Stale observation ·");
     response = discovery([b]);
     await tick();
-    expect(check(1, "Working")).not.toContain(a.instance);
+    const complete = check(1, "Working");
+    expect(complete).not.toContain(a.instance);
+    expect(complete).not.toContain("history-unlinked");
     response = discovery([]);
     await tick();
     check(0);

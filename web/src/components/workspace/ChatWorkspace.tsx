@@ -920,6 +920,22 @@ export function ChatWorkspace({
   );
   const recoveredSource =
     discussionPath === "chat" || liveRun ? discussionSource : undefined;
+  // Starters, file references and recovered messages are local discussion
+  // edits, never plan confirmation. Appending cannot re-author older text.
+  const appendDiscussion = useCallback(
+    (text: string, onlyIfEmpty = false) => {
+      setEntry((prior) => {
+        if (!prior.text) return { text, source: recoveredSource };
+        if (onlyIfEmpty) return prior;
+        return {
+          text: `${prior.text}\n${text}`,
+          source:
+            prior.source === recoveredSource ? recoveredSource : undefined,
+        };
+      });
+    },
+    [setEntry, recoveredSource],
+  );
   const phraseSource =
     discussionSource ??
     (cadenceKnown && reviewed && planApprovable && contextKnown && !anchor
@@ -1100,11 +1116,11 @@ export function ChatWorkspace({
   }, [draftKey, pending, modelCommand]);
   useEffect(() => {
     if (reference) {
-      setDraft((previous) => `${previous}${previous ? "\n" : ""}@${reference}`);
+      appendDiscussion(`@${reference}`);
       onReferenceUsed();
       textarea.current?.focus();
     }
-  }, [reference, onReferenceUsed, setDraft]);
+  }, [reference, onReferenceUsed, appendDiscussion]);
   useEffect(() => {
     if (attempted.current && state?.runs.includes(attempted.current)) {
       rememberApproval("");
@@ -2102,15 +2118,7 @@ export function ChatWorkspace({
     conversation.refresh();
   };
   const restoreUndelivered = (text: string) => {
-    setEntry((prior) =>
-      prior.text
-        ? {
-            text: `${prior.text}\n${text}`,
-            source:
-              prior.source === recoveredSource ? recoveredSource : undefined,
-          }
-        : { text, source: recoveredSource },
-    );
+    appendDiscussion(text);
     textarea.current?.focus();
   };
   const interrupt = async () => {
@@ -2816,7 +2824,7 @@ export function ChatWorkspace({
             !pending &&
             !awaitingModel
               ? (prompt) => {
-                  setDraft((current) => (current === "" ? prompt : current));
+                  appendDiscussion(prompt, true);
                   textarea.current?.focus({ preventScroll: true });
                 }
               : undefined

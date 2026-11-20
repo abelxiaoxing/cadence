@@ -30,6 +30,7 @@ import {
   ChatComposer,
   type ChatComposerProps,
 } from "../../web/src/components/workspace/ChatComposer";
+import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import {
   ChatTurnView,
   ChatWorkspace,
@@ -42,6 +43,7 @@ import { transport } from "./fixtures";
 
 const f = vi.hoisted(() => ({
   state: undefined as CadenceConversation | undefined,
+  empty: false,
   pinned: false,
   turns: [] as LoadedTurn[],
   undelivered: [] as ChatAttempt[],
@@ -93,25 +95,27 @@ vi.mock("../../web/src/client/use-model-catalog", () => ({
 }));
 vi.mock("../../web/src/client/use-conversation", () => ({
   useConversation: () => ({
-    summary: {
-      id: "chat",
-      title: "Fixture discussion",
-      status: f.live
-        ? "running"
-        : (f.undelivered.at(-1)?.status ?? "completed"),
-      live: f.live,
-      origin: "webui",
-      leaf: "leaf",
-    },
+    summary: f.empty
+      ? null
+      : {
+          id: "chat",
+          title: "Fixture discussion",
+          status: f.live
+            ? "running"
+            : (f.undelivered.at(-1)?.status ?? "completed"),
+          live: f.live,
+          origin: "webui",
+          leaf: "leaf",
+        },
     pinned: f.pinned,
-    leaf: f.pinned ? "earlier-leaf" : "leaf",
+    leaf: f.empty ? null : f.pinned ? "earlier-leaf" : "leaf",
     turns: f.turns,
     runs: [],
     pending: f.pending,
     choose: f.no,
     undelivered: f.undelivered,
     commands: [],
-    count: 1,
+    count: f.empty ? 0 : 1,
     refresh: f.no,
   }),
 }));
@@ -664,6 +668,7 @@ function usePhraseWorkspace(
   client: ServiceClient,
   prepare: () => Promise<void>,
   preparePlan = prepare,
+  reference?: string,
 ) {
   return ChatWorkspace({
     client,
@@ -678,6 +683,7 @@ function usePhraseWorkspace(
     },
     prepareForPlan: preparePlan,
     prepareForSend: prepare,
+    reference,
     onModelChanged: f.no,
     onChanged: f.no,
     onReferenceUsed: f.no,
@@ -1069,6 +1075,103 @@ function buttonIn(tree: ReactNode, label: string) {
   );
   return button && !button.disabled ? button.onClick : undefined;
 }
+
+it.each([
+  "starter",
+  "reference",
+  "cold draft",
+  "replacement plan",
+  "mode exit",
+])(
+  "%s: local insertions preserve current discussion, never confer approval or re-author older text",
+  async (path) => {
+    const old = path === "replacement plan" || path === "mode exit";
+    const a = proposal("First agreement");
+    f.empty = !old;
+    f.state = {
+      id: "chat",
+      revision: 1,
+      enabled: old,
+      head: old ? "turn-1" : null,
+      runs: [],
+      proposal: old ? a : null,
+    };
+    f.catalog = a.model;
+    const { client, command, prepare } = discussionFixture(a.model);
+    const root = recoveryRoot();
+    let tree!: ReturnType<typeof ChatWorkspace>,
+      field!: ReturnType<typeof useField>;
+    function Probe({ reference }: { reference?: string }) {
+      tree = usePhraseWorkspace(client, prepare, prepare, reference);
+      field = useField(composer(tree));
+      return null;
+    }
+    const draw = (reference?: string) =>
+      act(async () => root.render(<Probe reference={reference} />));
+    try {
+      if (path === "cold draft")
+        sessionStorage.setItem("cadence:draft:workspace:chat", phrase);
+      await draw();
+      if (path === "starter") {
+        const choose = descendant<ComponentProps<typeof ChatWelcome>>(
+          tree,
+          (e) => e.type === ChatWelcome,
+        )?.onStart;
+        if (!choose) throw Error("missing starter");
+        const label = "Explain this project";
+        await act(async () => choose(label));
+        expect(composer(tree).draft).toBe(label);
+        await act(async () =>
+          field.change(label + phrase, "insertText", phrase),
+        );
+        expect(composer(tree).draft).toBe(label + phrase);
+      } else {
+        if (old) await act(async () => toggleTitle(tree));
+        if (path !== "cold draft")
+          await act(async () => field.change(phrase, "insertText", phrase));
+        if (old) {
+          const b =
+            path === "replacement plan"
+              ? proposal("Replacement agreement")
+              : null;
+          f.state = { ...f.state, enabled: !!b, proposal: b, revision: 2 };
+          await draw();
+          if (b) await act(async () => toggleTitle(tree));
+        }
+        expect(composer(tree).draft).toBe(phrase);
+        await draw("fixture.txt");
+        expect(composer(tree).draft).toBe(`${phrase}\n@fixture.txt`);
+      }
+      await act(async () => field.change(phrase, "deleteContentBackward"));
+      expect(composer(tree).draft).toBe(phrase);
+      expect(command).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
+      await act(async () => field.key("Enter"));
+      if (path === "starter" || path === "reference") {
+        expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
+          expect.objectContaining({
+            kind: "send",
+            text: phrase,
+            conversationId: "chat",
+          }),
+        ]);
+      } else {
+        expect(command).not.toHaveBeenCalled();
+        expect(prepare).not.toHaveBeenCalled();
+        expect(currentToasts().at(-1)?.text).toContain(
+          path === "replacement plan"
+            ? "Review it from the conversation title"
+            : "No plan is awaiting approval.",
+        );
+      }
+    } finally {
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+      f.catalog = undefined;
+      f.empty = false;
+    }
+  },
+);
 
 it.each([
   "send",
