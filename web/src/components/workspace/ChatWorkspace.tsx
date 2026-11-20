@@ -224,6 +224,23 @@ export interface ChatDiagnostics {
   runs?: string;
   retry(): void;
 }
+type Draft = { text: string; source?: string | symbol };
+type DraftEntry = Draft & { parked?: Draft };
+// Native history exposes the restored text, not which edit it came from.
+// Remember only recognized phrases: a discussion lifetime if unambiguous,
+// otherwise null. Neither the browser's edit stack nor plan bindings live here.
+type PhraseOrigins = ReadonlyMap<string, symbol | null>;
+function rememberPhrase(origins: PhraseOrigins, entry: Draft): PhraseOrigins {
+  if (!cadenceApproval(entry.text)) return origins;
+  const key = entry.text.trim();
+  const previous = origins.get(key);
+  const source =
+    typeof entry.source === "symbol" &&
+    (previous === undefined || previous === entry.source)
+      ? entry.source
+      : null;
+  return previous === source ? origins : new Map(origins).set(key, source);
+}
 function stored(key: string, fallback = "") {
   try {
     return sessionStorage.getItem(key) ?? fallback;
@@ -330,10 +347,23 @@ export function ChatWorkspace({
   );
   // Only text survives storage, recall by the workspace, and branch edits.
   // A plan confirmation gets its source from an explicit composer edit below.
-  type Draft = { text: string; source?: string };
-  const [entry, setEntry] = useState<Draft & { parked?: Draft }>(() => ({
-    text: stored(draftKey, initialDraft?.text),
+  const [{ entry }, updateEditor] = useState<{
+    entry: DraftEntry;
+    origins: PhraseOrigins;
+  }>(() => ({
+    entry: { text: stored(draftKey, initialDraft?.text) },
+    origins: new Map(),
   }));
+  const setEntry = useCallback(
+    (edit: (prior: DraftEntry, origins: PhraseOrigins) => DraftEntry) => {
+      updateEditor((prior) => {
+        const origins = rememberPhrase(prior.origins, prior.entry);
+        const entry = edit(prior.entry, origins);
+        return entry === prior.entry ? prior : { entry, origins };
+      });
+    },
+    [],
+  );
   const draft = entry.text;
   const setDraft = useCallback(
     (update: string | ((text: string) => string)) => {
@@ -343,7 +373,7 @@ export function ChatWorkspace({
         return text === previous.text ? previous : { text };
       });
     },
-    [],
+    [setEntry],
   );
   useEffect(() => {
     if (initialDraft) onDraftApplied?.();
@@ -839,19 +869,23 @@ export function ChatWorkspace({
       : "readonly";
   // An exact phrase can also be ordinary discussion (including steering a
   // live reply). Never reinterpret a draft across these two input paths.
+  const discussionPath = running ? "reply" : cadence ? undefined : mode;
+  const discussionSource = useMemo(
+    () => discussionPath && Symbol(discussionPath),
+    [discussionPath],
+  );
   const phraseSource =
-    running || !cadence
-      ? "discussion"
-      : cadenceKnown && reviewed && planApprovable && contextKnown && !anchor
-        ? canonicalJson([
-            binding,
-            approvalAction,
-            availability,
-            modelRead.catalog?.version ?? null,
-            context,
-            draftModel,
-          ])
-        : undefined;
+    discussionSource ??
+    (cadenceKnown && reviewed && planApprovable && contextKnown && !anchor
+      ? canonicalJson([
+          binding,
+          approvalAction,
+          availability,
+          modelRead.catalog?.version ?? null,
+          context,
+          draftModel,
+        ])
+      : undefined);
   const editDraft: ChatComposerProps["onDraft"] = (text, origin = "edit") => {
     if (origin === "history") {
       // Keep the entry we left in memory; the displayed history prompt is text only.
@@ -861,16 +895,29 @@ export function ChatWorkspace({
         prior.parked?.text === text ? prior.parked : { text },
       );
     } else {
-      // Native undo/redo restores text, not intent. Pictures rule out a
-      // new plan confirmation, but not a phrase typed as ordinary discussion.
-      setEntry({
-        text,
-        source:
-          origin === "edit" &&
-          cadenceApproval(text) &&
-          (phraseSource === "discussion" || !imageDraft.files.length)
-            ? phraseSource
-            : undefined,
+      setEntry((prior, origins) => {
+        if (origin === "native-history")
+          return {
+            text,
+            source:
+              discussionPath === "chat" &&
+              origins.get(text.trim()) === discussionSource
+                ? discussionSource
+                : undefined,
+          };
+        const source =
+          discussionSource ??
+          (!imageDraft.files.length ? phraseSource : undefined);
+        // The whole phrase (including intermediate keystrokes) must come
+        // from this context. Editing its margins doesn't re-author the text.
+        if (origin === "replace" || !prior.text.trim()) return { text, source };
+        return {
+          text,
+          source:
+            prior.text.trim() === text.trim() || prior.source === source
+              ? prior.source
+              : undefined,
+        };
       });
     }
   };
@@ -1449,7 +1496,11 @@ export function ChatWorkspace({
         }
       } else
         setEntry((value) =>
-          phraseSource && value.source === phraseSource ? { text: "" } : value,
+          phraseSource &&
+          value.source === phraseSource &&
+          cadenceApproval(value.text)
+            ? { text: "" }
+            : value,
         );
     } catch (e) {
       if (alive.current && sendGeneration.current === generation) {

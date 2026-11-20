@@ -80,7 +80,7 @@ export interface ChatComposerProps {
   draft: string;
   onDraft(
     text: string,
-    origin?: "edit" | "native-history" | "history" | "restore",
+    origin?: "edit" | "replace" | "native-history" | "history" | "restore",
   ): void;
   /** A Send is in flight or unconfirmed: its text stays as it was sent. */
   locked: boolean;
@@ -536,13 +536,21 @@ export function ChatComposer({
         value={draft}
         placeholder={t("Message")}
         rows={2}
-        onChange={(event) => {
-          const { inputType } = event.nativeEvent as InputEvent;
+        onInput={(event) => {
+          const { inputType, data } = event.nativeEvent as InputEvent;
+          const { value, selectionStart } = event.currentTarget;
           const restored =
             inputType === "historyUndo" || inputType === "historyRedo";
-          setCaret(event.target.selectionStart);
-          setTyped(restored ? null : event.target.value);
-          onDraft(event.target.value, restored ? "native-history" : "edit");
+          // An input can replace even identical text. Use what the browser
+          // inserted, not a value diff, to identify a fully re-entered draft.
+          const replaced =
+            inputType?.startsWith("insert") && data?.trim() === value.trim();
+          setCaret(selectionStart);
+          setTyped(restored ? null : value);
+          onDraft(
+            value,
+            restored ? "native-history" : replaced ? "replace" : "edit",
+          );
         }}
         onSelect={(event) => {
           const { selectionStart, selectionEnd } = event.currentTarget;

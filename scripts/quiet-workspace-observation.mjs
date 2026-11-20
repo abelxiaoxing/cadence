@@ -63,6 +63,7 @@ function specimen(id) {
     cat,
     turns,
     runIds: ids,
+    live,
     commands: [],
     unexpected: [],
     firstHead: Promise.withResolvers(),
@@ -350,6 +351,11 @@ function specimen(id) {
       assert.equal(c.revision, s.revision);
       assert.equal(c.proposalId, s.proposal.id);
       assert.equal(c.digest, s.proposal.digest);
+      Object.assign(s.commands.at(-1), {
+        proposalId: c.proposalId,
+        digest: c.digest,
+        revision: c.revision,
+      });
       s.permit = null;
       return refused();
     }
@@ -922,42 +928,100 @@ async function observeBootstrap(p, row) {
   }
 }
 
+// Use the browser's editor and capture the actual input it delivers. An
+// application history prompt or an untrusted input cannot satisfy restore().
+async function nativeEditor({ run, send, wait, ev }) {
+  await run((sel) => {
+    opticalProbe.nativeEdits = [];
+    document.querySelector(sel).addEventListener("input", (e) => {
+      opticalProbe.nativeEdits.push({
+        type: e.inputType,
+        text: e.target.value,
+        trusted: e.isTrusted,
+      });
+    });
+  }, input);
+  const nativeKey = async (key, code, modifiers, editCommand) => {
+    for (const type of ["keyDown", "keyUp"])
+      await send("Input.dispatchKeyEvent", {
+        type,
+        key,
+        code: `Key${key.toUpperCase()}`,
+        windowsVirtualKeyCode: code,
+        modifiers,
+        ...(type === "keyDown" ? { commands: [editCommand] } : {}),
+      });
+  };
+  const replace = async (text) => {
+    await nativeKey("a", 65, 2, "SelectAll");
+    await send("Input.insertText", { text });
+    await wait(
+      `document.activeElement.matches(${q(input)}) && document.activeElement.value===${q(text)}`,
+    );
+  };
+  const restore = async (redo, text) => {
+    const type = redo ? "historyRedo" : "historyUndo";
+    const n = await ev("opticalProbe.nativeEdits.length");
+    await nativeKey("z", 90, redo ? 10 : 2, redo ? "Redo" : "Undo");
+    await wait(
+      `opticalProbe.nativeEdits.length===${n + 1} && document.activeElement.value===${q(text)}`,
+    );
+    const event = await ev("opticalProbe.nativeEdits.at(-1)");
+    assert.deepEqual(event, {
+      type,
+      text,
+      trusted: true,
+    });
+    return event;
+  };
+  return { replace, restore };
+}
+
 // A new direct session with a known ordinary mode throughout. The prior
 // fixture's accepted live input is a real prompt-history entry in this tab.
-async function observeOrdinaryPhrase(p, row) {
+async function observeOrdinaryPhrase(p, row, paths) {
   const { go, click, send, press, wait, run, ev } = p;
   const s = specimen(`ordinary-${randomUUID()}`);
   s.firstHead.resolve();
   const stop = await intercept(p, s);
-  row.ordinaryPhrase = [];
   try {
     await go(`/app#chat=${s.id}`, input);
-    for (const via of ["park and restore", "remove image"]) {
+    const editor = await nativeEditor(p);
+    for (const via of paths) {
       await wait(
         `document.querySelector('.mode-toggle.off') && document.querySelector('.model-trigger-text')?.innerText==='optical'`,
       );
+      const before = s.commands.length;
       await click(input);
       const attachment = via === "remove image";
       if (attachment) {
         await pasteFixtureImage(run);
         await wait(`document.querySelector('.chat-image-draft img')`);
       }
-      await send("Input.insertText", { text: phrase });
-      if (attachment) {
-        await click(".chat-image-remove");
-        await wait(`!document.querySelector('.chat-image-draft')`);
-        await click(input);
+      let restored;
+      if (via === "historyUndo" || via === "historyRedo") {
+        const redo = via === "historyRedo";
+        await editor.replace(redo ? discussion : phrase);
+        await editor.replace(redo ? phrase : discussion);
+        restored = await editor.restore(false, redo ? discussion : phrase);
+        if (redo) restored = await editor.restore(true, phrase);
       } else {
-        await press("ArrowUp", 38);
-        await wait(
-          `document.querySelector(${q(input)}).value==='queue: accepted'`,
-        );
-        await press("Escape", 27);
+        await send("Input.insertText", { text: phrase });
+        if (attachment) {
+          await click(".chat-image-remove");
+          await wait(`!document.querySelector('.chat-image-draft')`);
+          await click(input);
+        } else {
+          await press("ArrowUp", 38);
+          await wait(
+            `document.querySelector(${q(input)}).value==='queue: accepted'`,
+          );
+          await press("Escape", 27);
+        }
       }
       await wait(
         `document.activeElement.matches(${q(input)}) && document.activeElement.value===${q(phrase)} && document.querySelector('.chat-composer button[type="submit"]:enabled')`,
       );
-      const before = s.commands.length;
       s.permit = "send";
       await press("Enter", 13);
       await until(() => s.pending, `ordinary send after ${via}`);
@@ -967,7 +1031,7 @@ async function observeOrdinaryPhrase(p, row) {
       assert.equal(command.images?.length ?? 0, 0);
       s.turns.push({
         ...command,
-        entry: attachment ? "00000014" : "00000012",
+        entry: s.turns.length ? "00000014" : "00000012",
         answer: "Ordinary discussion.",
       });
       finish(ok({ kind: "accepted", commandId: command.commandId }));
@@ -982,6 +1046,7 @@ async function observeOrdinaryPhrase(p, row) {
       );
       row.ordinaryPhrase.push({
         via,
+        restored,
         text: command.text,
         commands,
         mode: await ev(`document.querySelector('.mode-toggle.off').innerText`),
@@ -1299,6 +1364,20 @@ async function observeProposal(p, s, row, shot) {
     });
     return f;
   };
+  const witnessPreparation = async (target, name, before) => {
+    s.permit = "cadence-prepare";
+    await press("Enter", 13);
+    await until(() => !s.permit, "explicit edit bound to B");
+    row.plan[name] = {
+      proposal: target.id,
+      commands: s.commands.slice(before),
+    };
+    assert.deepEqual(
+      row.plan[name].commands.map((c) => c.kind),
+      ["cadence-prepare"],
+    );
+    assert.equal(row.plan[name].commands[0].proposalId, target.id);
+  };
   const prefix = s.commands.length,
     pane = ".chat-workspace .chat-messages";
   const pos = () =>
@@ -1394,7 +1473,8 @@ async function observeProposal(p, s, row, shot) {
       return { text: editor.value, focused: document.activeElement === editor };
     }, input);
     assert.deepEqual(row.plan[name], { text, focused: true });
-    assert.deepEqual(s.commands.slice(before), []);
+    row.plan[name].commands = s.commands.slice(before);
+    assert.deepEqual(row.plan[name].commands, []);
     await click('.notice[role="alert"] .notice-close');
   };
   // This B can be implemented immediately. A stale-model B would exercise
@@ -1407,6 +1487,38 @@ async function observeProposal(p, s, row, shot) {
   );
   await click(input);
   await refuseDraft("openedWithoutEditing");
+  // The title now shows B. Editing only the margins of A's still-mounted
+  // draft must not re-author it. Remove only the added character between
+  // trials, without replacing or parking the original phrase.
+  const endOfDraft = async () => {
+    await click(input);
+    await run((sel) => {
+      const field = document.querySelector(sel);
+      field.setSelectionRange(field.value.length, field.value.length);
+    }, input);
+  };
+  for (const suffix of [" ", "\n"]) {
+    await endOfDraft();
+    if (suffix === " ") await send("Input.insertText", { text: suffix });
+    else
+      for (const type of ["keyDown", "keyUp"])
+        await send("Input.dispatchKeyEvent", {
+          type,
+          key: "Enter",
+          code: "Enter",
+          windowsVirtualKeyCode: 13,
+          modifiers: 8, // Shift+Enter, including Chromium's native text edit.
+          ...(type === "keyDown" ? { text: "\r" } : {}),
+        });
+    await wait(`document.activeElement.value===${q(phrase + suffix)}`);
+    await refuseDraft(
+      suffix === " " ? "spaceOnOldPhrase" : "newlineOnOldPhrase",
+      phrase + suffix,
+    );
+    await endOfDraft();
+    await press("Backspace", 8);
+    await wait(`document.activeElement.value===${q(phrase)}`);
+  }
   // Restoring A's parked text from a real history walk is not entering B's
   // phrase. Exercise both ways out of the history cursor.
   for (const [key, code] of [
@@ -1422,6 +1534,12 @@ async function observeProposal(p, s, row, shot) {
     await wait(`document.querySelector(${q(input)}).value === ${q(phrase)}`);
     await refuseDraft(`historyRestored${key}`);
   }
+  await click(input);
+  const retypePrefix = s.commands.length;
+  const authored = await nativeEditor(p);
+  await authored.replace(discussion);
+  await authored.replace(phrase);
+  await witnessPreparation(ready, "retypedAfterWhitespace", retypePrefix);
   const next = s.makeProposal("stale");
   await collapsed(next.plan.goal);
   await open();
@@ -1452,7 +1570,7 @@ async function observeProposal(p, s, row, shot) {
   await refuseDraft("restoredTextOnly");
   assert.deepEqual(
     s.commands.slice(prefix).map((c) => c.kind),
-    ["cadence-send"],
+    ["cadence-send", "cadence-prepare"],
   );
   // This time the draft really does belong to the displayed stale proposal.
   // The button validates it once; neither validation nor opening the rebound
@@ -1480,7 +1598,7 @@ async function observeProposal(p, s, row, shot) {
   await refuseDraft("revalidatedWithoutEditing", validationPhrase);
   assert.deepEqual(
     s.commands.slice(prefix).map((c) => c.kind),
-    ["cadence-send", "cadence-revalidate"],
+    ["cadence-send", "cadence-prepare", "cadence-revalidate"],
   );
 
   // Create both sides of Chromium's native history cursor under A. The
@@ -1489,47 +1607,7 @@ async function observeProposal(p, s, row, shot) {
   // event or application draft callback is used. Capture the trusted input.
   const nativePrefix = s.commands.length;
   await click(input);
-  await run((sel) => {
-    opticalProbe.nativeEdits = [];
-    document.querySelector(sel).addEventListener("input", (e) => {
-      opticalProbe.nativeEdits.push({
-        type: e.inputType,
-        text: e.target.value,
-        trusted: e.isTrusted,
-      });
-    });
-  }, input);
-  const nativeKey = async (key, code, modifiers, editCommand) => {
-    for (const type of ["keyDown", "keyUp"])
-      await send("Input.dispatchKeyEvent", {
-        type,
-        key,
-        code: `Key${key.toUpperCase()}`,
-        windowsVirtualKeyCode: code,
-        modifiers,
-        ...(type === "keyDown" ? { commands: [editCommand] } : {}),
-      });
-  };
-  const replace = async (text) => {
-    await nativeKey("a", 65, 2, "SelectAll");
-    await send("Input.insertText", { text });
-    await wait(
-      `document.activeElement.matches(${q(input)}) && document.activeElement.value===${q(text)}`,
-    );
-  };
-  const restore = async (redo, text) => {
-    const type = redo ? "historyRedo" : "historyUndo";
-    const n = await ev("opticalProbe.nativeEdits.length");
-    await nativeKey("z", 90, redo ? 10 : 2, redo ? "Redo" : "Undo");
-    await wait(
-      `opticalProbe.nativeEdits.length===${n + 1} && document.activeElement.value===${q(text)}`,
-    );
-    assert.deepEqual(await ev("opticalProbe.nativeEdits.at(-1)"), {
-      type,
-      text,
-      trusted: true,
-    });
-  };
+  const { replace, restore } = await nativeEditor(p);
   await replace(phrase);
   await replace(discussion);
   await replace(phrase);
@@ -1559,17 +1637,7 @@ async function observeProposal(p, s, row, shot) {
   await click(input);
   await replace(discussion);
   await replace(phrase);
-  s.permit = "cadence-prepare";
-  await press("Enter", 13);
-  await until(() => !s.permit, "explicit edit bound to B");
-  row.plan.freshPreparation = {
-    proposal: target.id,
-    commands: s.commands.slice(nativePrefix),
-  };
-  assert.deepEqual(
-    row.plan.freshPreparation.commands.map((c) => c.kind),
-    ["cadence-prepare"],
-  );
+  await witnessPreparation(target, "freshPreparation", nativePrefix);
   await click(trigger);
 }
 
@@ -1884,6 +1952,15 @@ async function observeTerminalHistory(p, row, shot) {
     phase: "research",
     observedAt: clock,
   }));
+  // These are the SAME identities the two held viewer rosters will later
+  // return. A session match alone would neither deduplicate nor grant Stop.
+  const shared = [s.live.commandId, ...s.runIds.slice(0, 2)].map((id, i) => ({
+    ...orphans[0],
+    source: i ? "workflow" : "turn",
+    sessionId: background,
+    id,
+    phase: i ? "research" : "turn",
+  }));
   const gateway = {
     reads: new Set(),
     selections: [],
@@ -1896,22 +1973,30 @@ async function observeTerminalHistory(p, row, shot) {
         observedAt: stage.at,
         freshness: stage.partial ? "unknown" : "current",
       }));
+      const local = stage.cold
+        ? [...shared, ...orphans].map((report) => ({
+            ...report,
+            observedAt: stage.at,
+            phase: stage.reordered ? stage.phase : report.phase,
+          }))
+        : activities;
+      const projects = [
+        { path: cwd, activities: stage.reordered ? local.reverse() : local },
+        {
+          path: recentFolder,
+          activities: [
+            { ...other, observedAt: stage.at },
+            ...(stage.cold ? [{ ...orphans[0], cwd: recentFolder }] : []),
+          ],
+        },
+      ];
       return {
         kind: "activity-discovery",
         epoch,
         observedAt: stage.at,
         completeness: stage.partial ? "partial" : "complete",
         unavailable: Number(stage.partial),
-        projects: [
-          { path: cwd, activities: stage.cold ? orphans : activities },
-          {
-            path: recentFolder,
-            activities: [
-              { ...other, observedAt: stage.at },
-              ...(stage.cold ? [{ ...orphans[0], cwd: recentFolder }] : []),
-            ],
-          },
-        ],
+        projects: stage.reordered ? projects.reverse() : projects,
       };
     },
   };
@@ -1962,7 +2047,7 @@ async function observeTerminalHistory(p, row, shot) {
     partial,
   });
   s.roster = {
-    ...stage("cold discovery", 0, "research", false, 3, 0),
+    ...stage("cold discovery", 0, "research", true, 3, 0),
     cold: true,
   };
   s.firstProject = Promise.withResolvers();
@@ -2051,6 +2136,74 @@ async function observeTerminalHistory(p, row, shot) {
         outside,
       );
     };
+    const coldTitle = `Conversation ${background}`;
+    const coldButton = `.conversation-row > button[title="${coldTitle}"]`;
+    const sessionFrame = (remember = false) =>
+      run(
+        (labels, path, remember) => {
+          const pane = document.querySelector(".panel-left");
+          const mains = [
+            ...pane.querySelectorAll(".conversation-row > .session-item"),
+          ].filter((e) => labels.includes(e.title));
+          const button = mains[0];
+          const entry = button.closest(".history-entry");
+          const details = [
+            ...entry.querySelectorAll(".history-run > button.session-item"),
+          ];
+          const other = pane.querySelector(
+            'section[aria-label="Active Pi work"]',
+          );
+          const dirs = [...other.querySelectorAll(".lp-section-body > div")];
+          const local = dirs.find(
+            (dir) => dir.querySelector("p").innerText === path,
+          );
+          if (remember) opticalProbe.coldNodes = [button, ...details];
+          const nodes = [button, ...details];
+          return {
+            mains: mains.map((b) => b.title),
+            text: button.innerText,
+            focused: button === document.activeElement,
+            working: button
+              .querySelector(".history-activity-mark")
+              ?.getAttribute("aria-label"),
+            open: entry.querySelector(".history-workflows").open,
+            details: details.map((b) => b.title),
+            sameNodes:
+              nodes.length === opticalProbe.coldNodes.length &&
+              nodes.every((e, i) => e === opticalProbe.coldNodes[i]),
+            // Include both directories as well as every main row/disclosure in them.
+            order: dirs.flatMap((dir) =>
+              [
+                ...dir.querySelectorAll(
+                  ":scope > p, .conversation-row > .session-item, :scope > .history-unlinked > summary, :scope > .session-item",
+                ),
+              ].map((e) => e.innerText),
+            ),
+            rawLocalRows:
+              local?.querySelectorAll(":scope > .session-item").length ?? 0,
+            stops: [...pane.querySelectorAll(".conversation-stop")].map(
+              (e) => ({
+                label: e.getAttribute("aria-label"),
+                disabled: e.disabled,
+              }),
+            ),
+          };
+        },
+        [coldTitle, title],
+        cwd,
+        remember,
+      );
+    const sharedTitles = shared.map(
+      (r) =>
+        `${r.source === "turn" ? "Owner turn" : "Owner workflow"} · ${cwd} · ${background} · ${epoch} · ${r.id}`,
+    );
+    const assertDiscoverySession = (f) => {
+      assert.equal(f.mains.length, 1);
+      assert.equal(f.rawLocalRows, 0);
+      assert.equal(f.working, "Working");
+      assert.deepEqual([...f.details].sort(), [...sharedTitles].sort());
+      assert.deepEqual(f.stops, []);
+    };
     await go(`/app?project=${project}#chat=${s.id}`, `${outside} details`);
     await until(
       () => s.projectRequested && s.served.has("discovery:cold discovery"),
@@ -2081,14 +2234,42 @@ async function observeTerminalHistory(p, row, shot) {
     assert.ok(
       cold.other.some((e) => !e.disabled && e.text.includes(background)),
     );
+    await clickEntry(`.history-entry:has(${coldButton}) summary`);
+    assert.ok(
+      (await observeButton("cold shared conversation", coldButton))
+        .keyboardFocus,
+    );
+    const primary = await sessionFrame(true);
+    assertDiscoverySession(primary);
+    assert.deepEqual(primary.mains, [coldTitle]);
+    assert.ok(primary.focused && primary.open);
+    s.roster = {
+      ...s.roster,
+      name: "cold reordered",
+      at: clock + 60_000,
+      phase: "verifying",
+      reordered: true,
+    };
+    // Wait for this projection to PAINT: a fulfilled GET alone might still
+    // leave us comparing the pre-update DOM with itself.
+    await wait(
+      `document.querySelector(${q(unlinked)})?.innerText.includes('verifying')`,
+    );
+    const reordered = await sessionFrame();
+    assert.deepEqual(reordered, primary);
+    assert.equal(s.sessions.size, 0);
     s.firstProject.resolve();
     await until(() => s.heldKinds.size === 2, "viewer awaiting cold rosters");
     const awaitingRoster = await orphanFrame();
     readonly(awaitingRoster);
+    const awaitingSession = await sessionFrame();
+    assertDiscoverySession(awaitingSession);
     s.holdRosters.resolve();
     s.holdRosters = null;
+    // The two independently held GETs can paint in either order. Wait for
+    // each roster's own witness before checking their joined identities.
     await wait(
-      `document.querySelector(${q(`${unlinked} .conversation-stop:enabled`)})`,
+      `document.querySelector(${q(`${unlinked} .conversation-stop:enabled`)}) && document.querySelector('button[title="Unwritten reply"]')`,
     );
     const joined = await orphanFrame();
     assert.deepEqual(
@@ -2113,7 +2294,39 @@ async function observeTerminalHistory(p, row, shot) {
       ),
       0,
     );
-    row.coldDiscovery = { ids, cold, awaitingRoster, joined };
+    const rosterSession = await sessionFrame();
+    assert.deepEqual(rosterSession.mains, [title]);
+    assert.equal(rosterSession.rawLocalRows, 0);
+    assert.deepEqual(
+      [...rosterSession.details].sort(),
+      s.runIds
+        .slice(0, 2)
+        .map(
+          (id, i) =>
+            `Open workflow details · ${["Compare facets", "Check notes"][i]} · ${id}`,
+        )
+        .sort(),
+    );
+    assert.deepEqual(
+      rosterSession.stops.map((e) => e.label).sort(),
+      s.runIds
+        .map(
+          (id, i) =>
+            `Cancel workflow — request stop · ${["Compare facets", "Check notes", "Unlinked specimen"][i]} · ${id}`,
+        )
+        .sort(),
+    );
+    assert.ok(rosterSession.stops.every((e) => !e.disabled));
+    row.coldDiscovery = {
+      ids,
+      cold,
+      primary,
+      reordered,
+      awaitingRoster,
+      awaitingSession,
+      joined,
+      rosterSession,
+    };
     assert.deepEqual(s.commands, []);
     s.roster = stage("together", 0, "research", true, 2, 2);
     const first = await settledFrame(true);
@@ -2213,6 +2426,7 @@ export async function observeQuietWorkspace(p) {
     motion,
     id,
     entry: {},
+    ordinaryPhrase: [],
     plan: {},
     background: [],
     screenshots: [],
@@ -2229,7 +2443,8 @@ export async function observeQuietWorkspace(p) {
   };
   await layout(width, theme, motion);
   await observeBootstrap(p, row);
-  await observeOrdinaryPhrase(p, row);
+  await observeOrdinaryPhrase(p, row, ["park and restore", "remove image"]);
+  await observeOrdinaryPhrase(p, row, ["historyUndo", "historyRedo"]);
   const stop = await intercept(p, s);
   try {
     await navigate();
