@@ -21,17 +21,29 @@ function modeFrame(selector, label, notice) {
   // Reading models… can become Choose a model during capture, without moving
   // the notice. Bind only their common text interior, never the CPU/chevron or
   // the outline. The PNG supplies the ink, not a guessed loading-state color.
-  const modelText = opticalProbe.glyphSample(
-    model,
-    document.querySelector(model).textContent,
-  );
+  const caption = document.querySelector(model),
+    trigger = caption.closest("button"),
+    rect = trigger.getBoundingClientRect(),
+    triggerStyle = getComputedStyle(trigger),
+    edgeX = Math.floor(rect.left + rect.width / 2),
+    edgeY = Math.round(rect.top),
+    padY = Math.round(rect.top + parseFloat(triggerStyle.borderTopWidth));
+  // The middle of the straight top rule and the first padding pixel inside
+  // it are independent of the caption and dash ink we will test later.
+  if (padY <= edgeY || document.elementFromPoint(edgeX, padY) !== trigger)
+    throw Error("Missing model trigger top padding");
+  const modelText = opticalProbe.glyphSample(model, caption.textContent);
+  const level = ".chat-composer .model-trigger-level";
+  if (document.querySelector(level).textContent !== "Thinking · —")
+    throw Error("Missing unknown thinking level");
+  const levelText = opticalProbe.glyphSample(level, "—");
   const [ml, mt, mr, mb] = modelText.glyph;
   if (mr - ml < 24) throw Error("Missing model text interior");
   const input = button.form.querySelector("textarea:placeholder-shown");
-  if (!input || input.value || !input.placeholder.startsWith("Message,"))
+  if (!input || input.value || input.placeholder !== "Message")
     throw Error("Expected the empty Message field");
-  // A native placeholder has no DOM Range. Read only its first word on the
-  // first line, inside the textarea's padded content (also when it wraps).
+  // A native placeholder has no DOM Range. Bind its actual text to the
+  // padded content, not to the neighboring mode or model labels.
   const field = input.getBoundingClientRect(),
     style = getComputedStyle(input),
     placeholder = getComputedStyle(input, "::placeholder"),
@@ -39,7 +51,7 @@ function modeFrame(selector, label, notice) {
   ctx.font = `${placeholder.fontSize} ${placeholder.fontFamily}`;
   const left = field.left + input.clientLeft + parseFloat(style.paddingLeft),
     top = field.top + input.clientTop + parseFloat(style.paddingTop),
-    right = left + ctx.measureText("Message,").width,
+    right = left + ctx.measureText(input.placeholder).width,
     bottom = top + parseFloat(style.lineHeight),
     xBack = Math.floor(left - 3),
     yBack = Math.floor((top + bottom) / 2);
@@ -61,6 +73,10 @@ function modeFrame(selector, label, notice) {
   let alpha = Number(placeholder.opacity);
   for (let p = input; p; p = p.parentElement)
     alpha *= Number(getComputedStyle(p).opacity);
+  // Normalize the computed border to the same sRGB bytes as the PNG;
+  // a transparent border has no ink of its own to compare with the frame.
+  ctx.fillStyle = triggerStyle.borderTopColor;
+  ctx.fillRect(0, 0, 1, 1);
   return {
     document: performance.timeOrigin,
     route: location.pathname + location.search + location.hash,
@@ -72,7 +88,17 @@ function modeFrame(selector, label, notice) {
     button: button.getBoundingClientRect().toJSON(),
     capsule: c.toJSON(),
     noticeBorder: getComputedStyle(alert).borderLeftColor,
+    modelTooltip: trigger.title,
+    model: {
+      caption: caption.textContent,
+      rect: rect.toJSON(),
+      dashRange: levelText.glyph,
+      borderTopColor: triggerStyle.borderTopColor,
+      borderRGBA: [...ctx.getImageData(0, 0, 1, 1).data],
+    },
     landmarks: {
+      modelTop: [edgeX, edgeY],
+      modelPadding: [edgeX, padY],
       noticeTop: [rule, Math.ceil(n.top) + 2],
       aboveNotice: [rule, Math.floor(n.top) - 2],
       capsuleTop: [x, y],
@@ -109,6 +135,7 @@ function modeFrame(selector, label, notice) {
         fg: null,
         glyph: [ml, mt, ml + 24, mb],
       },
+      levelText,
       {
         name: `TEXTAREA placeholder: ${input.placeholder}`,
         x: xBack,
@@ -169,19 +196,21 @@ export async function observeUnknownMode({
         await sleep(300);
         await run(controlGeometry, selector, false);
       }
-      const before = await locate();
+      const { modelTooltip: beforeTitle, ...before } = await locate();
       row.png = `unknown-${theme}-${width}-${phase}.png`;
       const png = await screenshot(row.png);
-      const after = await locate();
+      const { modelTooltip: afterTitle, ...after } = await locate();
+      // An action-context update can change just the native tooltip, not
+      // the displayed caption or any geometry, pixels or semantic checks.
+      row.modelTooltips = { before: beforeTitle, after: afterTitle };
       assert.equal(after.document, before.document);
       const candidates =
         JSON.stringify(before) === JSON.stringify(after)
           ? [before]
           : [before, after];
       row.bindings = [];
-      const observations = [];
-      // Only one PNG. If the layout moved during its capture, bind by the
-      // notice edge, NEVER retry or pick the better-looking label.
+      // Bind one unmodified PNG before testing any glyphs. The notice rule
+      // can stay put across a catalog response that moves the dash Range.
       for (const {
         points,
         noticePoints,
@@ -194,8 +223,8 @@ export async function observeUnknownMode({
         assert.equal(geometry.disabled, true);
         assert.equal(geometry.name, label);
         assert.equal(geometry.title, label);
-        const observed = await run(contrastPixels, png, points, landmarks);
-        const { bitmap, viewport, dpr, pixels } = observed.frame;
+        const { frame } = await run(contrastPixels, png, [], landmarks);
+        const { bitmap, viewport, dpr, pixels } = frame;
         assert.deepEqual(bitmap, [width, width > 900 ? 900 : 820]);
         assert.deepEqual(bitmap, viewport);
         assert.equal(dpr, 1);
@@ -203,19 +232,28 @@ export async function observeUnknownMode({
           `rgb(${p.rgb.join(", ")})` === geometry.noticeBorder;
         const matchesNotice =
           isRule(pixels.noticeTop) && !isRule(pixels.aboveNotice);
-        const { frame, ...sample } = observed;
-        row.bindings.push({ geometry, frame, matchesNotice });
-        observations.push({ ...sample, noticePoints });
+        const border = geometry.model.borderRGBA,
+          expected = border[3] === 0 ? pixels.modelPadding.rgb : border;
+        const matchesModelTop =
+          (border[3] === 0 || border[3] === 255) &&
+          pixels.modelTop.rgb.every((v, i) => v === expected[i]);
+        row.bindings.push({ geometry, frame, matchesNotice, matchesModelTop });
       }
-      const matches = row.bindings.filter((g) => g.matchesNotice);
-      assert.equal(matches.length, 1, "No unique presented notice geometry");
+      const notices = row.bindings.filter((b) => b.matchesNotice);
+      const matches =
+        notices.length > 1 ? notices.filter((b) => b.matchesModelTop) : notices;
+      assert.equal(
+        matches.length,
+        1,
+        "No unique presented geometry (see bindings)",
+      );
       row.bound = row.bindings.indexOf(matches[0]);
-      const { noticePoints, ...composer } = observations[row.bound];
-      Object.assign(row, composer);
+      const { points, noticePoints } = candidates[row.bound];
+      Object.assign(row, await run(contrastPixels, png, points));
       row.noticePaint = await run(contrastPixels, png, noticePoints);
       const { samples, readings, failures } = row;
-      assert.equal(samples, 5);
-      assert.equal(readings?.length, 5);
+      assert.equal(samples, 6);
+      assert.equal(readings?.length, 6);
       for (const r of readings) {
         assert.ok(r.paintedGlyph, `Missing painted ink: ${r.name}`);
         assert.ok(
@@ -403,8 +441,24 @@ export async function observeComposerFlow({
       `document.querySelector('.chat-turn-notice')?.textContent === 'Observation: ${flowCase.phase}'`,
     );
     await wait(
-      `!!document.querySelector('.chat-messages .banner-notice') === ${flowCase.failTurn}`,
+      `!!document.querySelector('.conversation-header[title]') === ${flowCase.failTurn}`,
     );
+    let error = null;
+    if (flowCase.failTurn) {
+      // Conversation read errors live in the footer's observation details,
+      // not in a stream-tail notice. Open it without requesting a refresh.
+      await click(".workspace-connection > summary");
+      const detail = `[...document.querySelectorAll('.workspace-connection[open] p')].find(el => el.innerText.startsWith('Conversation read:') && el.innerText.includes('stale'))`;
+      await wait(detail);
+      error = await run(
+        () =>
+          [...document.querySelectorAll(".workspace-connection[open] p")].find(
+            (el) => el.innerText.startsWith("Conversation read:"),
+          ).innerText,
+      );
+      await press("Escape", 27);
+      await wait(`!document.querySelector('.workspace-connection[open]')`);
+    }
     const observed = await run(() => {
       const form = document.querySelector(".chat-composer"),
         body = document.querySelector(".msg-assistant .md p"),
@@ -436,9 +490,6 @@ export async function observeComposerFlow({
         readable: body.contains(
           document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2),
         ),
-        error:
-          document.querySelector(".chat-messages .banner-notice")
-            ?.textContent ?? null,
       };
     });
     const flow =
@@ -448,6 +499,7 @@ export async function observeComposerFlow({
       width,
       theme,
       stage,
+      error,
       startedAt: flowCase.startedAt,
       ...observed,
     });
@@ -473,7 +525,7 @@ export async function observeComposerFlow({
     assert.ok(
       observed.readable && observed.body === "Retained optical specimen.",
     );
-    if (flowCase.failTurn) assert.match(observed.error, /stale/);
+    if (flowCase.failTurn) assert.match(error, /stale/);
   };
   await record("live thinking");
   flowCase.failTurn = true;

@@ -208,6 +208,14 @@ it("keeps recorded prose intact under Chinese controls and the full English deli
   const p = fixture();
   const { summary, details, actions } = card(p, {}, "zh");
   expect(summary).toContain("等待批准计划");
+  for (const label of [
+    "此次变化",
+    "已确认决定与保留项",
+    "批准范围",
+    "不推送、发布或部署。",
+  ])
+    expect(summary).toContain(label);
+  expect(details).toContain("技术详情");
   expect(summary).toContain("工具和检查直接在服务主机运行，不是安全沙箱。");
   expect(summary).toContain("Keep the existing JSON export.");
   expect(summary).not.toContain(

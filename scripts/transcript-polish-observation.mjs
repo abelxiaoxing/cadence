@@ -906,19 +906,6 @@ export async function observeTranscriptPolish(ctx) {
   const motion = width === 390 ? "reduce" : "no-preference";
   const row = { width, theme, motion };
   rows.push(row);
-  // Device emulation sizes the page, not Chromium's native headless window.
-  // Outside that window CDP may deliver a wheel event to the right DOM node
-  // but the compositor won't scroll. Size the disposable window too.
-  const { windowId, bounds } = await ctx.send("Browser.getWindowForTarget");
-  const windowSize = (width, height) =>
-    ctx.send("Browser.setWindowBounds", {
-      windowId,
-      bounds: { width, height },
-    });
-  await windowSize(
-    Math.max(bounds.width, width + 32),
-    Math.max(bounds.height, 1024),
-  );
   const source = { revision: 0, turnReads: [], detailReads: [] };
   const stopReads = await installReads(ctx, source);
   try {
@@ -932,7 +919,6 @@ export async function observeTranscriptPolish(ctx) {
     await observeReading(ctx, row, source.turnReads);
   } finally {
     await stopReads();
-    await windowSize(bounds.width, bounds.height);
     await layout(width, theme);
   }
 }

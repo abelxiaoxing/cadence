@@ -11,6 +11,7 @@ import { transport } from "./fixtures";
 
 const f = vi.hoisted(() => ({
   state: undefined as CadenceConversation | undefined,
+  pinned: false,
   no: () => {},
 }));
 vi.mock("../../web/src/client/use-workbench", async (load) => ({
@@ -30,8 +31,10 @@ vi.mock("../../web/src/client/use-conversation", () => ({
       title: "Fixture discussion",
       status: "completed",
       origin: "webui",
+      leaf: "leaf",
     },
-    leaf: "leaf",
+    pinned: f.pinned,
+    leaf: f.pinned ? "earlier-leaf" : "leaf",
     turns: [],
     runs: [],
     pending: [],
@@ -82,6 +85,7 @@ it("opens and closes the current plan at the title, not the stream tail; later d
       workspaceId: "project",
       initialCwd: "/fixture",
       enabled: true,
+      actionsReady: false,
       modelAvailability: { status: "stopped" },
       prepareForPlan: prepare,
       onChanged: f.no,
@@ -109,6 +113,7 @@ it("opens and closes the current plan at the title, not the stream tail; later d
       case 2:
       case 4:
       case 6:
+      case 8:
         trigger.props.onClick();
         break;
       case 3:
@@ -117,6 +122,9 @@ it("opens and closes the current plan at the title, not the stream tail; later d
       case 5:
         f.state = { ...f.state, revision: 3, proposal: replacement };
         break;
+      case 7:
+        f.pinned = true;
+        break;
       default:
         return tree;
     }
@@ -124,10 +132,18 @@ it("opens and closes the current plan at the title, not the stream tail; later d
     return tree;
   }
   renderToStaticMarkup(<Probe />);
-  expect(snapshots).toHaveLength(8);
+  expect(snapshots).toHaveLength(10);
   for (const [index, tree] of snapshots.entries()) {
     const html = renderToStaticMarkup(tree);
-    const expanded = [1, 3, 5, 7].includes(index);
+    const expanded = [1, 3, 5, 7, 9].includes(index);
+    if (index === 9) {
+      expect(html).toContain(
+        "Show the latest branch before acting on the current plan.",
+      );
+      expect(html).toMatch(
+        /class="primary"[^>]*disabled=""[^>]*>Restore execution and validate plan</,
+      );
+    }
     expect(html).toContain(
       expanded ? "Hide current plan" : "View current plan",
     );
@@ -147,6 +163,7 @@ it("opens and closes the current plan at the title, not the stream tail; later d
       );
     } else expect(html).not.toContain("Restore execution and validate plan");
   }
+  f.pinned = false;
   function Cold() {
     return (
       <ChatWorkspace
@@ -154,6 +171,7 @@ it("opens and closes the current plan at the title, not the stream tail; later d
         id="chat"
         workspaceId="project"
         enabled
+        actionsReady={false}
         modelAvailability={{ status: "stopped" }}
         prepareForPlan={prepare}
         onChanged={f.no}

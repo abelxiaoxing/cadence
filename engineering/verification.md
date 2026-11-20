@@ -66,12 +66,18 @@ No provider, execution command, installation, auth submission or user profile pa
 `OPTICAL_CHROME` may name an already-installed executable.
 Use the same private temporary environment as for `verify`.
 For a repair, select one named group, for example `node scripts/qualify-optical.mjs --group=agent-scroll:dark:390`, `--group=dark:320`, `--group=reading` or `--group=forced-colors`; `--group=agent-scroll` checks that behavior across all six views.
+For the conversation UI, run `--group=quiet-workspace` and `--group=transcript-polish` against the **same** canonical build.
+Each selects dark/light at 320, 390 and 1440 CSS px, including reduced motion at 390; suffix `:<theme>:<width>` for one view.
+`quietWorkspace` records the one editor across a held/refused Send and an accepted first message, title-only plan review, a synthetic rebind (no execution approval) and linked/unattributed work over 90 seconds of controlled roster time.
+`transcriptPolish` records disclosure edges, focus and exact lazy-read counts, reading offsets, question jumps, and paired glyph/no-glyph screenshots with the composer at two heights.
+Compare `masks[].result`: the visible area must change, but the area from above Latest through the dock and bottom gutter must not.
 A selected run is labelled targeted even on success.
 With no arguments the full matrix remains one process under its original command deadline.
 The report directory is printed before observation; `progress.ndjson` records each group's start and settlement against its build and HEAD.
 A start without settlement is partial evidence, not a completed group.
 The script prints the directory containing `summary.json` under that scope: branch, HEAD and canonical browser build identity, viewports, geometry, contrast samples, frame windows and paint attribution.
 For the design submission, implementation/confirmation and code/tool controls, `controls` records the actual button after scrolling and stable layout: name, four edges and size, viewport, intersections with clipping ancestors, disabled state, center and four inset edge hits.
+For a control inside `dialog:modal`, `controlGeometry` intersects the viewport and clipping ancestors through the dialog itself, not the transcript behind the top layer.
 Enabled buttons must receive visible focus via Tab; disabled ones have no keyboard-operability claim.
 No submit or confirmation is activated.
 The full-command and requested-write copies use Tab, Space and a write-only receiver inside the disposable document, never the system clipboard.
@@ -85,10 +91,230 @@ It records the event targets, before/after disclosure states and completed conve
 The requested edit must contain both `opal` and `silver` inside that same card; both compositor word samples must reach 4.5:1 at each viewport/theme, independently of the artifact diff.
 `copyIndicators` checks the subdued desktop rest state, measures a straight SVG stroke against the adjacent material after pointer reveal, then checks the visible Tab outline for the same control; missing samples or ratios below 3:1 fail.
 The `expand` conversation does not stream: its folded head is already reachable both at the bottom and after wheeling up past 80px.
+For desktop wheel probes, size the native Chromium window to cover the emulated viewport: even a trusted wheel over a hit-tested element can leave the pane still when the compositor's input surface is smaller.
+Compare `inputWindows` with the pane's actual bottom distance in `toolWheels`, not just the DOM event.
 Before activation and after real detail growth and stable frames, record the pane's scrollTop, client/scroll heights, bottom distance and first fully visible reading block/offset, without any corrective scrolling or focus between samples.
 Check Latest only after the up-scroll comparison: shorten the viewport after the click to distinguish resumed follow from a one-time jump.
 Incremental follow remains a separate observation.
 A missing browser or failed observation is not a pass.
+
+## Development practice
+
+Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
+Use ordinary source editing and directly affected fast tests while developing; run `verify` once at a stable integration boundary or before release, not after every local edit.
+`test`, `test:target` and `test:service` default to excluding the `slow` tag; `verify` also avoids importing whole files tagged `slow`.
+Test workers load `test/no-fsync.mjs`, which makes fsync a no-op inside them (spawned owners and CLIs still flush): crash tests kill processes and no test simulates power loss.
+A root test is tagged `slow` (`{ tags: ["slow"] }`, or `// @module-tag slow` as a whole file's first line) when it takes about 0.4 s or more alone, usually because it starts real owners, SDK workers, CLIs or crash children; short process tests stay untagged.
+Retained slow tests are for explicitly requested, file-targeted diagnosis only, using `node node_modules/vitest/vitest.mjs run test/<file>.test.ts --tags-filter=slow`; do not run them as another suite or imply they passed with `verify`.
+The real systemd diagnostic additionally requires `CADENCE_SYSTEMD_E2E=1` and a running user manager; it uses and removes a temporary unit under `$XDG_RUNTIME_DIR/systemd/user`, never a production service.
+
+Use the external private temp root described above for targeted tests too.
+Development may explicitly link already installed matching dependencies rather than copy/install them; `node_modules` links are ignored and Vite preserves their logical module paths, while the unchanged notice audit verifies all module bytes and membership.
+This is not implicit dependency setup for consumer workflows.
+A checkout-local `.cache` root makes non-Git fixtures inherit the checkout and triggers `Private state home must be outside the working copy`; this is an invalid test environment, not evidence that unrelated features broke.
+A nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
+Delivery workers and checks use the inherited owner-prepared temporary root; they do not create, relocate or clean it, invent owner markers or treat its expected existence as a conflict.
+Historical explicitly declared setup resources keep their original meaning, not a prerequisite for a new run.
+Keep prior evidence during diagnosis inside the same session scope; each targeted Vitest JSON report uses a new filename.
+Final session disposal follows the ownership rules above.
+A marker is required only when the approved setup actually created and declared one; per-command temporary directories are not evidence of a missing shared run resource.
+Before a targeted run, assert that every named test file exists; afterward require a matching `testResults` entry for every exact path and at least one `assertionResults` item with `status: "passed"` in each file, with no failed tests/files.
+Missing files, omitted files and files containing only skipped/todo cases fail coverage even if Vitest exits zero.
+This targeted coverage check is not a substitute for the sole integration gate or independent automatic Agent review.
+Use fabricated credentials, isolated homes/state and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
+Fast CLI tests use the real management entrypoint with a controlled `AutostartSystem`: changing HOME alone does not isolate the inherited cgroup or service manager.
+Keep in-service refusal coverage without touching the enclosing service.
+Socket fixtures bind a short relative name in an isolated child's cwd and test the resulting real inode through its long absolute path; they neither constrain the owner's temporary-root length nor create fallback directories.
+Git ownership fixtures must select their own system configuration as well as an isolated home: hosted runner images can set system-wide `safe.directory = *`, which changing `HOME` does not remove.
+`project-start` supplies that fixture-only configuration inside its Git shim, after the production environment sanitizer, and separately proves root refusal under user and system wildcard trust without modifying host configuration.
+A DIRECT process-test environment has all routing variables absent, including `NO_PROXY`/`no_proxy`; wildcard bypass variables are unsupported, not a way to request direct access.
+The `cadence-mode`, `history-shell`, `startup-card` and `agent-panel-cadence` fake terminal fixtures explicitly clear an inherited `CADENCE_SUBAGENT_CHILD` for their external-Pi scenario and restore it afterward; child-refusal cases set it themselves.
+Production workers and checks retain the guard, including when they run verification.
+A test waits for the event it needs, not a wall-clock guess; fixed waits stay only where time is the contract.
+Outer command budgets must cover the selected tests; existing SDK20s/child15s and PTY90s/interaction15s fixture budgets are not increased to obtain green.
+
+Preserve failed attempts until diagnosis is resolved; correct a demonstrated cause before rerunning, and never assign old failures a retrospective cause without evidence.
+Do not recreate the removed project workflow integration unless explicitly requested.
+Removing development tooling must never delete consumer `.cadence` data or private service state.
+
+## Regression owners
+
+This index includes retained slow diagnostics; their presence does not add them to the gate.
+The release gate does not launch a browser.
+The separate optical observation below does not turn unit tests into browser evidence.
+
+- `cadence-mode`, `cadence-mode-pty`, `workflow-contract`, `service-workflow`: persistent conversation activation/exit/branch restoration, actual Pi POSIX TUI/on-demand-owner flow, conversation-bound models/defaults, exact plan approval, DAG validation, real SDK worktrees/checks/local integration and cancellation.
+- `service-conversation-workflow`, `test/web/workflow.test.tsx`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.
+- `plan-revalidation`, `test/web/plan-revalidation.test.tsx`: unchanged-plan recovery across owner/model lifetimes using real proposal/control/context persistence with stand-in model sources and settled-turn facts; captured startup intent, explicit validation without Send/grant/worker, immutable prior snapshots, fresh confirmation, changed context refusal, no model substitution, lost-response/departure handling and English/Chinese recovery cards.
+  `plan-revalidation` and `workflow-admission` also check pre-admission effect-free refusals, recording before grant consumption/work registration, receipt lookup without repeated recording and retirement of both grant layers.
+  Controlled state/SSR tests are not real-browser or provider qualification.
+- `workflow-contract`, `workbench-cadence-control`, `workflow-research`: the coordinator's tool input and research outcomes.
+  `workflow-contract` holds the schema that states no bound, the completed plan input and one named refusal per field; `workbench-cadence-control` the browser's refusals (the reported step id in place of an investigation identity, never the word oversize), the unchanged-plan instruction and the per-question research result; `workflow-research` runs the owner against a stand-in worker launch for the single second asking, recording under both identities as each answer settles, the run that completes with what is missing and the one that fails with no answer.
+  The stand-in launch is not an SDK worker or a provider; `lightweight-sdk`'s mocked worker body covers the provider's reason on the failure diagnostic, redacted with the worker's credential.
+- `workflow-controller`, `workflow-delivery`, `workflow-verification`, `workflow-recovery-regressions`, `workflow-source-identity`, `workflow-step-pages`, `project-knowledge`, `project-knowledge-bounds`: service-owned recovery without user Send, no attempt quota, actual failed-step references retained across repair failures, explicit target/candidate/worktree setup placement, rephrased no-progress detection, automatic replan labelling for concrete scope/route changes, fixed permission boundaries, partial-work handoff, verified knowledge updates, fresh context and non-evicting step pages.
+- `run-environment`, `workflow-recovery-regressions`, `workflow-lifecycle`, `lightweight-process-diff`, `workflow-admission`: owned temporary roots in one designated pool, no HOME/workspace-parent fallback, shared verification rules, no inherited-variable dependency, same-workspace reuse and cross-workspace isolation, intent-before-create, ownership-safe cleanup and retained uncertainty.
+  The owner tests join controlled original work and cleanup before releasing the gate, keep cleanup checkpoints nonterminal, handle Cancel/Stop/quarantine arriving during cleanup, preserve confirmed removals on restart and retain final deviation notices.
+  Worker-boundary tests carry a complete context-limit agreement alongside long escaped checkout and temporary paths with shared or separate prefixes, including a detached assignment's relative combined-candidate location, without enlarging either field; scratch names its inherited variable rather than duplicating its absolute path.
+  Launcher tests observe the actual spawn environment with controlled handles, while a short real shell check covers an absent inherited `TMPDIR`.
+  Proposal preparation and research allocate nothing; an old runtime policy cannot authorize new resources.
+  These are not real-provider or native Windows/macOS qualification.
+- `task-worktree`, `workflow-delivery-runtime`, `workflow-delivery-admission`, `repository-coordination`, `repository-recovery`, `change-tools`: approved-only named stable candidates, adaptive recovery/knowledge (including baseline repairs that expand the original scope), exact acceptance and repeated owned fast-forwards, changed-target retention, original-operation leases, readonly evidence and recovery.
+  The full real admission case remains slow; controlled runtime/recovery tests are not paid-provider or real-owner qualification.
+  `workflow-recovery-regressions` covers a detached repair mistaking already-integrated sibling outputs for missing work: changed candidate paths route to a follow-up while unrelated scope additions remain usable, including integration advancing during the comparison; Git precheck refusals retain their reason without fabricating native results.
+- `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.
+- `pi-sessions`, `service-conversation-pages`, `service-conversation-retention`, `conversation-retirement`, `conversation-records`, `test/web/conversation-reader.test.tsx`: conversations as the project's Pi sessions (directory precedence, incremental and torn-line reads, turns, readable thinking as lazily read steps, the bounded context-size walk, read redaction, lossless parts), a browser turn's file and branches, the branch tree, live-preview counting, incremental large-session identity/continuation, command/entry correlation, current redaction, durable status and unsupported old identities without storage changes.
+- `worker-capture`, `pi-sessions`, `conversation-records`, `runtime-timeline`, `test/web/{conversation-reader,chat-timeline,stream-markdown,runtime-observation}.test.tsx`: capture UUID/content-index continuity across empty, thinking-only and tool-only messages, text/thinking/tool/text ordering, batched messages and legitimate repeated bodies; both final-before-marker and marker-before-final with an unmarked Pi tail, cold/reconnected observations and earlier pages.
+  Closed activity frames, shared capture bounds, redaction and lazy Pi-only thinking remain enforced; metadata is not a second body store.
+  `conversation-records` changes the reader's fabricated secret set after a tool-start without another capture event, then checks raw and decoded activity on repeated reads and tool updates, normal tool names and nameless waiting, earlier-page headers, post-redaction byte/Unicode bounds, unchanged capture/admission/session bytes and identities, and secret-source refusal versus last-known fallback.
+  Its full-tool-page regression drives genuine CaptureEmitter/SdkCapture → LiveCapture → ConversationRecords → `decodeWorkbenchResult`, with real arguments/output and capture-legal names: repeated `~xy~` expands only at read time, while `"a".repeat(117) + "~xy~🔧"` exercises an owner learning the secret after the SDK and the old UTF-16 `slice` surrogate split.
+  Read the complete page containing the tool, not only `before=1`: both listing and lazy `conversation-step` must decode, agree with the activity name, exclude secrets/isolated surrogates and fit 128 JSON-encoded bytes; over-limit names and unknown public fields still refuse.
+  The same cases assert unchanged capture activity sequence, admission/state/index/session bytes, source order and render identity; equal-part output updates change content versions, terminal reads retain final output, both result-final/marker orders survive an unmarked Pi tail, and a new overlay-free cold reader preserves the result (including error results).
+  Pi handoff may change read coordinates but not render identity; display-name-only redaction does not change the arguments/output version.
+  These fixtures preserve the separate early-page coverage and do not exercise a real browser.
+  `pi-sessions` compares unexecuted declarations for `error`, `length`, `aborted` and normal tool-use responses between genuine capture and both linked and unmarked legacy Pi history, retaining assistant state/notice, read identities and unchanged history bytes.
+  `conversation-records` drives genuine CaptureEmitter/SdkCapture → LiveCapture with controlled Pi files and `decodeWorkbenchResult`: final-first, marker-first and Pi-written-before-marker observations keep the no-result tool neutral in both listings and details, including running retries, failed/canceled settlement, a new cold reader and earlier-page reads.
+  Matching successful and `isError=true` tool results precede that failed/canceled response and keep their independent outcomes and source order; the unexecuted declaration has no tool-start, tool-end or tool-result event, and readonly observations preserve admission/state/index/session bytes.
+  `pi-sessions` also owns source tool identity versus display-name boundaries: 126/127/128-byte ASCII, multibyte/surrogate-pair and JSON-escaped names, read-redaction expansion, clipped-prefix/redacted-display collisions, unresolved duplicate IDs, post-result reuse and historical missing-name/ID behavior.
+  Linked and unmarked histories keep matching results at their declaration's position with one tool item and the original render identity, output and result-derived state; closed public detail decoding, encoded name bounds, scalar-safe clipping, fabricated-secret exclusion and unchanged Pi bytes guard the private local association index.
+  `conversation-records` sends capture-allowed 127/128-byte ASCII tool names through genuine CaptureEmitter/SdkCapture → LiveCapture and controlled Pi files/public decoding, in both final-first and marker-first order for declarations and results, including Pi-written-before-marker reads.
+  It checks one tool in text/tool/text source order, stable render IDs, lazy detail state/output/version, same-part updates, reply settlement, overlay-free cold reconnects and earlier pages; over-limit source names stay in Pi-only fixtures rather than weakening capture limits, while capture-legal read-redaction expansion uses the full-tool-page regression above.
+  Independent-execution regressions in `worker-capture` cover no declaration, end without start, private-name mismatch, missing source identity, ambiguous ended executions, retired declarations/partials and legal reuse after a result or new user boundary; only a uniquely associated execution without a declaration supplies the marker's result-call identity.
+  `pi-sessions` rejects extra fields, invalid or missing UUIDs, wrong roles/parents, duplicate message/result identities (including cross-command/branch collisions) and foreign command/user/run or pre-admission links without changing Pi bytes; it also checks earlier-turn preview suppression with and without the new result-call marker field.
+  `conversation-records` drives independent executions with no declaration, end without start, duplicate declarations/IDs (including different names), unstarted declarations and clipped/redacted display collisions through both final-first and marker-first sequences, for successful and error results.
+  Assertions cover Pi-written-before-marker observations, one source-positioned result with a stable call render ID, still-unresolved declarations, same-part output/version updates, earlier steps/steered turns, terminal reads and a new cold reader with no live overlay; admission/state/index/session bytes remain unchanged by reads.
+  These are deterministic local association/handoff regressions, not real-provider, transport, service-manager or browser-interaction evidence; a passing live-overlay assertion alone cannot qualify the durable reader.
+  `test/web/workbench.test.tsx` supplies public items only, with English/Chinese SSR matrices across running and terminal replies: unavailable/canceled declarations say no tool result was observed, while recorded errors remain errors; cards stay folded and details remain lazy.
+  Focused reruns are `bun run test:target test/pi-sessions.test.ts test/conversation-records.test.ts` and `bun run test:web test/web/workbench.test.tsx`, with the exact-file/passed-assertion coverage rule above.
+  These are controlled capture/private-file/public-decoder fixtures and separate SSR, not a live provider, service-manager or browser-interaction test.
+  Reader/detail lifetimes reject mixed pages and late responses, refresh equal-part tool revisions and read reply/workflow terminal snapshots without fetching closed details.
+  `test/helpers/runtime-timeline.ts` owns the shared typed event sequence and public DTO expectations, including explicit fixture identities and opaque content-version equality/change tokens; it imports no service implementation, SDK or React.
+  `test/runtime-timeline.test.ts` drives genuine CaptureEmitter/SdkCapture through LiveCapture and fabricated command-owned Pi records into decodeWorkbenchResult, asserting the actual projection against that contract.
+  `test/web/runtime-observation.test.tsx` supplies the same contract through controlled workbenchRead calls to the real ConversationReader and existing workspace SSR, not prefilled reader state.
+  Together these are split, contract-connected tests, not one single-process capture-to-SSR chain: they cover activity, waiting, silent tools, failed reads/recovery, reconnects, folded thinking without streamed bodies/signatures, equal-part tool revisions and separate reply/workflow outcomes.
+  The shared `independentTimeline`/`independentResults` contract additionally covers undeclared and ambiguous executions across both marker/final orders and completed/failed/canceled replies; `runtime-timeline` validates it against genuine capture, controlled Pi records and closed public decoding through an unmarked tail, overlay-free cold reads and earlier step pages.
+  A second whole execution/result with identical output completes between observations and must remain a separate identity in source order; versions are equality/change tokens, not proof that equal bodies are the same occurrence.
+  `test/web/conversation-reader.test.tsx` consumes that same contract through real `ConversationReader` reads, checking pagination, cold reconnects, closed-detail laziness and rejection of same-part stale versions, equal-body wrong identities and retired-conversation replies.
+  `test/web/chat-timeline.test.tsx` feeds those reader observations to the actual `ChatWorkspace` → `ChatTurnView` → `ToolStep` path with controlled hooks: an opened independent tool keeps its keyed state and old displayed output during updates/handoff/final reads, unrelated declarations/results stay folded, earlier history preserves the key, and obsolete requests cannot replace current output.
+  These backend and Web consumers are separate controlled fixtures, not one capture-to-mounted-browser test; key-addressed hook cells do not exercise React DOM reconciliation, real focus/scrolling or viewport layout.
+  Focused independent-result reruns are `bun run test:target test/worker-capture.test.ts test/pi-sessions.test.ts test/conversation-records.test.ts test/runtime-timeline.test.ts` and `bun run test:web test/web/conversation-reader.test.tsx test/web/chat-timeline.test.tsx`; apply the exact-file/passed-assertion coverage rule above, not just a zero exit code.
+  Workflow observations and read failures are controlled inputs, not a real workflow executor or transport outage.
+  Keep backend imports out of Web tests so frontend type checking does not traverse service/SDK declarations.
+  `stream-markdown` checks immediate complete snapshots without replay and lossless source-offset segmentation across LF/CRLF/CR, indentation and blank separators.
+  Its SSR comparisons parse emitted HTML into semantic element/attribute/text trees and compare segmented output with the authoritative whole-document `MarkdownBody`: loose/nested lists, quotes, indented/fenced code, dollar/backslash math, nested/multiline/escaped/duplicate references, footnote numbering/backlinks/footer, GFM and safe HTML/link/media behavior.
+  Arriving math closers or definitions may revise dependent syntax; toggling terminal status alone keeps the same markup, including incomplete fences.
+  The shared workflow caller retains its pacer/plain-fence policy, with SSR coverage of complete long snapshots.
+  `chat-timeline` follows the actual `ChatWorkspace` → `ChatTurnView` → `StepText` → ordinary `StreamMarkdown` path and inspects segment keys, component/renderer types and source slices across append, active-to-frozen, durable/terminal handoff, unrelated tools, re-observation and prepended history; new syntax preserves the unaffected prefix.
+  These element-tree assertions do not mount React DOM or measure performance; `workbench` separately checks stable row identities and folded thinking.
+  `test/web/chat-timeline.test.tsx` also executes `ChatWorkspace` with controlled hooks and observations and inspects its actual outer Fragment and child keys: preview-to-Pi handoff, inserted thinking/tools, settlement, re-observation and prepended history retain those keys, equal bodies remain separate and legacy turns keep their recorded fallback.
+  Key-addressed child hook cells exercise an opened tool retaining its displayed detail while its final read is pending; these cells are a test harness, not React's DOM reconciler.
+  The same workspace fixture drives the real lazy-window observer callback over registered row refs without a new conversation snapshot: below/exactly at the 80px boundary, paused reading, Latest, user return to the bottom, composer resize, hidden-view restoration, earlier-page compensation and observer/frame cleanup.
+  It also asserts that registration/measurement, question tracking and jump pins, branch versions, workflow placement, edit/continue and Send anchors still use read/navigation coordinates, not rendering identities.
+  Helper-only identity or resize tests cannot establish that the main workspace is wired to them.
+  For attachment races, `chat-timeline` drives `ChatWorkspace` through the actual `useConversation` and `ConversationReader`, holding individual head/turn Promises across a read pause, loss and recovery with identical owner IDs, and independent epoch/version replacements.
+  Obsolete replies ignore abort, including an error released after a new success.
+  Check the composer and reported footer clock before the new turn arrives, with no `summary.live`, and verify the draft, branch reads, body and paused scroll survive.
+  `conversation-reader` gates an earlier turn page while a retained detail remains readable; `statusbar` renders unavailable, untimed and timed activity.
+  These controlled regressions do not measure browser animation, paint or a real owner restart.
+  A focused wiring rerun is `bun run test:web test/web/chat-timeline.test.tsx test/web/lazy-window.test.tsx`; read-redaction and Markdown semantic regressions are selected with `bun run test:target test/conversation-records.test.ts` and `bun run test:web test/web/stream-markdown.test.tsx test/web/chat-timeline.test.tsx`.
+  Apply the exact-file/passed-assertion coverage rule above; these commands identify regression owners, not a recorded pass or a replacement for `verify` and independent Agent review of the new candidate.
+  `test/web/{runtime-observation,workspace-layout,lazy-window,workflow-agent}.test.tsx` covers in-transcript observations without a separate composer status strip, Stop markup and follow-versus-scrolled-up resize intent.
+  Controlled hooks, element-tree/source/CSS assertions, synthetic ResizeObserver dimensions and SSR are not a mounted DOM: native scroll clamping/anchoring, React DOM reconciliation, real browser scrolling, narrow-screen/focus/pointer behavior and paid providers remain unverified by these tests.
+- `test/workflow-runtime.test.ts`, `test/web/{chat-timeline,workflow-agent,workbench}.test.tsx`: workflow tool publication and the actual subagent-view wiring, separate from the ordinary Pi timeline fixtures above.
+  `workflow-runtime` drives real `SdkCapture`/`CaptureEmitter` events through `WorkflowTranscript`/`TurnCapture`, serializes a retained snapshot only when `accept` requests publication, then supplies those bytes to the real `Workflows.transcript` reader and `decodeWorkbenchResult`/`recordedTurn`.
+  It checks tool-start without a following message, multi-chunk replacement snapshots with equal parts before tool-end, reverse-order success/error for same-named distinct calls with empty results, parent termination without tool-end, and unchanged readable legacy bytes without inferred state or association.
+  This is the producer-to-persistence-publication-to-reader seam with controlled retained bytes, not a running owner's disk writer, SDK child or provider.
+  `chat-timeline` executes `WorkflowAgentView` → `useWorkbench` → `recordedTurn` → `ChatTurnView` → `ToolStep` with controlled transport replies, hook scheduling and a fake clock, not a replacement detail function: opened output refreshes at equal parts, preserves the old value while pending, and gets a final completed/failed/canceled/unknown snapshot after the live interval stops.
+  It checks closed tool and step-result laziness, aborts obsolete live polls on settlement, and changes client/run/step while transcript/result reads are pending to prove those late replies cannot write into the new view.
+  `workflow-agent` SSR exercises that same view-to-card path with controlled public observations in English/Chinese, checking explicit running/result/error and legacy-neutral labels independently of reply and workflow status; `workbench` covers the shared card's completed/failed/canceled/unknown reply matrix, including an unfinished call and a recorded legacy error.
+  These are separate controlled producer/reader and view tests, not one capture-to-browser end-to-end test; key-addressed hook cells model cleanup, not React DOM reconciliation, and SSR does not qualify real scrolling, focus, pointer interaction or narrow-screen layout.
+  Focused reruns are `bun run test:target test/workflow-runtime.test.ts` and `bun run test:web test/web/chat-timeline.test.tsx test/web/workflow-agent.test.tsx test/web/workbench.test.tsx`, with the exact-file/passed-assertion coverage rule above; they do not replace `verify` or independent Agent review.
+- `conversation-rename`, `gateway-archive`, `conversation-records`, `session-sharing`, `pi-sdk-baseline`, `session-rename`: the owner's rename rules against a stand-in child (read-back acknowledgement, one per session, no Send meanwhile, Stop, repeated commands), archive records in live and stopped-owner listings, the terminal's silence about a name record, and Pi's own `appendSessionInfo` shape.
+  `session-rename` is slow: the real child against fabricated session files (one appended entry, a torn last line, another identity, an older format, an empty or missing file, the child guard) and a generated owner renaming and archiving over HTTP across a restart.
+- `test/web/{conversation-inputs,composer,conversation-reader}.test.tsx`: when the browser offers the text typed to a running reply, the two commands, what each outcome does to the draft, a waiting message's whole-text rule, the waiting and undelivered rows, the split control beside Stop, and the reader carrying both lists.
+  SSR markup and pure functions exercise no key press, focus or real owner.
+- `conversation-input`, `worker-inputs`, `pi-sessions`, `pi-sdk-baseline`, `workbench-send-admission`, `service-conversation-inputs`: messages sent into a running reply.
+  `conversation-input` runs the owner against a stand-in worker (durable record before hand-over, hand-over only to a listening worker, bounds, withdrawal, settlement of delivered, undelivered and unknown messages, the startup rule, run-bound plan approval); `worker-inputs` runs the worker's sequencing against the installed SDK's real `AgentSession` with a controlled provider reply (a steer after the running tool call, queued prompts after a normal end, nothing after a failure or stop, one final capture frame after several prompts).
+  `pi-sdk-baseline` pins the two Pi behaviours that sequencing rests on: a steer is queued only into a running reply, and Pi continues a failed reply into a queued one unless the queue is cleared as `agent_end` is reported.
+  `service-conversation-inputs` is slow: a generated owner, its real worker and Pi's session file over HTTP, and a real coordinator turn whose plan stays approvable after a message was sent into it; the stand-in and in-process fixtures do not qualify a real provider or the child's IPC.
+- `conversation-images`, `service-conversation-images`, `test/web/images.test.tsx` plus `pi-sessions`/`gateway-conversations`: chunked image uploads without count/size quotas, exact Send/caller binding, SDK images through the private pipe, model capability refusal, readonly history/branch/media projection, image-only Send, upload failure and retained preview projection.
+- `abort-scope`, `service-http-client-abort`: missing static cancellation APIs individually/together, pre-cancel/first reason, full-body deadline, normal/error cleanup and no command replay or service cancellation; finite transport fixtures do not start a real owner.
+- `test/web/{project-entry,conversation-send,send-observation}.test.tsx`: pre-dispatch versus unconfirmed/confirmed preparation, attachment timeout after confirmation, pinned Send fields and original uncertain command IDs, scoped wait cleanup and same-epoch reattachment without replay.
+- `test/web/{project-resume,conversation-reader,workbench,folder-draft,workspace-layout,stale-banner,locale}.test.tsx`: complete-link selection without storage, readonly server-held history/mode/context/work restoration, the shared folder-first shell and non-sending first-use draft handoff (including blocked storage), image pagination/parallel detail cancellation, retained stale observations and independent localized status/errors.
+  Pure/controlled-fetch/SSR coverage is not physical Edge/Chrome/Android or production validation.
+- `test/web/{theme,toasts,file-diff,preview,conversations,workbench}.test.tsx`: both colour schemes' token contrast at WCAG AA and the no-literal-colour rule (computed from the stylesheet sources), the theme choice, the toast queue and store, an `edit`/`write` call's recorded arguments as a requested change, the fenced file preview and lightbox markup, the message action bar and its whole-message text, and day-grouped, filtered conversation rows.
+  Computed values and SSR markup are not a rendered page, a pointer, focus order or a real clipboard.
+- `test/web/{context-usage,conversation-rows,workbench,workflow}.test.tsx`: the statusbar's context item (catalog match, tokens only, unknown after compaction, absent) and the reader carrying it, rename and archive as single commands with their refused, unknown, pending and no-owner states and the archived list's unreadable-versus-empty states, thinking blocks as folded lazily read steps that are neither answer text nor tool evidence, and a delivery's assignment counts, board, per-run dock groups, deviations and set-aside checks.
+  SSR markup and pure functions exercise no pointer, focus, drawer or real owner.
+- `test/web/{conversation-tree,conversation-reader,composer,question-rail,activity,model-wait,workbench}.test.tsx`: the session tree's rows, versions and question ordinals, the anchor a Send names (rewrite head with and without the turn's `parent`, the saved form, an anchored Send through a model wait and its release), a jump that reads back gap-free and a branch opened at one of its messages, the leaf written to the chat hash, the Branches tab's states, the version pager and off-context turns, prompt recall, the caret's line rule without layout, the `@` path token, the remembered composer height and the rail's layout.
+  Pure functions, a mocked hook runtime and SSR do not show scrolling, focus, a pointer drag, text measurement or a real owner's branches.
+- `model-preview`, `model-preview-process`, `model-preview-recovery`, `gateway-models`, `test/web/{model-preview,model-catalog,model-picker,model-wait,conversation-send,workbench}.test.tsx`: isolated readonly Pi source projection (context windows included), no credential/store mutations, secret-bearing identifier withholding, changed/half-written sources, project/default scope, pre-start model/thinking selection, obsolete preview rejection and exact preselection installation on Send without substitution/replay, both model-wait choice paths, exit receipt parity, native-close process charging and exact-ledger recovery.
+  Controlled registries/SSR do not qualify a real browser or provider.
+- `service-contract`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority and authenticated access.
+- `pi-sources`: Cadence's closed `models.json` check compared field by field, at every object level, with the pinned SDK's published `schemas/models.schema.json` (a value of each field's type accepted, another type refused at its path, nothing else accepted); the retired `compat.reasoningEffortMap`; file/JSON/schema/SDK refusals that name the field and never a value; the win32 branch (simulated on this host, not a Windows run); and doctor reporting exactly the owner's pre-bind report.
+  Its real-SDK `pi-runtime` case is slow.
+- `checkout-gate`, `workflow-admission`, `workflow-delivery-runtime`, `workbench-cadence-control`: fair shared/exclusive access among workflows, cross-conversation workflow admission, same-conversation exclusion, overlapping isolated implementations, refresh-before-curation ordering and final guidance/branch/HEAD fences.
+  `workflow-parallel` is a retained slow real-Git diagnostic for isolated candidate refresh and successful-sibling integration fences, not part of the fast gate.
+- `service-owner`, `self-heal`: original operations, overlap, Stop, and startup self-healing from real crashed owners, registry locks, partial reservations, orphan workers, torn/unreadable history, half-written metadata, removed project directories and dead workbenches (live owners never reclaimed).
+- `worker-model`, `worker-retry-projection`, `conversation-records`, `test/web/model-retry.test.tsx`: public SDK Responses EOF recovery under a fake clock, one user message, no completed-tool replay or partial-call execution, bounded attempts, nonretryable auth/quota, Stop during backoff, reset per-request diagnostics, bounded progress failure handling, readonly refresh and localized SSR; no real upstream qualification.
+  `worker-model` also holds the first auth reply while the actual SDK overlaps provider discovery and prompt preflight: more than two pending resolutions must queue, not fail before Send.
+  A mocked `createAgentSession` or an immediately resolved auth stub cannot cover that startup graph.
+  The retained, file-targeted `worker-auth-process` diagnostic covers real SDK children/IPC for ordinary, coordinator and workflow routes plus generated-owner browser HTTP Send; it remains slow, not another release prerequisite.
+- `worker-*`, `lightweight-sdk`, `lightweight-process-diff`, `research-tools`, `research-tools-settlement`, `workflow-lifecycle`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
+  `worker-capture` checks Pi's actual `AgentSession` system-message path (a low-level `Agent` alone does not reproduce it), explicit context omissions, strict message pairing, and split key/delimiter/whitespace redaction across repeated projections.
+  Real-owner provider fixtures decode both string and typed text-part message bodies; recovery evidence and observation cursors must survive the current SDK serialization.
+  `worker-settings` covers Pi merge/model-override/trust semantics, malformed-source refusal and inert snapshots without source writes.
+  `worker-toolkit` covers inherited editing selections, PowerShell and native shell schemas/backends, readonly boundaries, immutable placement and original-operation joins; `research-tools` covers actual Pi read/list semantics and `research-tools-settlement` delays actual SDK I/O to test cancellation; `coordinator-tools` owns bridge admission and disposal.
+  `research-tools-schema` compares ordinary tool schemas with the installed public SDK and checks pre-send Responses serialization without the retired batch/query/cursor protocol; specialized `changes` alone retains nullable cursor fields.
+  `research-tools-process` uses installed SDK search adapters with controlled subprocess events to verify grep's actual abort/close path, find's original settlement and error propagation.
+  These are not paid-provider requests or qualification of externally installed search binaries.
+- `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
+- `history-shell`, `native-client`, `native-history`, `terminal-integration`: readonly entry guards, shared service, Unicode/paging and detach; daily native approval/cancel belongs to `cadence-mode`.
+- `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: running-only lists, stale keyboard/mouse selection, stable open reading snapshots, bounded abandoned-run observation and final reads after transient failures, conversation-scoped admission attribution (not cwd or copied fork history), no settled-child rereads, and readonly owner observation that never starts, cancels or replays work; departure fences late reads and only detaches.
+- `test/web/`: fast pure/SSR tests for presentation, client state, scoped Send/approval, retained history/images, built-asset serving, auth and content policy; no browser launch, real DOM interaction or viewport qualification.
+- `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
+  The import closure is read from the real archive by the gate's pack stage (`scripts/pack-check.mjs`); `package-audit` holds its fabricated-archive cases.
+- `npm-release`: parsed workflow triggers/permissions/pins, real tiny-Git tag ancestry and drift, strict candidate/registry identities, exact archive auditing, bounded readonly metadata observation that ends pending rather than failed, and digest/`latest` confirmation.
+  Fake-clock/stream fixtures cover delayed version/tarball/latest visibility, the shared deadline and unchanged request ceiling, original-read settlement, immediate mismatch refusal and independent publish receipts without extending test timeouts.
+  Fixtures are local or controlled-fetch only; a passing gate does not qualify a GitHub-hosted run, npm OIDC exchange or real publication.
+- `service-autostart`, `project-start`, `install-config`: explicit `cadence server` registration on systemd (root system scope without linger, legacy user scope), launchd and the Windows Run key, separate named service definitions and directory owners, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
+- `service-installation`, `service-maintenance`, `service-maintenance-systemd`, `test/web/service-dialog.test.tsx`: exact Pi/npm/Bun copy and manager discovery (including conflicting global-directory evidence and Pi-prefix fallback refusal), pinned/ambiguous/unwritable refusal, unchanged Pi settings, explicit npm scope, complete Bun deprecation metadata, successful restart exit, confirmed new-owner Stop before rollback and partial-install restoration, cgroup and `InvocationID` proofs, the job record, and against a real user manager a child inside the service that is refused without change and a WebUI restart that a transient unit completes.
+- `service-conversation-context`, `service-workflow-context`: same-checkout subdirectories and same-cwd conversations, cwd/model snapshots fixed at admission, exact stale-plan refusal, worktree/check cwd, restart/default preservation, old-identity refusal and conversation model isolation.
+- `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running, rotation of the token line, a runtime fault's worker stop/successor/recovering restart and the readable refusal for a removed project directory.
+- `workspace-landing`: no-default-workspace startup, explicit root refusal and noncreating native/readonly entry.
+- `gateway-conversations`, `gateway-files`, `gateway-send`, `test/web/{conversation-send,send-observation}.test.tsx`: stopped-owner history/mode/step and file reads without startup or writes (`gateway-files` covers a never-prepared folder, the owner's file refusals and the no-redaction-source refusal without starting anything), unchanged draft identity across selection/first startup/Stop/refresh, exact stopped-state guards and readonly restoration; real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work, nonactivating selection followed by a Send that reclaims a provably dead registry lock and genuine multi-owner Stop over loopback.
+  Preparation needs fresh auth/CSRF, sends no message or approval, does not adopt a merely browsed independent owner, and adds no warm-Send receipt quota; lost preparation/Send replies and departure cannot replay or rebind a message.
+  Same-epoch re-entry waits for the new observation generation, never the previous attachment.
+- `gateway-login`, `test/web/{assets,entry-recovery,startup-script}.test.tsx`: authenticated build-scoped URLs on both entries, uncached HTML, transient first-read recovery, auth refusal, and pre-mount module-failure recovery bounded across reloads.
+  These use real asset bytes, controlled GETs/timers and the startup script in a simulated document, not a browser cache or deployed reverse proxy.
+- `gateway-availability`, `test/web/{owner-bindings,project-entry,observation}.test.tsx`: authenticated access across different or absent builds, failed gateway binding eviction, client-chosen attachment IDs, lost-header/body recovery without slot leaks, idempotent detach, same-viewer polling and replacement-owner/CSRF recovery without mixed-epoch readiness or command/grant replay.
+  The gateway fixture is in-process with a controlled HTTP owner, not an SDK or boot service.
+- `activity`, `activity-discovery`, `activity-auth`, `test/web/activity.test.tsx`: real-turn-only native metadata, final settlement, exact admission attribution, nonactivating registry discovery, partial/stale observations, private-file preservation, cancellable browser polling and branch navigation.
+  Controlled observations do not qualify real browsers, providers or production services.
+- `agent-lifetime`, `worker-auth`, `worker-model`, `lightweight-process-diff`: virtual time past the old deadline for each worker route, multi-round SDK investigation, bridge detach versus explicit cancel, automatic compaction/final selection, request-bound owner OAuth renewal and original-write joins, bounded settled capture state and redacted log truncation.
+  These use controlled native/auth/provider ports, not live services or paid providers.
+
+### Ordinary Send admission
+
+`test/conversation-input.test.ts` holds session A's stand-in worker open and takes the same exclusive permit used by workflows.
+It reads B's first `state.json` before its run begins, then holds auth preparation open to check that the head, turn and activity all show `starting` without assistant output.
+B must then launch, write its reply and settle before A ends or the permit is released; acceptance receipts and elapsed time cannot establish that ordering.
+The same fixture checks same-session and capacity refusals without a new turn, per-turn cancellation and owner Stop waiting for auth settlement and native close.
+`test/conversation-records.test.ts` checks interruption against the untouched state file, separately from an owner's recorded unknown closure.
+On the Web side, `test/web/conversation-reader.test.tsx` polls from startup to the first answer with localized transcript markup; `test/web/chat-timeline.test.tsx` drives the workspace's in-reply input, Stop and draft handling after a definite refusal or an uncertain Send.
+These are controlled worker, reader and view fixtures, not a live provider or mounted browser.
+
+## Builds and packaging
+
+Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
+Publish `web/dist` through `bun run build:web` (the package script runs `node scripts/build-web.mjs`): Vite run under Bun lays out its preload helper differently, so a Bun build fails a Node `build:web:check`.
+The canonical builder compares two private builds under the inherited temporary root and publishes their validated asset/manifest closure; never hand-edit generated assets or rebuild service/native outputs for a Web-only source change.
+Refresh affected destination hashes in `provenance/webui-reuse.json` while preserving upstream source/license pins and historical evidence; generated asset names belong to the independently maintained `provenance/package-members.json`, which changes only when the reviewed shipped membership changes.
+Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
+The pack stage also parses every module the archive ships and refuses a relative runtime import the archive does not contain: the source tree resolves such an import, so only the archive shows a file left out of `files`.
+Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
+Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+## Optical observations by build
 
 ### Earlier optical build (historical observation)
 
@@ -1089,221 +1315,187 @@ DPR 1; both themes at 320×820, 390×820 and 1440×900.
 These are local browser viewport observations, not physical-device, hardware GPU or real-service qualification.
 They do not rerun the performance windows or replace the owner's full matrix, no-argument `verify` and independent review on the eventual delivery candidate.
 
-## Development practice
+### Conversation workspace and transcript (targeted local observation)
 
-Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
-Use ordinary source editing and directly affected fast tests while developing; run `verify` once at a stable integration boundary or before release, not after every local edit.
-`test`, `test:target` and `test:service` default to excluding the `slow` tag; `verify` also avoids importing whole files tagged `slow`.
-Test workers load `test/no-fsync.mjs`, which makes fsync a no-op inside them (spawned owners and CLIs still flush): crash tests kill processes and no test simulates power loss.
-A root test is tagged `slow` (`{ tags: ["slow"] }`, or `// @module-tag slow` as a whole file's first line) when it takes about 0.4 s or more alone, usually because it starts real owners, SDK workers, CLIs or crash children; short process tests stay untagged.
-Retained slow tests are for explicitly requested, file-targeted diagnosis only, using `node node_modules/vitest/vitest.mjs run test/<file>.test.ts --tags-filter=slow`; do not run them as another suite or imply they passed with `verify`.
-The real systemd diagnostic additionally requires `CADENCE_SYSTEMD_E2E=1` and a running user manager; it uses and removes a temporary unit under `$XDG_RUNTIME_DIR/systemd/user`, never a production service.
+The `quiet-workspace` and `transcript-polish` groups exercised canonical build `e0a73edb2eaab2047db789d37a943f4daf91320e3f1acb64bede9f1f4ff7af80` over pre-delivery HEAD `f193839d9766df787aed49a80fc3019706797390` in Chrome 151.0.7922.34.
+Reports `optical-evidence-kn0TYA` and `optical-evidence-qKtZOz` contain the per-view controls, reading offsets and PNGs; each recorded six completed views and zero problems.
 
-Use the external private temp root described above for targeted tests too.
-Development may explicitly link already installed matching dependencies rather than copy/install them; `node_modules` links are ignored and Vite preserves their logical module paths, while the unchanged notice audit verifies all module bytes and membership.
-This is not implicit dependency setup for consumer workflows.
-A checkout-local `.cache` root makes non-Git fixtures inherit the checkout and triggers `Private state home must be outside the working copy`; this is an invalid test environment, not evidence that unrelated features broke.
-A nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
-Delivery workers and checks use the inherited owner-prepared temporary root; they do not create, relocate or clean it, invent owner markers or treat its expected existence as a conflict.
-Historical explicitly declared setup resources keep their original meaning, not a prerequisite for a new run.
-Keep prior evidence during diagnosis inside the same session scope; each targeted Vitest JSON report uses a new filename.
-Final session disposal follows the ownership rules above.
-A marker is required only when the approved setup actually created and declared one; per-command temporary directories are not evidence of a missing shared run resource.
-Before a targeted run, assert that every named test file exists; afterward require a matching `testResults` entry for every exact path and at least one `assertionResults` item with `status: "passed"` in each file, with no failed tests/files.
-Missing files, omitted files and files containing only skipped/todo cases fail coverage even if Vitest exits zero.
-This targeted coverage check is not a substitute for the sole integration gate or independent automatic Agent review.
-Use fabricated credentials, isolated homes/state and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
-Fast CLI tests use the real management entrypoint with a controlled `AutostartSystem`: changing HOME alone does not isolate the inherited cgroup or service manager.
-Keep in-service refusal coverage without touching the enclosing service.
-Socket fixtures bind a short relative name in an isolated child's cwd and test the resulting real inode through its long absolute path; they neither constrain the owner's temporary-root length nor create fallback directories.
-Git ownership fixtures must select their own system configuration as well as an isolated home: hosted runner images can set system-wide `safe.directory = *`, which changing `HOME` does not remove.
-`project-start` supplies that fixture-only configuration inside its Git shim, after the production environment sanitizer, and separately proves root refusal under user and system wildcard trust without modifying host configuration.
-A DIRECT process-test environment has all routing variables absent, including `NO_PROXY`/`no_proxy`; wildcard bypass variables are unsupported, not a way to request direct access.
-The `cadence-mode`, `history-shell`, `startup-card` and `agent-panel-cadence` fake terminal fixtures explicitly clear an inherited `CADENCE_SUBAGENT_CHILD` for their external-Pi scenario and restore it afterward; child-refusal cases set it themselves.
-Production workers and checks retain the guard, including when they run verification.
-A test waits for the event it needs, not a wall-clock guess; fixed waits stay only where time is the contract.
-Outer command budgets must cover the selected tests; existing SDK20s/child15s and PTY90s/interaction15s fixture budgets are not increased to obtain green.
+- At widths 320/390/1440 in both themes the new dock started at y=439.63/424.78/527.53, with no transcript shelf.
+  The same focused editor kept its attachment through a refused Send; after the admitted first message the dock and pane boundary met at y=606/606/736, with a 72px shelf and zero bottom gap.
+  The 390px view used reduced motion and still reported the receipt in text.
+- The 90-second fixture kept one focused history row for the reply and its two linked workflows through phase updates and an unavailable read; it stayed up with one workflow and returned to history only after settlement.
+  The title opened one proposal without a stream-tail card; further discussion, replacement, cold refresh and explicit revalidation did not reuse an old open panel or submit implementation approval.
+- In each mixed trace the 15 completed tool calls counted as 15, not 16 for the body-free thought; expansion made zero detail reads, and the disclosure arrows had a 0px spread.
+  With auto and tall composers the paired ink/no-ink images differed at 18,632–66,984 pixels in the visible region and **zero** pixels from one row above Latest through the protected region, dock and bottom gutter.
+  Desktop scrollbar dragging and keyboard jumps reached the older question; phone rails stayed hidden.
 
-Preserve failed attempts until diagnosis is resolved; correct a demonstrated cause before rerunning, and never assign old failures a retrospective cause without evidence.
-Do not recreate the removed project workflow integration unless explicitly requested.
-Removing development tooling must never delete consumer `.cadence` data or private service state.
+These are targeted synthetic observations, not a pass of the no-argument optical matrix or a run against a provider.
+An additional older `--group=dark:320` run (`optical-evidence-ckqDPw`) stopped at the disabled-model scene: its session advertises `actions: false`, so the real picker disabled all three options, not just the two ineligible entries assumed by the probe.
+That run did not qualify later legacy scenes.
 
-## Regression owners
+**Final conversation build:** Both conversation groups ran again after the optical repairs below, against `a57d98d4287ffe4fc2f2bbb110e50d27aa0cbdf66b0bbc5083384536fea994a5` in Chrome 151.0.7922.34.
+`optical-evidence-FixLvG` (quiet-workspace) and `optical-evidence-Unfp4d` (transcript-polish) under the session `TMPDIR` each contain six completed views, zero problems and no unexpected requests.
+In both themes the plan opened and closed over the existing transcript at scrollTop 1313/1290/499 for widths 320/390/1440; the editor remained focused on publication and later discussion left no implementation button in the stream.
+After the 90-second controlled roster sequence there was no background brand feedback.
+The trace arrows again had a 0px spread, and resizing the editor while reading left scrollTop unchanged at 6452/4604/2447 before Latest restored a zero bottom gap.
+Across the twelve ink/no-ink pairs the visible region changed at 18,632–66,984 pixels; the protected strip, editor and gutter each changed at zero pixels.
+These reports exercise keyboard input and reduced motion (390px); they do not exercise a physical phone, real provider or execution approval.
 
-This index includes retained slow diagnostics; their presence does not add them to the gate.
-The release gate does not launch a browser.
-The separate optical observation below does not turn unit tests into browser evidence.
+### Legacy probes on the same conversation build (targeted, not a matrix pass)
 
-- `cadence-mode`, `cadence-mode-pty`, `workflow-contract`, `service-workflow`: persistent conversation activation/exit/branch restoration, actual Pi POSIX TUI/on-demand-owner flow, conversation-bound models/defaults, exact plan approval, DAG validation, real SDK worktrees/checks/local integration and cancellation.
-- `service-conversation-workflow`, `test/web/workflow.test.tsx`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.
-- `plan-revalidation`, `test/web/plan-revalidation.test.tsx`: unchanged-plan recovery across owner/model lifetimes using real proposal/control/context persistence with stand-in model sources and settled-turn facts; captured startup intent, explicit validation without Send/grant/worker, immutable prior snapshots, fresh confirmation, changed context refusal, no model substitution, lost-response/departure handling and English/Chinese recovery cards.
-  `plan-revalidation` and `workflow-admission` also check pre-admission effect-free refusals, recording before grant consumption/work registration, receipt lookup without repeated recording and retirement of both grant layers.
-  Controlled state/SSR tests are not real-browser or provider qualification.
-- `workflow-contract`, `workbench-cadence-control`, `workflow-research`: the coordinator's tool input and research outcomes.
-  `workflow-contract` holds the schema that states no bound, the completed plan input and one named refusal per field; `workbench-cadence-control` the browser's refusals (the reported step id in place of an investigation identity, never the word oversize), the unchanged-plan instruction and the per-question research result; `workflow-research` runs the owner against a stand-in worker launch for the single second asking, recording under both identities as each answer settles, the run that completes with what is missing and the one that fails with no answer.
-  The stand-in launch is not an SDK worker or a provider; `lightweight-sdk`'s mocked worker body covers the provider's reason on the failure diagnostic, redacted with the worker's credential.
-- `workflow-controller`, `workflow-delivery`, `workflow-verification`, `workflow-recovery-regressions`, `workflow-source-identity`, `workflow-step-pages`, `project-knowledge`, `project-knowledge-bounds`: service-owned recovery without user Send, no attempt quota, actual failed-step references retained across repair failures, explicit target/candidate/worktree setup placement, rephrased no-progress detection, automatic replan labelling for concrete scope/route changes, fixed permission boundaries, partial-work handoff, verified knowledge updates, fresh context and non-evicting step pages.
-- `run-environment`, `workflow-recovery-regressions`, `workflow-lifecycle`, `lightweight-process-diff`, `workflow-admission`: owned temporary roots in one designated pool, no HOME/workspace-parent fallback, shared verification rules, no inherited-variable dependency, same-workspace reuse and cross-workspace isolation, intent-before-create, ownership-safe cleanup and retained uncertainty.
-  The owner tests join controlled original work and cleanup before releasing the gate, keep cleanup checkpoints nonterminal, handle Cancel/Stop/quarantine arriving during cleanup, preserve confirmed removals on restart and retain final deviation notices.
-  Worker-boundary tests carry a complete context-limit agreement alongside long escaped checkout and temporary paths with shared or separate prefixes, including a detached assignment's relative combined-candidate location, without enlarging either field; scratch names its inherited variable rather than duplicating its absolute path.
-  Launcher tests observe the actual spawn environment with controlled handles, while a short real shell check covers an absent inherited `TMPDIR`.
-  Proposal preparation and research allocate nothing; an old runtime policy cannot authorize new resources.
-  These are not real-provider or native Windows/macOS qualification.
-- `task-worktree`, `workflow-delivery-runtime`, `workflow-delivery-admission`, `repository-coordination`, `repository-recovery`, `change-tools`: approved-only named stable candidates, adaptive recovery/knowledge (including baseline repairs that expand the original scope), exact acceptance and repeated owned fast-forwards, changed-target retention, original-operation leases, readonly evidence and recovery.
-  The full real admission case remains slow; controlled runtime/recovery tests are not paid-provider or real-owner qualification.
-  `workflow-recovery-regressions` covers a detached repair mistaking already-integrated sibling outputs for missing work: changed candidate paths route to a follow-up while unrelated scope additions remain usable, including integration advancing during the comparison; Git precheck refusals retain their reason without fabricating native results.
-- `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.
-- `pi-sessions`, `service-conversation-pages`, `service-conversation-retention`, `conversation-retirement`, `conversation-records`, `test/web/conversation-reader.test.tsx`: conversations as the project's Pi sessions (directory precedence, incremental and torn-line reads, turns, readable thinking as lazily read steps, the bounded context-size walk, read redaction, lossless parts), a browser turn's file and branches, the branch tree, live-preview counting, incremental large-session identity/continuation, command/entry correlation, current redaction, durable status and unsupported old identities without storage changes.
-- `worker-capture`, `pi-sessions`, `conversation-records`, `runtime-timeline`, `test/web/{conversation-reader,chat-timeline,stream-markdown,runtime-observation}.test.tsx`: capture UUID/content-index continuity across empty, thinking-only and tool-only messages, text/thinking/tool/text ordering, batched messages and legitimate repeated bodies; both final-before-marker and marker-before-final with an unmarked Pi tail, cold/reconnected observations and earlier pages.
-  Closed activity frames, shared capture bounds, redaction and lazy Pi-only thinking remain enforced; metadata is not a second body store.
-  `conversation-records` changes the reader's fabricated secret set after a tool-start without another capture event, then checks raw and decoded activity on repeated reads and tool updates, normal tool names and nameless waiting, earlier-page headers, post-redaction byte/Unicode bounds, unchanged capture/admission/session bytes and identities, and secret-source refusal versus last-known fallback.
-  Its full-tool-page regression drives genuine CaptureEmitter/SdkCapture → LiveCapture → ConversationRecords → `decodeWorkbenchResult`, with real arguments/output and capture-legal names: repeated `~xy~` expands only at read time, while `"a".repeat(117) + "~xy~🔧"` exercises an owner learning the secret after the SDK and the old UTF-16 `slice` surrogate split.
-  Read the complete page containing the tool, not only `before=1`: both listing and lazy `conversation-step` must decode, agree with the activity name, exclude secrets/isolated surrogates and fit 128 JSON-encoded bytes; over-limit names and unknown public fields still refuse.
-  The same cases assert unchanged capture activity sequence, admission/state/index/session bytes, source order and render identity; equal-part output updates change content versions, terminal reads retain final output, both result-final/marker orders survive an unmarked Pi tail, and a new overlay-free cold reader preserves the result (including error results).
-  Pi handoff may change read coordinates but not render identity; display-name-only redaction does not change the arguments/output version.
-  These fixtures preserve the separate early-page coverage and do not exercise a real browser.
-  `pi-sessions` compares unexecuted declarations for `error`, `length`, `aborted` and normal tool-use responses between genuine capture and both linked and unmarked legacy Pi history, retaining assistant state/notice, read identities and unchanged history bytes.
-  `conversation-records` drives genuine CaptureEmitter/SdkCapture → LiveCapture with controlled Pi files and `decodeWorkbenchResult`: final-first, marker-first and Pi-written-before-marker observations keep the no-result tool neutral in both listings and details, including running retries, failed/canceled settlement, a new cold reader and earlier-page reads.
-  Matching successful and `isError=true` tool results precede that failed/canceled response and keep their independent outcomes and source order; the unexecuted declaration has no tool-start, tool-end or tool-result event, and readonly observations preserve admission/state/index/session bytes.
-  `pi-sessions` also owns source tool identity versus display-name boundaries: 126/127/128-byte ASCII, multibyte/surrogate-pair and JSON-escaped names, read-redaction expansion, clipped-prefix/redacted-display collisions, unresolved duplicate IDs, post-result reuse and historical missing-name/ID behavior.
-  Linked and unmarked histories keep matching results at their declaration's position with one tool item and the original render identity, output and result-derived state; closed public detail decoding, encoded name bounds, scalar-safe clipping, fabricated-secret exclusion and unchanged Pi bytes guard the private local association index.
-  `conversation-records` sends capture-allowed 127/128-byte ASCII tool names through genuine CaptureEmitter/SdkCapture → LiveCapture and controlled Pi files/public decoding, in both final-first and marker-first order for declarations and results, including Pi-written-before-marker reads.
-  It checks one tool in text/tool/text source order, stable render IDs, lazy detail state/output/version, same-part updates, reply settlement, overlay-free cold reconnects and earlier pages; over-limit source names stay in Pi-only fixtures rather than weakening capture limits, while capture-legal read-redaction expansion uses the full-tool-page regression above.
-  Independent-execution regressions in `worker-capture` cover no declaration, end without start, private-name mismatch, missing source identity, ambiguous ended executions, retired declarations/partials and legal reuse after a result or new user boundary; only a uniquely associated execution without a declaration supplies the marker's result-call identity.
-  `pi-sessions` rejects extra fields, invalid or missing UUIDs, wrong roles/parents, duplicate message/result identities (including cross-command/branch collisions) and foreign command/user/run or pre-admission links without changing Pi bytes; it also checks earlier-turn preview suppression with and without the new result-call marker field.
-  `conversation-records` drives independent executions with no declaration, end without start, duplicate declarations/IDs (including different names), unstarted declarations and clipped/redacted display collisions through both final-first and marker-first sequences, for successful and error results.
-  Assertions cover Pi-written-before-marker observations, one source-positioned result with a stable call render ID, still-unresolved declarations, same-part output/version updates, earlier steps/steered turns, terminal reads and a new cold reader with no live overlay; admission/state/index/session bytes remain unchanged by reads.
-  These are deterministic local association/handoff regressions, not real-provider, transport, service-manager or browser-interaction evidence; a passing live-overlay assertion alone cannot qualify the durable reader.
-  `test/web/workbench.test.tsx` supplies public items only, with English/Chinese SSR matrices across running and terminal replies: unavailable/canceled declarations say no tool result was observed, while recorded errors remain errors; cards stay folded and details remain lazy.
-  Focused reruns are `bun run test:target test/pi-sessions.test.ts test/conversation-records.test.ts` and `bun run test:web test/web/workbench.test.tsx`, with the exact-file/passed-assertion coverage rule above.
-  These are controlled capture/private-file/public-decoder fixtures and separate SSR, not a live provider, service-manager or browser-interaction test.
-  Reader/detail lifetimes reject mixed pages and late responses, refresh equal-part tool revisions and read reply/workflow terminal snapshots without fetching closed details.
-  `test/helpers/runtime-timeline.ts` owns the shared typed event sequence and public DTO expectations, including explicit fixture identities and opaque content-version equality/change tokens; it imports no service implementation, SDK or React.
-  `test/runtime-timeline.test.ts` drives genuine CaptureEmitter/SdkCapture through LiveCapture and fabricated command-owned Pi records into decodeWorkbenchResult, asserting the actual projection against that contract.
-  `test/web/runtime-observation.test.tsx` supplies the same contract through controlled workbenchRead calls to the real ConversationReader and existing workspace SSR, not prefilled reader state.
-  Together these are split, contract-connected tests, not one single-process capture-to-SSR chain: they cover activity, waiting, silent tools, failed reads/recovery, reconnects, folded thinking without streamed bodies/signatures, equal-part tool revisions and separate reply/workflow outcomes.
-  The shared `independentTimeline`/`independentResults` contract additionally covers undeclared and ambiguous executions across both marker/final orders and completed/failed/canceled replies; `runtime-timeline` validates it against genuine capture, controlled Pi records and closed public decoding through an unmarked tail, overlay-free cold reads and earlier step pages.
-  A second whole execution/result with identical output completes between observations and must remain a separate identity in source order; versions are equality/change tokens, not proof that equal bodies are the same occurrence.
-  `test/web/conversation-reader.test.tsx` consumes that same contract through real `ConversationReader` reads, checking pagination, cold reconnects, closed-detail laziness and rejection of same-part stale versions, equal-body wrong identities and retired-conversation replies.
-  `test/web/chat-timeline.test.tsx` feeds those reader observations to the actual `ChatWorkspace` → `ChatTurnView` → `ToolStep` path with controlled hooks: an opened independent tool keeps its keyed state and old displayed output during updates/handoff/final reads, unrelated declarations/results stay folded, earlier history preserves the key, and obsolete requests cannot replace current output.
-  These backend and Web consumers are separate controlled fixtures, not one capture-to-mounted-browser test; key-addressed hook cells do not exercise React DOM reconciliation, real focus/scrolling or viewport layout.
-  Focused independent-result reruns are `bun run test:target test/worker-capture.test.ts test/pi-sessions.test.ts test/conversation-records.test.ts test/runtime-timeline.test.ts` and `bun run test:web test/web/conversation-reader.test.tsx test/web/chat-timeline.test.tsx`; apply the exact-file/passed-assertion coverage rule above, not just a zero exit code.
-  Workflow observations and read failures are controlled inputs, not a real workflow executor or transport outage.
-  Keep backend imports out of Web tests so frontend type checking does not traverse service/SDK declarations.
-  `stream-markdown` checks immediate complete snapshots without replay and lossless source-offset segmentation across LF/CRLF/CR, indentation and blank separators.
-  Its SSR comparisons parse emitted HTML into semantic element/attribute/text trees and compare segmented output with the authoritative whole-document `MarkdownBody`: loose/nested lists, quotes, indented/fenced code, dollar/backslash math, nested/multiline/escaped/duplicate references, footnote numbering/backlinks/footer, GFM and safe HTML/link/media behavior.
-  Arriving math closers or definitions may revise dependent syntax; toggling terminal status alone keeps the same markup, including incomplete fences.
-  The shared workflow caller retains its pacer/plain-fence policy, with SSR coverage of complete long snapshots.
-  `chat-timeline` follows the actual `ChatWorkspace` → `ChatTurnView` → `StepText` → ordinary `StreamMarkdown` path and inspects segment keys, component/renderer types and source slices across append, active-to-frozen, durable/terminal handoff, unrelated tools, re-observation and prepended history; new syntax preserves the unaffected prefix.
-  These element-tree assertions do not mount React DOM or measure performance; `workbench` separately checks stable row identities and folded thinking.
-  `test/web/chat-timeline.test.tsx` also executes `ChatWorkspace` with controlled hooks and observations and inspects its actual outer Fragment and child keys: preview-to-Pi handoff, inserted thinking/tools, settlement, re-observation and prepended history retain those keys, equal bodies remain separate and legacy turns keep their recorded fallback.
-  Key-addressed child hook cells exercise an opened tool retaining its displayed detail while its final read is pending; these cells are a test harness, not React's DOM reconciler.
-  The same workspace fixture drives the real lazy-window observer callback over registered row refs without a new conversation snapshot: below/exactly at the 80px boundary, paused reading, Latest, user return to the bottom, composer resize, hidden-view restoration, earlier-page compensation and observer/frame cleanup.
-  It also asserts that registration/measurement, question tracking and jump pins, branch versions, workflow placement, edit/continue and Send anchors still use read/navigation coordinates, not rendering identities.
-  Helper-only identity or resize tests cannot establish that the main workspace is wired to them.
-  For attachment races, `chat-timeline` drives `ChatWorkspace` through the actual `useConversation` and `ConversationReader`, holding individual head/turn Promises across a read pause, loss and recovery with identical owner IDs, and independent epoch/version replacements.
-  Obsolete replies ignore abort, including an error released after a new success.
-  Check the composer and reported footer clock before the new turn arrives, with no `summary.live`, and verify the draft, branch reads, body and paused scroll survive.
-  `conversation-reader` gates an earlier turn page while a retained detail remains readable; `statusbar` renders unavailable, untimed and timed activity.
-  These controlled regressions do not measure browser animation, paint or a real owner restart.
-  A focused wiring rerun is `bun run test:web test/web/chat-timeline.test.tsx test/web/lazy-window.test.tsx`; read-redaction and Markdown semantic regressions are selected with `bun run test:target test/conversation-records.test.ts` and `bun run test:web test/web/stream-markdown.test.tsx test/web/chat-timeline.test.tsx`.
-  Apply the exact-file/passed-assertion coverage rule above; these commands identify regression owners, not a recorded pass or a replacement for `verify` and independent Agent review of the new candidate.
-  `test/web/{runtime-observation,workspace-layout,lazy-window,workflow-agent}.test.tsx` covers in-transcript observations without a separate composer status strip, Stop markup and follow-versus-scrolled-up resize intent.
-  Controlled hooks, element-tree/source/CSS assertions, synthetic ResizeObserver dimensions and SSR are not a mounted DOM: native scroll clamping/anchoring, React DOM reconciliation, real browser scrolling, narrow-screen/focus/pointer behavior and paid providers remain unverified by these tests.
-- `test/workflow-runtime.test.ts`, `test/web/{chat-timeline,workflow-agent,workbench}.test.tsx`: workflow tool publication and the actual subagent-view wiring, separate from the ordinary Pi timeline fixtures above.
-  `workflow-runtime` drives real `SdkCapture`/`CaptureEmitter` events through `WorkflowTranscript`/`TurnCapture`, serializes a retained snapshot only when `accept` requests publication, then supplies those bytes to the real `Workflows.transcript` reader and `decodeWorkbenchResult`/`recordedTurn`.
-  It checks tool-start without a following message, multi-chunk replacement snapshots with equal parts before tool-end, reverse-order success/error for same-named distinct calls with empty results, parent termination without tool-end, and unchanged readable legacy bytes without inferred state or association.
-  This is the producer-to-persistence-publication-to-reader seam with controlled retained bytes, not a running owner's disk writer, SDK child or provider.
-  `chat-timeline` executes `WorkflowAgentView` → `useWorkbench` → `recordedTurn` → `ChatTurnView` → `ToolStep` with controlled transport replies, hook scheduling and a fake clock, not a replacement detail function: opened output refreshes at equal parts, preserves the old value while pending, and gets a final completed/failed/canceled/unknown snapshot after the live interval stops.
-  It checks closed tool and step-result laziness, aborts obsolete live polls on settlement, and changes client/run/step while transcript/result reads are pending to prove those late replies cannot write into the new view.
-  `workflow-agent` SSR exercises that same view-to-card path with controlled public observations in English/Chinese, checking explicit running/result/error and legacy-neutral labels independently of reply and workflow status; `workbench` covers the shared card's completed/failed/canceled/unknown reply matrix, including an unfinished call and a recorded legacy error.
-  These are separate controlled producer/reader and view tests, not one capture-to-browser end-to-end test; key-addressed hook cells model cleanup, not React DOM reconciliation, and SSR does not qualify real scrolling, focus, pointer interaction or narrow-screen layout.
-  Focused reruns are `bun run test:target test/workflow-runtime.test.ts` and `bun run test:web test/web/chat-timeline.test.tsx test/web/workflow-agent.test.tsx test/web/workbench.test.tsx`, with the exact-file/passed-assertion coverage rule above; they do not replace `verify` or independent Agent review.
-- `conversation-rename`, `gateway-archive`, `conversation-records`, `session-sharing`, `pi-sdk-baseline`, `session-rename`: the owner's rename rules against a stand-in child (read-back acknowledgement, one per session, no Send meanwhile, Stop, repeated commands), archive records in live and stopped-owner listings, the terminal's silence about a name record, and Pi's own `appendSessionInfo` shape.
-  `session-rename` is slow: the real child against fabricated session files (one appended entry, a torn last line, another identity, an older format, an empty or missing file, the child guard) and a generated owner renaming and archiving over HTTP across a restart.
-- `test/web/{conversation-inputs,composer,conversation-reader}.test.tsx`: when the browser offers the text typed to a running reply, the two commands, what each outcome does to the draft, a waiting message's whole-text rule, the waiting and undelivered rows, the split control beside Stop, and the reader carrying both lists.
-  SSR markup and pure functions exercise no key press, focus or real owner.
-- `conversation-input`, `worker-inputs`, `pi-sessions`, `pi-sdk-baseline`, `workbench-send-admission`, `service-conversation-inputs`: messages sent into a running reply.
-  `conversation-input` runs the owner against a stand-in worker (durable record before hand-over, hand-over only to a listening worker, bounds, withdrawal, settlement of delivered, undelivered and unknown messages, the startup rule, run-bound plan approval); `worker-inputs` runs the worker's sequencing against the installed SDK's real `AgentSession` with a controlled provider reply (a steer after the running tool call, queued prompts after a normal end, nothing after a failure or stop, one final capture frame after several prompts).
-  `pi-sdk-baseline` pins the two Pi behaviours that sequencing rests on: a steer is queued only into a running reply, and Pi continues a failed reply into a queued one unless the queue is cleared as `agent_end` is reported.
-  `service-conversation-inputs` is slow: a generated owner, its real worker and Pi's session file over HTTP, and a real coordinator turn whose plan stays approvable after a message was sent into it; the stand-in and in-process fixtures do not qualify a real provider or the child's IPC.
-- `conversation-images`, `service-conversation-images`, `test/web/images.test.tsx` plus `pi-sessions`/`gateway-conversations`: chunked image uploads without count/size quotas, exact Send/caller binding, SDK images through the private pipe, model capability refusal, readonly history/branch/media projection, image-only Send, upload failure and retained preview projection.
-- `abort-scope`, `service-http-client-abort`: missing static cancellation APIs individually/together, pre-cancel/first reason, full-body deadline, normal/error cleanup and no command replay or service cancellation; finite transport fixtures do not start a real owner.
-- `test/web/{project-entry,conversation-send,send-observation}.test.tsx`: pre-dispatch versus unconfirmed/confirmed preparation, attachment timeout after confirmation, pinned Send fields and original uncertain command IDs, scoped wait cleanup and same-epoch reattachment without replay.
-- `test/web/{project-resume,conversation-reader,workbench,folder-draft,workspace-layout,stale-banner,locale}.test.tsx`: complete-link selection without storage, readonly server-held history/mode/context/work restoration, the shared folder-first shell and non-sending first-use draft handoff (including blocked storage), image pagination/parallel detail cancellation, retained stale observations and independent localized status/errors.
-  Pure/controlled-fetch/SSR coverage is not physical Edge/Chrome/Android or production validation.
-- `test/web/{theme,toasts,file-diff,preview,conversations,workbench}.test.tsx`: both colour schemes' token contrast at WCAG AA and the no-literal-colour rule (computed from the stylesheet sources), the theme choice, the toast queue and store, an `edit`/`write` call's recorded arguments as a requested change, the fenced file preview and lightbox markup, the message action bar and its whole-message text, and day-grouped, filtered conversation rows.
-  Computed values and SSR markup are not a rendered page, a pointer, focus order or a real clipboard.
-- `test/web/{context-usage,conversation-rows,workbench,workflow}.test.tsx`: the statusbar's context item (catalog match, tokens only, unknown after compaction, absent) and the reader carrying it, rename and archive as single commands with their refused, unknown, pending and no-owner states and the archived list's unreadable-versus-empty states, thinking blocks as folded lazily read steps that are neither answer text nor tool evidence, and a delivery's assignment counts, board, per-run dock groups, deviations and set-aside checks.
-  SSR markup and pure functions exercise no pointer, focus, drawer or real owner.
-- `test/web/{conversation-tree,conversation-reader,composer,question-rail,activity,model-wait,workbench}.test.tsx`: the session tree's rows, versions and question ordinals, the anchor a Send names (rewrite head with and without the turn's `parent`, the saved form, an anchored Send through a model wait and its release), a jump that reads back gap-free and a branch opened at one of its messages, the leaf written to the chat hash, the Branches tab's states, the version pager and off-context turns, prompt recall, the caret's line rule without layout, the `@` path token, the remembered composer height and the rail's layout.
-  Pure functions, a mocked hook runtime and SSR do not show scrolling, focus, a pointer drag, text measurement or a real owner's branches.
-- `model-preview`, `model-preview-process`, `model-preview-recovery`, `gateway-models`, `test/web/{model-preview,model-catalog,model-picker,model-wait,conversation-send,workbench}.test.tsx`: isolated readonly Pi source projection (context windows included), no credential/store mutations, secret-bearing identifier withholding, changed/half-written sources, project/default scope, pre-start model/thinking selection, obsolete preview rejection and exact preselection installation on Send without substitution/replay, both model-wait choice paths, exit receipt parity, native-close process charging and exact-ledger recovery.
-  Controlled registries/SSR do not qualify a real browser or provider.
-- `service-contract`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority and authenticated access.
-- `pi-sources`: Cadence's closed `models.json` check compared field by field, at every object level, with the pinned SDK's published `schemas/models.schema.json` (a value of each field's type accepted, another type refused at its path, nothing else accepted); the retired `compat.reasoningEffortMap`; file/JSON/schema/SDK refusals that name the field and never a value; the win32 branch (simulated on this host, not a Windows run); and doctor reporting exactly the owner's pre-bind report.
-  Its real-SDK `pi-runtime` case is slow.
-- `checkout-gate`, `workflow-admission`, `workflow-delivery-runtime`, `workbench-cadence-control`: fair shared/exclusive access among workflows, cross-conversation workflow admission, same-conversation exclusion, overlapping isolated implementations, refresh-before-curation ordering and final guidance/branch/HEAD fences.
-  `workflow-parallel` is a retained slow real-Git diagnostic for isolated candidate refresh and successful-sibling integration fences, not part of the fast gate.
-- `service-owner`, `self-heal`: original operations, overlap, Stop, and startup self-healing from real crashed owners, registry locks, partial reservations, orphan workers, torn/unreadable history, half-written metadata, removed project directories and dead workbenches (live owners never reclaimed).
-- `worker-model`, `worker-retry-projection`, `conversation-records`, `test/web/model-retry.test.tsx`: public SDK Responses EOF recovery under a fake clock, one user message, no completed-tool replay or partial-call execution, bounded attempts, nonretryable auth/quota, Stop during backoff, reset per-request diagnostics, bounded progress failure handling, readonly refresh and localized SSR; no real upstream qualification.
-  `worker-model` also holds the first auth reply while the actual SDK overlaps provider discovery and prompt preflight: more than two pending resolutions must queue, not fail before Send.
-  A mocked `createAgentSession` or an immediately resolved auth stub cannot cover that startup graph.
-  The retained, file-targeted `worker-auth-process` diagnostic covers real SDK children/IPC for ordinary, coordinator and workflow routes plus generated-owner browser HTTP Send; it remains slow, not another release prerequisite.
-- `worker-*`, `lightweight-sdk`, `lightweight-process-diff`, `research-tools`, `research-tools-settlement`, `workflow-lifecycle`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
-  `worker-capture` checks Pi's actual `AgentSession` system-message path (a low-level `Agent` alone does not reproduce it), explicit context omissions, strict message pairing, and split key/delimiter/whitespace redaction across repeated projections.
-  Real-owner provider fixtures decode both string and typed text-part message bodies; recovery evidence and observation cursors must survive the current SDK serialization.
-  `worker-settings` covers Pi merge/model-override/trust semantics, malformed-source refusal and inert snapshots without source writes.
-  `worker-toolkit` covers inherited editing selections, PowerShell and native shell schemas/backends, readonly boundaries, immutable placement and original-operation joins; `research-tools` covers actual Pi read/list semantics and `research-tools-settlement` delays actual SDK I/O to test cancellation; `coordinator-tools` owns bridge admission and disposal.
-  `research-tools-schema` compares ordinary tool schemas with the installed public SDK and checks pre-send Responses serialization without the retired batch/query/cursor protocol; specialized `changes` alone retains nullable cursor fields.
-  `research-tools-process` uses installed SDK search adapters with controlled subprocess events to verify grep's actual abort/close path, find's original settlement and error propagation.
-  These are not paid-provider requests or qualification of externally installed search binaries.
-- `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
-- `history-shell`, `native-client`, `native-history`, `terminal-integration`: readonly entry guards, shared service, Unicode/paging and detach; daily native approval/cancel belongs to `cadence-mode`.
-- `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: running-only lists, stale keyboard/mouse selection, stable open reading snapshots, bounded abandoned-run observation and final reads after transient failures, conversation-scoped admission attribution (not cwd or copied fork history), no settled-child rereads, and readonly owner observation that never starts, cancels or replays work; departure fences late reads and only detaches.
-- `test/web/`: fast pure/SSR tests for presentation, client state, scoped Send/approval, retained history/images, built-asset serving, auth and content policy; no browser launch, real DOM interaction or viewport qualification.
-- `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
-  The import closure is read from the real archive by the gate's pack stage (`scripts/pack-check.mjs`); `package-audit` holds its fabricated-archive cases.
-- `npm-release`: parsed workflow triggers/permissions/pins, real tiny-Git tag ancestry and drift, strict candidate/registry identities, exact archive auditing, bounded readonly metadata observation that ends pending rather than failed, and digest/`latest` confirmation.
-  Fake-clock/stream fixtures cover delayed version/tarball/latest visibility, the shared deadline and unchanged request ceiling, original-read settlement, immediate mismatch refusal and independent publish receipts without extending test timeouts.
-  Fixtures are local or controlled-fetch only; a passing gate does not qualify a GitHub-hosted run, npm OIDC exchange or real publication.
-- `service-autostart`, `project-start`, `install-config`: explicit `cadence server` registration on systemd (root system scope without linger, legacy user scope), launchd and the Windows Run key, separate named service definitions and directory owners, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
-- `service-installation`, `service-maintenance`, `service-maintenance-systemd`, `test/web/service-dialog.test.tsx`: exact Pi/npm/Bun copy and manager discovery (including conflicting global-directory evidence and Pi-prefix fallback refusal), pinned/ambiguous/unwritable refusal, unchanged Pi settings, explicit npm scope, complete Bun deprecation metadata, successful restart exit, confirmed new-owner Stop before rollback and partial-install restoration, cgroup and `InvocationID` proofs, the job record, and against a real user manager a child inside the service that is refused without change and a WebUI restart that a transient unit completes.
-- `service-conversation-context`, `service-workflow-context`: same-checkout subdirectories and same-cwd conversations, cwd/model snapshots fixed at admission, exact stale-plan refusal, worktree/check cwd, restart/default preservation, old-identity refusal and conversation model isolation.
-- `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running, rotation of the token line, a runtime fault's worker stop/successor/recovering restart and the readable refusal for a removed project directory.
-- `workspace-landing`: no-default-workspace startup, explicit root refusal and noncreating native/readonly entry.
-- `gateway-conversations`, `gateway-files`, `gateway-send`, `test/web/{conversation-send,send-observation}.test.tsx`: stopped-owner history/mode/step and file reads without startup or writes (`gateway-files` covers a never-prepared folder, the owner's file refusals and the no-redaction-source refusal without starting anything), unchanged draft identity across selection/first startup/Stop/refresh, exact stopped-state guards and readonly restoration; real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work, nonactivating selection followed by a Send that reclaims a provably dead registry lock and genuine multi-owner Stop over loopback.
-  Preparation needs fresh auth/CSRF, sends no message or approval, does not adopt a merely browsed independent owner, and adds no warm-Send receipt quota; lost preparation/Send replies and departure cannot replay or rebind a message.
-  Same-epoch re-entry waits for the new observation generation, never the previous attachment.
-- `gateway-login`, `test/web/{assets,entry-recovery,startup-script}.test.tsx`: authenticated build-scoped URLs on both entries, uncached HTML, transient first-read recovery, auth refusal, and pre-mount module-failure recovery bounded across reloads.
-  These use real asset bytes, controlled GETs/timers and the startup script in a simulated document, not a browser cache or deployed reverse proxy.
-- `gateway-availability`, `test/web/{owner-bindings,project-entry,observation}.test.tsx`: authenticated access across different or absent builds, failed gateway binding eviction, client-chosen attachment IDs, lost-header/body recovery without slot leaks, idempotent detach, same-viewer polling and replacement-owner/CSRF recovery without mixed-epoch readiness or command/grant replay.
-  The gateway fixture is in-process with a controlled HTTP owner, not an SDK or boot service.
-- `activity`, `activity-discovery`, `activity-auth`, `test/web/activity.test.tsx`: real-turn-only native metadata, final settlement, exact admission attribution, nonactivating registry discovery, partial/stale observations, private-file preservation, cancellable browser polling and branch navigation.
-  Controlled observations do not qualify real browsers, providers or production services.
-- `agent-lifetime`, `worker-auth`, `worker-model`, `lightweight-process-diff`: virtual time past the old deadline for each worker route, multi-round SDK investigation, bridge detach versus explicit cancel, automatic compaction/final selection, request-bound owner OAuth renewal and original-write joins, bounded settled capture state and redacted log truncation.
-  These use controlled native/auth/provider ports, not live services or paid providers.
+`optical-evidence-9APiKJ/summary.json` under the run's `TMPDIR` is the subsequent `node scripts/qualify-optical.mjs --group=dark:320` observation on build `e0a73edb2eaab2047db789d37a943f4daf91320e3f1acb64bede9f1f4ff7af80`, Chrome 151.0.7922.34, DPR 1, 320×820.
+It reached 24 scene audits and the final plan-validation probe, then **exited 1 with two problems**.
+The default loopback viewer remained readonly.
+A separate origin projected a current viewer for the eligible-control cases; both servers still refused writes other than detach.
+Both unexpected-request ledgers were empty.
 
-### Ordinary Send admission
+- Tab and Shift+Tab reached `fixture/optical` in the current viewer and skipped both disabled buttons.
+  The *painted* reasons for quartz and slate measured 6.111:1 and 6.035:1.
+  In the readonly viewer all three were disabled and Shift+Tab returned to search, but the global lock reason **was not readable**.
+  `models-readonly-dark-320-failed.png` shows it underneath the footer: the text Range spans y=785.61–801.61, while the status bar starts at y=769.
+  The fixed compact `.model-popover` is inside the `.composer-dock` stacking context; the probe did not hide the footer or accept a DOM string instead of visible ink.
+- The opened design dialog retained transcript top 1289 with Latest present.
+  Its selected and unselected options were visible, but `other-idea-dark-320-rest.png` failed the original 3:1 border check.
+  The empty input border RGB(66,69,77) measured **1.832:1** on the card and **1.925:1** on the fill.
+  `web/src/components/workspace/design.css` has a resting `.design-custom` rule, but the canonical CSS on this build contains no `.design-custom` selector.
+  The subsequent input/submit Tab frames were not reached in that scene.
+- The independent workflow dot stayed at (23,118) on `design` through both selections, other-row hover and keyboard focus.
+  On selected `reading`, the face at (14,244) was RGB(21,28,45) against wing RGB(12,15,21); the outer focus at (6,244) measured 6.207:1.
+  File and subagent rows retained their stroke and focus checks.
+  The open left drawer's **Conversation history** and the right drawer's **Branches** both passed their text, focus and material probes.
+- Unknown mode retained its original ready/stable PNG comparison: the `Message` placeholder stem measured 10.025:1, model text 6.120:1 and the unknown thinking level 5.421:1.
+  With a running reply, Low/Medium/High were native disabled and Tab went search → Stop → search.
+  No model choice or Stop was activated.
+- Opening the current plan from its title made zero validation reads.
+  The explicit validation held exactly one `conversation-models` GET for `validate-specimen`.
+  The disabled busy label measured 16.540:1; the failed read displayed `invalid` inside the panel and restored the enabled **Validate plan again** control.
+  A subsequent catalog refresh was not a second validation.
+  No approval or execution request was issued.
 
-`test/conversation-input.test.ts` holds session A's stand-in worker open and takes the same exclusive permit used by workflows.
-It reads B's first `state.json` before its run begins, then holds auth preparation open to check that the head, turn and activity all show `starting` without assistant output.
-B must then launch, write its reply and settle before A ends or the permit is released; acceptance receipts and elapsed time cannot establish that ordering.
-The same fixture checks same-session and capacity refusals without a new turn, per-turn cancellation and owner Stop waiting for auth settlement and native close.
-`test/conversation-records.test.ts` checks interruption against the untouched state file, separately from an owner's recorded unknown closure.
-On the Web side, `test/web/conversation-reader.test.tsx` polls from startup to the first answer with localized transcript markup; `test/web/chat-timeline.test.tsx` drives the workspace's in-reply input, Stop and draft handling after a definite refusal or an uncertain Send.
-These are controlled worker, reader and view fixtures, not a live provider or mounted browser.
+**Desktop boundary:** the `dark:1440` and `light:1440` groups (`optical-evidence-V2CVCk`, `optical-evidence-TYLjUo`) both reached the readonly/current picker comparison.
+At dark/1440 the readonly reason passed at 6.111:1.
+Neither desktop group passed: the right sash's middle outside sample at (1075,458) fell on the transcript scrollbar, measuring **2.269:1** dark and **2.811:1** light (required 3:1).
+A separate dark 1440×900 diagnostic (`optical-evidence-PGuqUp`, **desktop-context-subset**, not a rerun of those groups) Tab-focused the enabled Queue and Steer buttons with the draft intact, without activating them.
+It completed the reply-locked picker, all nine composer-flow observations (including `Conversation read: stale.`, recovery and reduced motion), and the held/failed plan-validation read with zero unexpected requests.
+No new browser, provider, consumer profile or build participated.
 
-## Builds and packaging
+### Compact picker, design field and pane focus: rebuilt candidate
 
-Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
-Publish `web/dist` through `bun run build:web` (the package script runs `node scripts/build-web.mjs`): Vite run under Bun lays out its preload helper differently, so a Bun build fails a Node `build:web:check`.
-The canonical builder compares two private builds under the inherited temporary root and publishes their validated asset/manifest closure; never hand-edit generated assets or rebuild service/native outputs for a Web-only source change.
-Refresh affected destination hashes in `provenance/webui-reuse.json` while preserving upstream source/license pins and historical evidence; generated asset names belong to the independently maintained `provenance/package-members.json`, which changes only when the reviewed shipped membership changes.
-Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
-The pack stage also parses every module the archive ships and refuses a relative runtime import the archive does not contain: the source tree resolves such an import, so only the archive shows a file left out of `files`.
-Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
-Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+`bun run build:web` produced `66907e8aec0e006c90842c3653a00c10a023015a41206d1df840e44b1015e2d3`.
+The three original `node scripts/qualify-optical.mjs --group=…` commands used that build, installed Chrome 151.0.7922.34, DPR 1 and disposable profiles.
+Reports below are relative to the run's `TMPDIR`; each group has `summary.json` and `progress.ndjson`.
+All three exited **1**, not a matrix pass:
+
+- `dark:320` (320×820), `optical-evidence-BVC5qf`: 24 scene audits; the design submit geometry and its dependent frame assertion failed.
+- `dark:1440` (1440×900), `optical-evidence-OZzCY0`: 15 scene audits; stopped waiting for Latest after the wheel over the folded tool.
+- `light:1440` (1440×900), `optical-evidence-fPC8Hx`: 15 scene audits; also stopped at that wheel, with an earlier 1.055:1 Latest-label reading in the tool-output scene (white on sampled RGB(247,249,252), required 4.5:1).
+
+**Picker:** At 320 the readonly lock reason's ink at (43,741) measured 6.111:1 on its backing at (19,742).
+All three options remained native disabled: Tab skipped them and Shift+Tab returned to search.
+On the independent current viewer, both directions reached `fixture/optical` while skipping quartz and slate; their reason glyphs measured 6.111 and 6.035:1.
+No option, approval or execution was activated; both unexpected-request ledgers were empty in all three groups (non-GET refusal, detach excepted).
+`style-boundaries-XpJM27/report.json` and its three PNGs supplement the group: the 320px dock grew from 151 to 404px via the keyboard grip, but the menu bottom stayed at 761, above the status bar at 769.
+At 530×660 the footer occupied 33 rather than 51px; the menu bottom followed it to 619 (workspace bottom 627), with visible lock ink at (43,599), 6.104:1.
+All three frames had a nonempty internally scrollable list and three disabled options.
+An initial supplemental capture (`style-boundaries-C4w5PB`) crossed catalog arrival and failed its stability assertion; the three-frame comparison waited for the actual disabled catalog before sampling.
+
+**Design:** In the compact report's `other-idea-dark-320-rest.png`, x=94/160/226 at y=407 sampled RGB(176,190,209) on the actual empty field border, 9.314:1 against the card at y=405 and 9.783:1 against the fill at y=410.
+Tab from the selected radio produced a 5.686:1 outline at y=404 against y=402 (`other-idea-dark-320-tab.png`).
+The subsequent Tab reached the enabled submit button without activating it, and the center and four edge hit tests all reached that button.
+In `other-idea-dark-320-failed.png` its ring at (12,655) measured 5.414:1 against (9,655).
+The formal `submit-tab` frame still **failed**: `controlGeometry` intersected the button (x=15–305, y=635.36–675.86) with `.chat-messages` ending at y=606, reporting zero visible height.
+`ActionDialog` uses `showModal()`; the open dialog was in the top layer and filled the 320×820 viewport, not clipped to the transcript behind it.
+The transcript remained at 1307 with Latest present.
+Check clipping up to the modal and the viewport, retaining all button edge hits and pixel assertions; do not reposition the dialog to fit the transcript.
+
+**Sashes:** The original top/middle/bottom samples were at y=131/458/785 for both 6px handles.
+On the left, ink x=258 against outside/inside x=255/260 measured at least 17.623:1 dark and 15.424:1 light.
+On the right, ink x=1078 against x=1075/1080 measured at least 6.240:1 dark and 7.999:1 light; the limiting surface in both was the scrollbar thumb at (1075,458).
+Both sashes received Tab focus; the solid 2px line and all five hit positions were retained (`controlFocus` in the two desktop reports).
+In the subsequent desktop `expand` scene, folded and expanded bottom-follow were observed, but away/Latest was not.
+In the supplemental dark desktop diagnostic, a trusted −144 wheel at (845,443.33) hit the `material.ts` subtitle; `scrollTop` stayed at 702 of 702 and Latest never appeared.
+Neither that diagnostic nor the compact submit screenshot substitutes for the failed group assertions.
+The later desktop scenes were not reached.
+
+### Top-layer controls, native wheel input and Latest paint
+
+The requested three groups ran against the same canonical `bun run build:web` output, `a57d98d4287ffe4fc2f2bbb110e50d27aa0cbdf66b0bbc5083384536fea994a5`, over pre-delivery HEAD `f193839d9766df787aed49a80fc3019706797390`.
+Installed Chrome 151.0.7922.34, DPR 1, disposable profiles and the separate synthetic readonly/current-context viewers; report directories below are under the inherited `TMPDIR`.
+Each has `summary.json` and `progress.ndjson`.
+These are complete invocations of the named groups, **not** a no-argument matrix or `verify` result:
+
+| Command                                               | Exit | Scene audits | Report                    |
+| ----------------------------------------------------- | ---: | -----------: | ------------------------- |
+| `node scripts/qualify-optical.mjs --group=dark:320`   |    0 |           24 | `optical-evidence-QA65K8` |
+| `node scripts/qualify-optical.mjs --group=dark:1440`  |    1 |           23 | `optical-evidence-eKggpk` |
+| `node scripts/qualify-optical.mjs --group=light:1440` |    0 |           23 | `optical-evidence-j9Q0U5` |
+
+All reached the final plan-validation probe, with empty `unexpectedRequests.readonly` and `unexpectedRequests.currentContext` in each report.
+The dark desktop failure was after the requested modal and scroll cases; its first-ready unknown-mode frame is **not qualified** (details below).
+
+**Modal.**
+In `other-idea-dark-320-submit-tab.png`, the enabled design submit button's visible and full rects both span x=15–305, y=635.36–675.86.
+`pickerStates` records the center and all four inset edges hitting the button and actual Tab focus; ring (12,655) against (9,655) measured 5.414:1.
+The transcript stayed at 1307 with Latest visible on both sides of the capture.
+No submission occurred.
+On desktop the same Tab ring at (658,708) against (655,708) was 5.408:1 dark / 5.421:1 light; transcript top remained 482.
+The clip list stops *after* the nearest `dialog:modal`, not at its parent scroller and not at an ordinary open dialog.
+A separate Chromium clipping probe of a 110×72 button inside nested overflow measured 60×20 under `show()`, 75×31 under `showModal()` (both the dialog and its inner scroller still clip), and 45×31 after the modal crossed the left viewport edge.
+
+**Wheel.**
+Both desktop `inputWindows` changed the native 780×580 window at (10,10) to 1472×1024 at the same origin; the page stayed 1440×900.
+`toolWheels` records the original `material.ts` center hit at (845,443.328), `deltaY=-144`, a trusted non-prevented wheel and the actual scroll.
+ScrollTop/clientHeight/scrollHeight went from 702/654/1356 to 558/654/1356, stable bottom distance **144px**.
+By the time the passive DOM listener saw the event, the compositor had scrolled and the same screen point was over prose.
+Opening the same head grew the extent to 1845 with top still 558 and the same paragraph (index 16) still 23.125px from the pane top.
+Latest reached top 1191 (bottom gap 0); reducing the viewport to 804px tall changed the pane height to 558 and top to 1287, still gap 0.
+No scroll position assignment or product follow change was needed.
+
+**Latest ink.**
+The light/1440 tool-output page audit retained all 200 visible text samples.
+`latestPaint` binds one button (x=780.375–919.625, y=692–724), its text Range (x=813.375–904.625, y=699.203–716.203) and text/backing hits on both sides of both viewport PNGs.
+`tool-output-light-1440-original.png` has a white stem at (827,706) on RGB(23,30,41) at (811,707): **16.744:1**.
+The face against the adjacent shelf at (944,707) measured 15.876:1.
+In `tool-output-light-1440-no-glyphs.png`, both the former stem and adjacent interior pixel are RGB(23,30,41).
+Neither the label nor its backing was omitted; no frame was replaced and no `.scroll-bottom` paint or sampling-coordinate correction was warranted by this pair.
+
+**Newly reached cases and limits.**
+On `66907e8aec0e`, two instrumentation pilots stopped after lightbox (`optical-evidence-8gBMln`, `optical-evidence-cXTFNn`, exit 1): the original point had hit the head but the passive event arrived after it moved.
+They did not observe later cases.
+The next full groups on those bytes reached the final probe: compact dark exited 0 (`optical-evidence-0umcBQ`); both desktop groups exited 1 (`optical-evidence-yJJR4P`, `optical-evidence-msd0D7`).
+At (611.45,542.86), 1px inside the implementation button, desktop hit-testing returned the card instead.
+Positioning the inline actions relatively preserved their rectangles and restored all five button hits in the rebuilt groups (never activated).
+In both light desktop unknown-mode frames the small reasoning dash painted at only 3.333:1; using the existing primary ink raised it to 5.577:1 on the same backing without resizing the control.
+
+The remaining `dark:1440` problem on the rebuilt bytes is `unknownMode` → `ready`: the original `unknown-dark-1440-ready.png` matched **two** before/after candidate bindings, not exactly one.
+Both have the same alert-rule landmark at (451,631), mode button, capsule and viewport.
+The stable frame passed; it does not replace the unbound first frame.
+`notice-bindings-drYp9G/report.json` is a separate diagnosis, not a substitute group run: holding then releasing the same synthetic conversation-models GET moves the dash Range from x=681.05–690.89 to x=668.39–678.23 without moving that notice landmark.
+The pending trigger has a transparent top border; the settled trigger's top edge is RGB(100,141,255).
+The original failed PNG has the latter at (597,815).
+For `modeFrame` / `observeUnknownMode` in `scripts/optical-fixtures/composer-observations.mjs`, use an independent trigger-edge witness **in addition to** the notice rule when these two layouts cross one capture; retain the original first-ready frame, unique binding, and all six foreground checks.
+An ambiguous binding is not a contrast pass.
+
+### Unavailable-mode first frame: model edge binding
+
+**Retained frame:** The collector replay used the original `optical-evidence-eKggpk/unknown-dark-1440-ready.png` (SHA-256 `3f5e224d72386fcf5bb730346750b977000ec3ff1daa3e162f5712a747ff1f67`) and the same canonical build `a57d98d4287ffe4fc2f2bbb110e50d27aa0cbdf66b0bbc5083384536fea994a5`.
+`model-edge-replay-smH1j8/report.json` under the inherited `TMPDIR` records both geometries around the controlled catalog response, matching `notice-bindings-drYp9G`.
+Both matched the notice at (451,631); only **Choose a model** matched the trigger edge:
+
+- **Reading models…** (232.39px wide, dash x=681.05–690.89): its transparent top would match its adjacent padding, but the PNG edge at (603,815) was RGB(100,141,255) against RGB(13,17,24) at (603,816).
+- **Choose a model** (219.73px wide, dash x=668.39–678.23): the PNG edge at (597,815) exactly matched its computed solid RGB(100,141,255); the padding at (597,816) was RGB(13,17,24).
+
+Replay exited 0, binding candidate 1 **before** checking glyphs.
+The request gate was only for reconstructing the two geometries: holding one conversation-models read alone initially worked (`model-edge-replay-e1JXXE`, exit 0), but a second attempt already had the settled catalog (`model-edge-replay-TSdCCJ`, exit 1 on the two-layout coverage assertion).
+The final replay held catalog GETs including the project preview; the normal group has no such gate.
+
+**Live group:** An intermediate `node scripts/qualify-optical.mjs --group=dark:1440` exited 1 (`optical-evidence-wcXnev/summary.json`): both candidates matched because the native tooltip had changed, not the displayed caption, rectangle, dash Range or border.
+The collector now records both tooltip strings separately from layout identity; different sampling targets still require exactly one match.
+The same complete group on the same build exited **0** (`optical-evidence-NsQuMF/summary.json`, `progress.ndjson`, 23 scene audits, zero problems).
+In its first `ready` capture only the tooltip changed; `stable` had the same settled layout and its own PNG.
+At 1440×900, DPR 1, each frame contained the three mode-label samples at 16.832/16.297/16.832:1, model at 6.120:1, dash at 8.709:1 and placeholder at 10.025:1 (all opacity 1); notice text and rule each measured 7.542:1.
+The route, degraded notice and native disabled mode name/title matched in both phases; `unexpectedRequests.readonly` and `unexpectedRequests.currentContext` were empty.
+This is one targeted group, not a rerun of `verify` or of the full optical matrix.
 
 ## Validation and regression lessons
 

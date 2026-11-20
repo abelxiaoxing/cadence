@@ -192,7 +192,10 @@ export async function observeFolderAction(probe, row, site, owner) {
   if (owner) {
     site.nextEntryIsOwner();
     const trigger = `.statusbar .status-cwd[title="${cwd}"]`;
-    await go("/app#chat=empty", trigger);
+    await go(
+      "/app#chat=empty",
+      ".chat-workspace[data-entry='new'] .model-trigger.empty",
+    );
     await click(trigger);
   }
   const button = "dialog[open] .cwd-footer button";
@@ -249,10 +252,13 @@ function thinkingPixels() {
   const labels = ["Low", "Medium", "High"];
   const options = [...popover.querySelectorAll(".model-thinking button")];
   const trigger = document.querySelector(".model-trigger");
+  const model = trigger.querySelector(".model-trigger-text").textContent;
+  const level = trigger.querySelector(".model-trigger-level").textContent;
   if (
     options.length !== labels.length ||
     trigger.title !== note ||
-    trigger.textContent !== "optical · Medium" ||
+    model !== "optical" ||
+    level !== "Thinking · Medium" ||
     !document.querySelector('[aria-label="Stop response"]:enabled') ||
     !popover.querySelector('.model-option[aria-selected="true"]:disabled') ||
     popover.querySelector(".model-option:enabled")
@@ -325,7 +331,7 @@ function thinkingPixels() {
     }
     return { label, pressed, disabled: el.disabled, rect: rect.toJSON() };
   });
-  return { model: trigger.textContent, lockNotice: note, levels, points };
+  return { model, level, lockNotice: note, levels, points };
 }
 
 export async function observeLockedLevels(probe, row) {

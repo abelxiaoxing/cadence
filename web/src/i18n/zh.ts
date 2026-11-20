@@ -2,6 +2,40 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Ordinary send": "普通发送",
+  "Explain this project": "介绍一下这个项目",
+  "Help me plan a change": "帮我规划一项改动",
+  "Message received": "消息已接收",
+  "Conversation updated": "会话已更新",
+  "Show the latest branch before acting on the current plan.":
+    "请先显示最新分支，再验证或批准当前计划。",
+  "View current plan": "查看当前计划",
+  "Hide current plan": "收起当前计划",
+  "Wait for the current reply before changing mode.":
+    "请等当前回复结束后再切换模式。",
+  "What approval allows": "批准范围",
+  "Edit the working copy directly; keep edits on failure. No commit or merge.":
+    "直接编辑工作副本；失败时保留改动。不提交或合并。",
+  "Create a task branch and isolated worktrees. Commit locally and fast-forward the target after checks and automatic Agent review. No source, profile or dependency copying.":
+    "使用任务分支和隔离工作树。检查与自动代理审阅通过后，在本地提交并快进合并至目标分支。不复制源码、配置档案或依赖。",
+  "This plan requests local branch delivery but has no bound target.":
+    "此计划要求本地分支交付，但尚未绑定目标。",
+  "Approval confirms the goal, decisions, acceptance and assumptions. The service then finishes on its own: it may adjust the route and repository write scope, record reviewed deviations and update project knowledge.":
+    "批准即确认目标、决定、验收条件及假设。随后服务自行完成交付，可调整路线和仓库内写入范围，记录经审阅的偏差并更新项目知识。",
+  "This retained agreement is read-only. Its declared paths and commands are fixed.":
+    "此留存协议只读，列出的路径和命令固定不变。",
+  "Revisions may add dependency installs with the project’s package manager.":
+    "修订时可用项目的包管理器安装依赖。",
+  "Dependency installs are limited to the listed setup commands.":
+    "仅限通过列出的准备命令安装依赖。",
+  "No dependency installation.": "不安装依赖。",
+  "No push, publication or deployment.": "不推送、发布或部署。",
+  "Plan validation is currently unavailable.": "当前无法验证计划。",
+  "Restore execution before approval.": "请先恢复执行服务，再批准计划。",
+  "Validation required before approval.": "批准前需先验证计划。",
+  "Proposed changes": "此次变化",
+  "Decisions and non-goals": "已确认决定与保留项",
+  "Technical details": "技术详情",
   "Design choices": "设计选项",
   "Fill unanswered with recommendations": "为未回答的问题填入推荐项",
   "Discard typed answer": "放弃未采用的回答",

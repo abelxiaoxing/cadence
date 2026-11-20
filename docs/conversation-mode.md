@@ -3,7 +3,7 @@
 In a trusted Pi terminal or a WebUI conversation in an explicitly selected project, enter `/cadence <goal>` once (or `/cadence` to discuss the goal).
 Cadence stays enabled for the entire conversation, including after a goal finishes.
 Continue using normal messages; do not repeat the command for clarification or another goal.
-Type `退出 Cadence` or `exit cadence` (in Pi also `/cadence exit`) to leave the mode explicitly; in the browser the composer's **Cadence mode** switch enters it on the next Send and leaves it when on.
+Type `退出 Cadence` or `exit cadence` (in Pi also `/cadence exit`) to leave the mode explicitly; in the browser the mode switch beside **Send** enters it on the next Send and leaves it when on.
 Leaving, closing Pi/browser and switching conversations detach; they do not cancel accepted work.
 Browser conversation mode is retained by the project owner, not by a browser-only toggle, and works without a live Pi terminal.
 
@@ -13,6 +13,10 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
 2. Discuss requirements and decisions until nothing that changes the result is left open.
    This is the last time you are asked: what Cadence decides on your behalf is listed in the agreement as its assumptions.
 3. Cadence presents one readable delivery agreement: expected result, acceptance, decisions, assumptions, the initial route and write scope, setup/check commands, documents to update and delivery policy.
+   In the browser, use **View current plan** beside the conversation title.
+   The proposal stays in this conversation; you can keep discussing it and reopen it there, including after refresh.
+   Open **Technical details** for paths, commands, the exact binding and agreement.
+   Opening or closing the proposal does not validate or approve it.
    The technical route is an initial suggestion.
    After approval the service finishes on its own: it repairs and re-plans, may bring further files of the repository into the write scope (never credentials, keys, `.env`, `.git` or anything outside the repository), and installs dependencies only if the agreement says revisions may.
    If an acceptance item proves impossible it delivers the closest achievable result and records the deviation: what could not be met, why, what was delivered instead and any declared check set aside because of it.
@@ -47,6 +51,7 @@ When an observation reply is lost, ask for status; do not infer that the action 
 ## Restore a saved plan without sending a message
 
 A stopped or restarted execution service does not require another discussion or a model-generated replacement plan.
+**View current plan** shows the conversation's current proposal even when you are reading an older branch; return to the latest branch to validate or approve it.
 Use **Restore execution and validate plan** on the plan card; if the service is already running, **Validate plan again** refreshes its execution context.
 The exact `按计划实施` input follows the same validation path when the service or model binding is not current.
 
@@ -310,7 +315,9 @@ A revision may also change the assignments that have not started yet (drop, rewr
 The unified WebUI sidebar automatically lists active work in this account and state home, including projects you have never selected.
 An interactive terminal must load the Cadence extension: a real model/tool round appears even without `/cadence`, but an idle terminal or idle owner does not.
 Terminal rounds are observe-only; owner turns and workflows show their actual phases (including ordinary turn startup and workflow queueing) and existing authorized controls.
-Separate terminal instances and owner work keep their own rows; work already shown under **Running work** is not repeated.
+In the selected project, a conversation with a live reply or linked workflow stays at the front of history.
+Its workflow disclosure names each run; work without a reliable conversation link has a separate details entry.
+Readonly discovery still distinguishes separate terminal instances and does not repeat owner work already represented here.
 
 Click an activity to remember its directory and read the shared Pi session at the observed branch.
 This does not start or associate an owner, grant execution consent or expand workbench Stop.

@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { appendFile, mkdtemp, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { readableWorkflowPlan } from "../src/service/contracts/workflow.ts";
 import { browser } from "./optical-fixtures/browser.mjs";
 import {
   bindReadingCode,
@@ -27,11 +28,13 @@ import {
 import { observeGestures } from "./optical-fixtures/drawer-gestures.mjs";
 import { opticalGroups } from "./optical-fixtures/groups.mjs";
 import {
+  bindToolWheel,
   contrastPixels,
   controlGeometry,
   dimensions,
   frameWindow,
   glyphSample,
+  latestInkTarget,
   questionMarkSample,
   readingPosition,
   revealedCopySample,
@@ -62,6 +65,7 @@ import {
   fullArtifact,
   pendingInputs,
   project,
+  readRecord,
   shellCommand,
   task,
   undeliveredInput,
@@ -78,15 +82,40 @@ import {
   observeLiveAgent,
   observeValidation,
 } from "./optical-fixtures/workflow-observations.mjs";
+import { observeQuietWorkspace } from "./quiet-workspace-observation.mjs";
+import { observeTranscriptPolish } from "./transcript-polish-observation.mjs";
 import { assertVerificationTemp } from "./verification-temp.mjs";
 
 const args = process.argv.slice(2);
-const groups = opticalGroups(args);
+const conversationObservers = {
+  "quiet-workspace": observeQuietWorkspace,
+  "transcript-polish": observeTranscriptPolish,
+};
+const coreGroups = opticalGroups([]);
+const views = coreGroups.filter((name) => /^(dark|light):\d+$/.test(name));
+const conversationGroups = Object.keys(conversationObservers).flatMap(
+  (family) => views.map((view) => `${family}:${view}`),
+);
+function selectedGroups(args) {
+  if (!args.length) return [...coreGroups, ...conversationGroups];
+  if (args.length === 1 && args[0].startsWith("--group=")) {
+    const name = args[0].slice("--group=".length);
+    if (Object.hasOwn(conversationObservers, name))
+      return views.map((view) => `${name}:${view}`);
+    if (conversationGroups.includes(name)) return [name];
+  }
+  return opticalGroups(args);
+}
+const groups = selectedGroups(args);
 const root = resolve(import.meta.dirname, "..");
 assertVerificationTemp(root);
 const reportDir = await mkdtemp(join(process.env.TMPDIR, "optical-evidence-"));
 const site = fixture(root),
   origin = await site.open(),
+  // A separate loopback viewer for controls requiring a current action context.
+  // Its server still refuses and records writes, just like the readonly viewer.
+  currentSite = fixture(root, { actions: true }),
+  currentOrigin = await currentSite.open(),
   rows = [],
   problems = [],
   performanceRows = [];
@@ -105,6 +134,9 @@ const report = {
   wingMaterials: [],
   surfaceContrast: [],
   toolCards: [],
+  inputWindows: [],
+  toolWheels: [],
+  latestPaint: [],
   codeDisclosures: [],
   drawerGestures: [],
   directoryReads: [],
@@ -116,6 +148,9 @@ const report = {
   selectedRows: [],
   workflowRows: [],
   agentScroll: [],
+  quietWorkspace: [],
+  entryShelves: [],
+  transcriptPolish: [],
   filePreviewReads: [],
   rowDrawers: [],
   unknownMode: [],
@@ -139,7 +174,8 @@ const report = {
 console.log(`Optical ${report.coverage} observation: ${reportDir}`);
 async function observe(group, work) {
   const start = Date.now();
-  const count = () => problems.length + site.failures.length;
+  const count = () =>
+    problems.length + site.failures.length + currentSite.failures.length;
   const before = count();
   const record = async (status) => {
     const entry = {
@@ -157,11 +193,39 @@ async function observe(group, work) {
     console.log(`${group}: ${status} (${entry.elapsedMs}ms)`);
   };
   await record("started");
+  let restoreWindow;
   try {
+    if (
+      group.startsWith("transcript-polish:") ||
+      (views.includes(group) && group.endsWith(":1440"))
+    ) {
+      // Device emulation alone can deliver a trusted wheel to a DOM target
+      // outside the native input surface without scrolling the compositor.
+      const { windowId, bounds } = await b.send("Browser.getWindowForTarget");
+      const resize = (width, height) =>
+        b.send("Browser.setWindowBounds", {
+          windowId,
+          bounds: { width, height },
+        });
+      restoreWindow = () => resize(bounds.width, bounds.height);
+      await resize(
+        Math.max(bounds.width, Number(group.split(":").at(-1)) + 32),
+        Math.max(bounds.height, 1024),
+      );
+      const sized = await b.send("Browser.getWindowBounds", { windowId });
+      report.inputWindows.push({
+        group,
+        windowId,
+        before: bounds,
+        after: sized.bounds,
+      });
+    }
     await work();
   } catch (error) {
     await record("failed");
     throw error;
+  } finally {
+    await restoreWindow?.();
   }
   await record(count() === before ? "completed" : "failed");
 }
@@ -184,11 +248,19 @@ try {
     }
     throw Error(`Not observed: ${expr}`);
   };
-  const go = async (path, selector) => {
+  const go = async (path, selector, base = origin) => {
     await send("Page.navigate", { url: "about:blank" });
-    await send("Page.navigate", { url: origin + path });
+    await wait(
+      `location.href === 'about:blank' && document.readyState === 'complete'`,
+    );
+    await send("Page.navigate", { url: base + path });
     await wait(`document.querySelector(${q(selector)})`);
   };
+  const currentGo = (path, selector) => go(path, selector, currentOrigin);
+  const inCurrentSession =
+    (observe) =>
+    (probe, ...args) =>
+      observe({ ...probe, go: currentGo }, ...args);
   const chat = (id) => `/app?project=${project}#chat=${id}`;
   const viewport = (width, height = width > 900 ? 900 : 820) =>
     send("Emulation.setDeviceMetricsOverride", {
@@ -401,7 +473,7 @@ try {
     await capture(focusPoint);
     assert.ok(await ev(`document.activeElement.matches(${q(selector)})`));
   };
-  const capture = async (scene, locate) => {
+  const capture = async (scene, locate, takeFrame) => {
     // Sample indicators on the unmodified page. On a separate capture,
     // temporarily remove glyph ink only to read the material under text.
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -410,19 +482,27 @@ try {
       );
       const points = await locate();
       if (!points.length) return null;
-      const png = await send("Page.captureScreenshot", {
-        format: "png",
-        captureBeyondViewport: false,
-      });
+      const png = takeFrame
+        ? await takeFrame(points)
+        : (
+            await send("Page.captureScreenshot", {
+              format: "png",
+              captureBeyondViewport: false,
+            })
+          ).data;
       const after = await locate();
+      if (takeFrame)
+        assert.deepEqual(
+          after,
+          points,
+          `Page samples moved across ${scene} frame`,
+        );
       if (JSON.stringify(points) !== JSON.stringify(after)) {
         if (scene === "design") {
           const file = `design-${theme}-${width}-unstable.png`;
-          await writeFile(
-            join(reportDir, file),
-            Buffer.from(png.data, "base64"),
-            { flag: "wx" },
-          );
+          await writeFile(join(reportDir, file), Buffer.from(png, "base64"), {
+            flag: "wx",
+          });
           assert.deepEqual(
             after,
             points,
@@ -431,19 +511,116 @@ try {
         }
         continue;
       }
-      return run(contrastPixels, png.data, points);
+      return run(contrastPixels, png, points);
     }
     throw Error(`Unstable screenshot geometry: ${scene}`);
   };
-  const textContrast = async (scene, selector) => {
+  const textContrast = async (scene, selector, takeFrame) => {
     await ev(`document.body.style.webkitTextFillColor='transparent'`);
     try {
-      return await capture(scene, async () =>
-        (await run(textSamples, selector ?? null)).filter((p) => !p.ink),
+      return await capture(
+        scene,
+        async () =>
+          (await run(textSamples, selector ?? null)).filter((p) => !p.ink),
+        takeFrame,
       );
     } finally {
       await ev(`document.body.style.removeProperty('-webkit-text-fill-color')`);
     }
+  };
+  // Keep the full page audit, but bind its Latest label to one DOM button
+  // and one pair of viewport PNGs. Never retry a frame for better paint.
+  const toolOutputContrast = async () => {
+    const selector = ".chat-messages-wrap > .scroll-bottom";
+    await run((s) => {
+      opticalProbe.latest = document.querySelector(s);
+    }, selector);
+    const locate = () => run(latestInkTarget, selector);
+    const row = { width, theme, scene: "tool output", frames: [] };
+    report.latestPaint.push(row);
+    const frame = async (state) => {
+      const entry = {
+        state,
+        file: `tool-output-${theme}-${width}-${state}.png`,
+        before: await locate(),
+      };
+      row.frames.push(entry);
+      const png = await screenshot(entry.file);
+      entry.after = await locate();
+      assert.deepEqual(entry.after, entry.before, `Moved across ${entry.file}`);
+      assert.deepEqual(entry.before, row.frames[0].before);
+      assert.ok(entry.before.hits.every((p) => p.button));
+      return png;
+    };
+    const inkPng = await frame("original");
+    const { point, rect } = row.frames[0].before;
+    const marks = { backing: [point.x, point.y] };
+    // The dark face must actually be present against the light reading shelf,
+    // not just a reachable DOM button or white ink on unrelated dark content.
+    const face = {
+      name: "Latest face on shelf",
+      ink: marks.backing,
+      x: Math.ceil(rect.right) + 24,
+      y: point.y,
+      min: 3,
+      record: true,
+    };
+    const original = await run(
+      contrastPixels,
+      inkPng,
+      [{ ...point, record: true }, face],
+      marks,
+    );
+    row.original = original;
+    const stem = original.readings[0].paintedGlyph;
+    if (stem) marks.stem = [stem.x, stem.y];
+    let barePng;
+    const page = await textContrast(row.scene, null, async (points) => {
+      assert.ok(
+        points.some((p) => p.name === point.name),
+        "Latest missing from whole-page audit",
+      );
+      barePng = await frame("no-glyphs");
+      return barePng;
+    });
+    // Contrast of the actual stem with the under-text pixel at the same
+    // coordinate, in addition to the original adjacent button backing.
+    row.bare = await run(
+      contrastPixels,
+      barePng,
+      stem
+        ? [
+            {
+              ...point,
+              glyph: undefined,
+              x: stem.x,
+              y: stem.y,
+              fg: `rgb(${stem.rgb.join(",")})`,
+            },
+          ]
+        : [],
+      marks,
+    );
+    for (const { frame } of [original, row.bare]) {
+      assert.deepEqual(frame.bitmap, frame.viewport);
+      assert.equal(frame.dpr, 1);
+    }
+    if (
+      original.failures.length ||
+      !stem ||
+      stem.ratio < point.min ||
+      row.bare.failures.length ||
+      !original.frame.pixels.backing.rgb.every(
+        (c, i) => Math.abs(c - row.bare.frame.pixels.backing.rgb[i]) <= 1,
+      )
+    )
+      problems.push({
+        width,
+        theme,
+        scene: row.scene,
+        latest: "Missing glyph, backing or contrast in paired captures",
+      });
+    return page;
   };
   const audit = async (scene, selectors, { textRoot, ...facts } = {}) => {
     if (scene !== "design") await sleep(250);
@@ -455,7 +632,10 @@ try {
     const indicators = await capture(scene, async () =>
       (await run(textSamples)).filter((p) => p.ink),
     );
-    const contrast = await textContrast(scene, textRoot);
+    const contrast =
+      scene === "tool output" && width === 1440 && theme === "light"
+        ? await toolOutputContrast()
+        : await textContrast(scene, textRoot);
     if (indicators?.failures.length)
       problems.push({ width, theme, scene, indicators: indicators.failures });
     assert.ok(contrast.samples, `no visible text sampled for ${scene}`);
@@ -567,6 +747,8 @@ try {
       );
     } catch (error) {
       row.failure = String(error);
+      row.failureFrame = `${scene}-${theme}-${width}-failed.png`;
+      await screenshot(row.failureFrame);
       problems.push({ width, theme, scene, failure: row.failure });
     }
   };
@@ -755,6 +937,86 @@ try {
       const [scheme, size] = group.split(":").slice(-2);
       theme = scheme;
       width = Number(size);
+      const observer = conversationObservers[group.split(":")[0]];
+      if (observer) {
+        // Retire the previous view and its polling document before installing
+        // a different specimen's Fetch handlers. Its responses must not cross
+        // the navigation boundary and acquire the next view's request IDs.
+        await send("Page.navigate", { url: "about:blank" });
+        await wait(
+          `location.href === 'about:blank' && document.readyState === 'complete'`,
+        );
+        // Couple the entry and reading observations at the first receipt, not
+        // just two unrelated pages. Sample the same editor's compositor shots.
+        const stages = new Set();
+        const entryShot = async (file) => {
+          const image = await screenshot(file);
+          if (stages.size === 2) return image;
+          const frame = await run(() => {
+            const workspace = document.querySelector(
+              ".chat-workspace:not([hidden])",
+            );
+            const pane = workspace.querySelector(".chat-messages");
+            const style = getComputedStyle(pane, "::after");
+            return {
+              entry: workspace.dataset.entry,
+              generated: style.content !== "none" && style.content !== "normal",
+              shelfHeight: parseFloat(style.height) || 0,
+              pointer: style.pointerEvents,
+              paneBottom: pane.getBoundingClientRect().bottom,
+              dockTop: workspace
+                .querySelector(".composer-dock")
+                .getBoundingClientRect().top,
+              gap: pane.scrollHeight - pane.clientHeight - pane.scrollTop,
+            };
+          });
+          if (
+            ["new", "received"].includes(frame.entry) &&
+            !stages.has(frame.entry)
+          ) {
+            report.entryShelves.push({ width, theme, file, ...frame });
+            stages.add(frame.entry);
+            if (frame.entry === "new")
+              assert.ok(!frame.generated && frame.paneBottom < frame.dockTop);
+            else
+              assert.ok(
+                frame.generated &&
+                  frame.shelfHeight > 0 &&
+                  frame.pointer === "none" &&
+                  Math.abs(frame.paneBottom - frame.dockTop) <= 1 &&
+                  Math.abs(frame.gap) <= 1,
+              );
+          }
+          return image;
+        };
+        await observer({
+          b,
+          site,
+          origin,
+          width,
+          theme,
+          go,
+          layout,
+          chat,
+          wait,
+          run,
+          ev,
+          click,
+          send,
+          press,
+          clickPoint,
+          observeButton,
+          screenshot:
+            observer === observeQuietWorkspace ? entryShot : screenshot,
+          rows:
+            observer === observeQuietWorkspace
+              ? report.quietWorkspace
+              : report.transcriptPolish,
+        });
+        if (observer === observeQuietWorkspace)
+          assert.deepEqual([...stages], ["new", "received"]);
+        return;
+      }
       await layout(width, theme);
       if (group.startsWith("agent-scroll:")) {
         await observeLiveAgent({
@@ -833,14 +1095,19 @@ try {
         await ev(`document.querySelector('[aria-label="Send"]').disabled`),
       );
       await picker("open-folder-action", observeFolderAction, site, true);
-      await go(chat("empty"), ".conversation-header");
-      await wait(`document.querySelector('.chat-welcome')`);
+      await go(
+        chat("empty"),
+        ".chat-workspace[data-entry='new'] .model-trigger.empty",
+      );
       if (width <= 900) {
         await click(".navigation-toggle");
+        await wait(
+          `document.querySelector('.drawer-left.open:not([inert])')?.contains(document.activeElement)`,
+        );
         await audit("navigation", [".drawer-left", ".lp-panel"]);
         await press("Escape", 27);
-        assert.ok(
-          await ev(`document.activeElement.matches('.navigation-toggle')`),
+        await wait(
+          `document.activeElement.matches('.navigation-toggle[aria-expanded="false"]')`,
         );
       }
       await audit("project Hero", [
@@ -858,19 +1125,36 @@ try {
       await wait(`document.querySelector('dialog[open]')`);
       await audit("service", ["dialog", "dialog header", "dialog footer"]);
       await press("Escape", 27);
+      const models = (actions) =>
+        picker(actions ? "models-current" : "models-readonly", () =>
+          observeDisabledModels({
+            run,
+            wait,
+            press,
+            scrollTo,
+            capture,
+            width,
+            theme,
+            rows: report.disabledModels,
+            actions,
+          }),
+        );
+      // The same catalog, first with no action context and then on an
+      // independent viewer. Never choose a model or mutate either viewer.
+      await wait(
+        `document.querySelector(".chat-workspace[data-entry='new'] .model-trigger.empty")`,
+      );
       await click(".model-trigger");
-      await observeDisabledModels({
-        run,
-        wait,
-        press,
-        scrollTo,
-        capture,
-        width,
-        theme,
-        rows: report.disabledModels,
-      });
+      await models(false);
+      await currentGo(
+        chat("empty"),
+        ".chat-workspace[data-entry='new'] .model-trigger.empty",
+      );
+      await click(".model-trigger");
+      await models(true);
       await audit("models", [".model-popover", ".model-popover-notes"]);
       await press("Escape", 27);
+      await go(chat("empty"), ".chat-workspace[data-entry='new']");
       await click(".chat-composer textarea");
       await send("Input.insertText", { text: "@" });
       await wait(`document.querySelector('.mention-item')`);
@@ -943,7 +1227,7 @@ try {
       );
       if (width > 900)
         await observeLiveFocus({
-          go,
+          go: currentGo,
           chat,
           click,
           wait,
@@ -956,7 +1240,7 @@ try {
           width,
           theme,
         });
-      await picker("locked-thinking", observeLockedLevels);
+      await picker("locked-thinking", inCurrentSession(observeLockedLevels));
       await observeQuestions();
       await observeLeading(
         "chat",
@@ -1058,6 +1342,15 @@ try {
             false,
           );
           assert.ok(hit.center.hit);
+          const wheel = {
+            width,
+            theme,
+            point: hit.center,
+            before: await run(readingPosition),
+          };
+          report.toolWheels.push(wheel);
+          wheel.viewport = await run(bindToolWheel, hit.center);
+          assert.deepEqual(wheel.viewport, [width, width > 900 ? 900 : 820, 1]);
           await send("Input.dispatchMouseEvent", {
             type: "mouseWheel",
             x: hit.center.x,
@@ -1065,10 +1358,34 @@ try {
             deltaX: 0,
             deltaY: -144,
           });
-          await wait(`document.querySelector('.scroll-bottom')`);
+          try {
+            await wait(`document.querySelector('.scroll-bottom')`);
+          } finally {
+            wheel.after = await ev(
+              `opticalProbe.stableFrames(${readingPosition}, 'tool wheel')`,
+            );
+            Object.assign(wheel, await ev("opticalProbe.wheel()"));
+          }
+          assert.ok(
+            wheel.event?.trusted &&
+              wheel.event.x === Math.floor(hit.center.x) &&
+              wheel.event.y === Math.floor(hit.center.y) &&
+              !wheel.event.prevented &&
+              wheel.event.deltaY === -144,
+            "No trusted -144 wheel at the hit-tested head center",
+          );
+          assert.ok(
+            wheel.after.bottom > 80,
+            "Real wheel did not leave end-follow",
+          );
         }
         const row = await expand("expand", "read", "material.ts", position);
         if (position === "away") {
+          assert.ok(
+            await ev(
+              `opticalProbe.wheelHead === document.querySelector('[data-optical-tool] .chead-main')`,
+            ),
+          );
           await click(".scroll-bottom");
           await wait(`!document.querySelector('.scroll-bottom')`);
           const position = () =>
@@ -1127,45 +1444,62 @@ try {
         writeContent,
         { shownLines: 400 },
       );
-      await go(chat("design"), "dialog[open] .design-track input:checked");
-      await press("Escape", 27);
-      await wheelAway();
-      await click('.workflow-plan > button[aria-haspopup="dialog"]');
+      // Wheel the actual transcript away before the design read opens its
+      // modal. Clicking an offscreen opener would scroll the transcript back.
+      const designRead = currentSite.holdRead({
+        kind: "cadence-conversation",
+        id: "design",
+      });
+      await currentGo(chat("design"), ".chat-turn");
+      const design = await designRead();
+      try {
+        await wheelAway();
+      } finally {
+        design.respond(false);
+      }
+      await wait(
+        `document.querySelector("dialog[open] .design-track input:checked")`,
+      );
       await picker("other-idea", observeDesign, {
         audit,
         observeButton,
       });
       await press("Escape", 27);
-      await scrollTo(".plan-context");
-      await audit("plan", [
-        ".workflow-plan:has(.plan-context)",
-        ".plan-context",
-      ]);
+      const trigger = ".conversation-header .current-plan-trigger";
+      await click(trigger, "View current plan");
+      const plan = ".current-plan-panel [data-plan-proposal]";
+      await audit("plan", [plan, `${plan} > header`, `${plan} > .plan-scope`]);
+      const notes = `${plan} > section .md p`;
       await observeLink(
         "plan",
-        '.workflow-plan:has(.plan-context) > .md p > a[href="#plan-notes"]',
+        `${notes} > a[href="#plan-notes"]`,
         "plan notes",
       );
-      const plan = ".workflow-plan:has(.plan-context)";
-      await observeLeading(
-        "plan",
-        `${plan} > .md p:has(a[href="#plan-notes"])`,
-      );
+      await observeLeading("plan", `${notes}:has(a[href="#plan-notes"])`);
       const agreement = `${plan} > details`;
-      await click(`${agreement} > summary`, "Complete delivery agreement");
-      // Opening the agreement grows the transcript. Explicitly leave end
-      // follow before positioning a paragraph for the typography sample.
-      await wheelAway();
-      await observeLeading(
-        "open agreement",
-        `${agreement}[open] > .md p:has(a[href="#plan-notes"])`,
+      await click(`${agreement} > summary`);
+      // The disclosed agreement is exact text, not a second Markdown card.
+      const exact = readableWorkflowPlan(
+        readRecord({ kind: "cadence-conversation", id: "design" }).state
+          .proposal.plan,
       );
-      await click(`${agreement} > summary`, "Complete delivery agreement");
-      const planButton = ".workflow-plan:not(.design-card) > button.primary";
+      report.leading.push({
+        width,
+        theme,
+        surface: "open agreement",
+        ...(await leading(
+          { run, scrollTo },
+          `${agreement}[open] > pre`,
+          exact,
+        )),
+      });
+      await click(`${agreement} > summary`);
+      const planButton = `${plan} > button.primary`;
       await wait(
-        `document.querySelector(${q(planButton)})?.textContent==='Implement this plan'`,
+        `document.querySelector(${q(`${planButton}:enabled`)})?.textContent==='Implement this plan'`,
       );
       await observeButton("implement plan", planButton, "Implement this plan");
+      await click(trigger, "Hide current plan");
       await scrollTo(".workflow-line-open");
       await click(".workflow-line-open");
       await wait(`document.querySelector('.workflow-board')`);
@@ -1190,15 +1524,20 @@ try {
         ".workflow-board",
         ".workflow-task",
       ]);
-      await go(chat("confirm"), ".workflow-plan");
+      await currentGo(
+        chat("confirm"),
+        ".chat-workspace:has(.chat-turn) .current-plan-trigger",
+      );
+      await click(trigger, "View current plan");
       await wait(
-        `document.querySelector(${q(planButton)})?.textContent==='Confirm implementation'`,
+        `document.querySelector(${q(`${planButton}:enabled`)})?.textContent==='Confirm implementation'`,
       );
       await observeButton(
         "confirm implementation",
         planButton,
         "Confirm implementation",
       );
+      await click(trigger, "Hide current plan");
       await click(".workflow-line-open");
       await scrollTo(".workflow-card summary .workflow-status.unknown");
       for (const parent of ["header", "summary"])
@@ -1378,31 +1717,33 @@ try {
         rows: report.unknownMode,
         problems,
       });
-      await observeSelectedRows({
-        width,
-        theme,
-        go,
-        chat,
-        site,
-        clickPoint,
-        drawers: report.rowDrawers,
-        wait,
-        ev,
-        run,
-        parkPointer,
-        press,
-        send,
-        capture,
-        rows: report.selectedRows,
-        workflowRows: report.workflowRows,
-        readStep: (subagent) =>
-          observeRetainedCopy(
-            { run, click, wait, observeCopy, site },
-            subagent,
-          ),
-        filePreviewReads: report.filePreviewReads,
-        observeButton,
-      });
+      await site.withHistoryRoster(() =>
+        observeSelectedRows({
+          width,
+          theme,
+          go,
+          chat,
+          site,
+          clickPoint,
+          drawers: report.rowDrawers,
+          wait,
+          ev,
+          run,
+          parkPointer,
+          press,
+          send,
+          capture,
+          rows: report.selectedRows,
+          workflowRows: report.workflowRows,
+          readStep: (subagent) =>
+            observeRetainedCopy(
+              { run, click, wait, observeCopy, site },
+              subagent,
+            ),
+          filePreviewReads: report.filePreviewReads,
+          observeButton,
+        }),
+      );
       if (width > 900)
         await observeComposerFlow({
           width,
@@ -1431,7 +1772,11 @@ try {
         },
         report,
       );
-      await picker("plan-validation", observeValidation, site);
+      await picker(
+        "plan-validation",
+        inCurrentSession(observeValidation),
+        currentSite,
+      );
     });
   }
   async function reading() {
@@ -1538,9 +1883,13 @@ try {
   problems.push(String(error));
 } finally {
   await b?.close();
-  await site.close();
+  await Promise.all([site.close(), currentSite.close()]);
 }
-problems.push(...site.failures);
+report.unexpectedRequests = {
+  readonly: site.failures,
+  currentContext: currentSite.failures,
+};
+problems.push(...site.failures, ...currentSite.failures);
 await writeFile(
   join(reportDir, "summary.json"),
   JSON.stringify(report, null, 2),
@@ -1551,6 +1900,8 @@ console.log(
     coverage: report.coverage,
     build: report.candidate.buildId,
     scenes: rows.length,
+    conversationViews:
+      report.quietWorkspace.length + report.transcriptPolish.length,
     problems: problems.length,
     last: problems.slice(-1),
   }),

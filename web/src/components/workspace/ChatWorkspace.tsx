@@ -736,13 +736,21 @@ export function ChatWorkspace({
     !busy &&
     !pending &&
     !running;
-  // The plan card survives later messages; the owner refuses approval only
-  // while this conversation's turn is live or its outcome is unknown.
+  // The proposal is conversation-wide, not a snapshot of a historical fork.
+  // Keep it readable there without offering an action on the unseen latest branch.
+  const historicalBranch =
+    conversation.pinned && (!summary || conversation.leaf !== summary.leaf);
   const modelPending =
     !!draftModel &&
     canonicalJson(draftModel) !== canonicalJson(context?.model ?? null);
   const planApprovable =
-    !!state?.proposal && !!summary && !running && summary.status !== "unknown";
+    !!state?.proposal &&
+    state.id === id &&
+    !!summary &&
+    summary.id === id &&
+    !historicalBranch &&
+    !running &&
+    summary.status !== "unknown";
   const proposal = state?.id === id && state.enabled ? state.proposal : null;
   // A disclosure is local to this exact proposal and discussion. No version
   // list, history scan, or approval grant is created by opening the panel.
@@ -778,31 +786,35 @@ export function ChatWorkspace({
     !validationPending &&
     (!!prepareForPlan || actionsReady) &&
     !!(draftModel ?? context?.model);
-  const approvalHint = revalidating
-    ? t(
-        "Preparing execution and validating the plan; no implementation is approved.",
-      )
-    : validationPending
-      ? t("Reading the validated plan…")
-      : modelPending
-        ? t("Validate the plan with this model before approving it.")
-        : summary?.status === "unknown"
-          ? t(
-              "The latest turn's outcome is unknown. Approval waits until it is observed.",
-            )
-          : !actionsReady
-            ? t("Read the current execution state before approving this plan.")
-            : !cadenceKnown
-              ? t("Cadence state unavailable")
-              : running
-                ? t("Wait for the current reply before approving this plan.")
-                : approving
-                  ? t("Observing plan approval…")
-                  : !canSend
-                    ? t(
-                        "Read the current conversation context before approving this plan.",
-                      )
-                    : undefined;
+  const approvalHint = historicalBranch
+    ? t("Show the latest branch before acting on the current plan.")
+    : revalidating
+      ? t(
+          "Preparing execution and validating the plan; no implementation is approved.",
+        )
+      : validationPending
+        ? t("Reading the validated plan…")
+        : modelPending
+          ? t("Validate the plan with this model before approving it.")
+          : summary?.status === "unknown"
+            ? t(
+                "The latest turn's outcome is unknown. Approval waits until it is observed.",
+              )
+            : !actionsReady
+              ? t(
+                  "Read the current execution state before approving this plan.",
+                )
+              : !cadenceKnown
+                ? t("Cadence state unavailable")
+                : running
+                  ? t("Wait for the current reply before approving this plan.")
+                  : approving
+                    ? t("Observing plan approval…")
+                    : !canSend
+                      ? t(
+                          "Read the current conversation context before approving this plan.",
+                        )
+                      : undefined;
   const textarea = useRef<HTMLTextAreaElement>(null),
     scroll = useRef<HTMLDivElement>(null),
     lastTop = useRef(0);
@@ -1265,6 +1277,10 @@ export function ChatWorkspace({
     }
   };
   const approve = async () => {
+    if (historicalBranch) {
+      refuse(t("Show the latest branch before acting on the current plan."));
+      return;
+    }
     if (!state?.proposal) {
       refuse(t("No plan is awaiting approval."));
       return;

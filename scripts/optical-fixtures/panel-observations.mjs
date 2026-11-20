@@ -226,67 +226,146 @@ export async function observeDisabledModels({
   width,
   theme,
   rows,
+  actions,
 }) {
-  const model = ".model-option",
-    usable = `${model}:enabled`;
+  const model = ".model-option";
+  const optical = `${model}[title^="fixture/optical"]`;
+  const count = actions ? 2 : 3;
   await wait(
-    `document.querySelectorAll('${model}:disabled').length === 2 && document.querySelector('${usable}')`,
+    `document.querySelectorAll('${model}').length === 3 && document.querySelectorAll('${model}:disabled').length === ${count} && document.querySelector('${optical}:${actions ? "enabled" : "disabled"}')`,
   );
+  const record = async (id, part, text, selector, surface = "button") => {
+    await scrollTo(selector);
+    const observed = await capture(`model ${id} ${part}`, async () => [
+      {
+        ...(await run(glyphSample, selector, text, null, surface)),
+        record: true,
+      },
+    ]);
+    const reading = observed?.readings[0];
+    assert.ok(
+      reading?.paintedGlyph?.ratio >= reading?.min,
+      `No readable ${text}`,
+    );
+    assert.deepEqual(observed.failures, []);
+    rows.push({ width, theme, actions, id, part, text, selector, ...observed });
+  };
   for (const [id, reason] of [
     ["quartz", "Credentials unavailable"],
     ["slate", "Not supported"],
   ]) {
     const option = `${model}[title^="fixture/${id}"]:disabled`;
-    for (const [part, text] of [
-      ["name", id],
-      ["note", reason],
-    ]) {
-      const selector = `${option} .model-option-${part}`;
-      await scrollTo(selector);
-      const observed = await capture(
-        `disabled model ${id} ${part}`,
-        async () => [await run(glyphSample, selector, text)],
-      );
-      assert.ok(
-        observed?.samples && observed.worst.name.endsWith(`: ${text}`),
-        `No visible disabled ${text}`,
-      );
-      rows.push({
-        width,
-        theme,
-        id,
-        reason,
-        part,
-        disabled: true,
-        selector,
-        ...observed,
-      });
-      assert.deepEqual(observed.failures, []);
-    }
+    await record(id, "name", id, `${option} .model-option-name`);
+    await record(id, "note", reason, `${option} .model-option-note`);
   }
-  assert.ok(
-    await run(() => document.activeElement.matches(".model-search input")),
-  );
+  const focused = (s) => run((s) => document.activeElement.matches(s), s);
+  const search = ".model-search input";
+  assert.ok(await focused(search));
+  if (actions) {
+    await press("Tab", 9);
+    assert.ok(await focused(`${optical}:enabled:focus-visible`));
+  }
   await press("Tab", 9);
-  assert.ok(await run((s) => document.activeElement.matches(s), usable));
-  await press("Tab", 9);
-  assert.ok(
-    await run(
-      (s) =>
-        !document.activeElement.matches(s) &&
-        document.querySelectorAll(`${s}:disabled`).length === 2,
-      model,
-    ),
-  );
+  assert.ok(!(await focused(model)));
   await press("Tab", 9, 8);
-  assert.ok(await run((s) => document.activeElement.matches(s), usable));
+  const back = actions ? `${optical}:enabled` : search;
+  assert.ok(await focused(`${back}:focus-visible`));
+  rows.push({ width, theme, actions, disabledCount: count, tabReturn: back });
+  if (!actions) {
+    await record(
+      "optical",
+      "note",
+      "Current action context unavailable; observe again.",
+      ".model-popover-notes p:first-child",
+      ".model-popover-notes",
+    );
+  }
+}
+
+// The history row uses a translucent selected face, not the file/agent
+// leading rule. Its activity dot belongs to the design run, selected or not.
+function historyPixels(target, other, state) {
+  const row = document.querySelector(target);
+  const host = row.closest(".lp-section-body");
+  const [mark, ...extra] = host.querySelectorAll(".history-activity-mark");
+  if (
+    host.querySelectorAll('[aria-current="true"]').length !== 1 ||
+    !row.matches('.active[aria-current="true"]') ||
+    getComputedStyle(row, "::before").content !== "none" ||
+    extra.length ||
+    !mark?.matches(
+      '.session-item[title="Optical · design"] > [role="img"][aria-label="Working"]',
+    ) ||
+    mark.getAnimations().length
+  )
+    throw Error(`Wrong history selection/activity: ${target}`);
+  const keyboard = state === "keyboard";
+  if (
+    row.matches(":hover") ||
+    row.matches(":focus-visible") !== keyboard ||
+    (state === "rest" && row.matches(":focus-within")) ||
+    (state === "other hovered" &&
+      !document.querySelector(other).matches(":hover"))
+  )
+    throw Error(`Wrong ${target} interaction: ${state}`);
+  const r = row.getBoundingClientRect(),
+    d = mark.getBoundingClientRect();
+  const x = Math.floor(r.left + 5),
+    y = Math.floor(r.top + r.height / 2);
+  const wing = Math.floor(r.left - 5);
+  const mx = Math.floor(d.left + d.width / 2),
+    my = Math.floor(d.top + d.height / 2);
+  const at = (x, y) => document.elementFromPoint(x, y);
+  if (
+    at(x, y) !== row ||
+    at(wing, y) !== host ||
+    at(mx, my) !== mark ||
+    at(mx - 5, my) !== mark.parentElement
+  )
+    throw Error(`Clipped history face, wing or activity mark: ${target}`);
+  const points = [
+    {
+      name: "Selected history fill on wing",
+      ink: [x, y],
+      x: wing,
+      y,
+      min: 1,
+      record: true,
+    },
+    {
+      name: "Design activity on row",
+      ink: [mx, my],
+      x: mx - 5,
+      y: my,
+      min: 3,
+      expectedInk: getComputedStyle(mark).backgroundColor,
+      record: true,
+    },
+  ];
+  if (keyboard) {
+    const css = getComputedStyle(row),
+      w = parseFloat(css.outlineWidth),
+      o = parseFloat(css.outlineOffset);
+    const rx = Math.floor(r.left - o - w / 2);
+    if (css.outlineStyle !== "solid" || w < 2 || !(wing < rx && rx < r.left))
+      throw Error("Missing separate history keyboard outline");
+    points.push({
+      name: "History focus on wing",
+      ink: [rx, y],
+      x: wing,
+      y,
+      expectedInk: css.outlineColor,
+      min: 3,
+      record: true,
+    });
+  }
+  return points;
 }
 
 // Sample inside the leading rule, not the keyboard outline outside the button.
 // Require the three targets (mark, row backing, wing padding) in the same frame.
 function rowPixels(kind, target, other, state) {
   const [rowSelector, container] = {
-    session: [".conversation-row .session-item", ".lp-section-body"],
     file: [".file-item", ".file-list"],
     workflow: [".agent-dock-run > button", ".agent-dock-body"],
   }[kind];
@@ -611,9 +690,28 @@ async function selectRows(
         );
         if (workflow) assert.equal(geometry.rect.height, before.rect.height);
         const observed = await capture(`${target} ${state}`, () =>
-          run(rowPixels, kind, target, other, state),
+          kind === "session"
+            ? run(historyPixels, target, other, state)
+            : run(rowPixels, kind, target, other, state),
         );
-        assert.equal(observed?.samples, state === "keyboard" ? 7 : 6);
+        if (kind === "session") {
+          assert.equal(observed?.samples, state === "keyboard" ? 3 : 2);
+          const [fill] = observed.readings;
+          const rgba = await run(
+            (s) => getComputedStyle(document.querySelector(s)).backgroundColor,
+            target,
+          );
+          const [r, g, b, a] = rgba.match(/[\d.]+/g).map(Number);
+          assert.ok(a > 0 && a < 1, `Missing selected backing: ${rgba}`);
+          assert.notDeepEqual(fill.effectiveFg, fill.bg);
+          for (const [i, channel] of [r, g, b].entries())
+            assert.ok(
+              Math.abs(
+                fill.effectiveFg[i] - (channel * a + fill.bg[i] * (1 - a)),
+              ) <= 3,
+              `Wrong presented history fill: ${JSON.stringify(fill)} for ${rgba}`,
+            );
+        } else assert.equal(observed?.samples, state === "keyboard" ? 7 : 6);
         assert.deepEqual(observed.failures, []);
         (workflow ? workflowRows : rows).push({
           width,
