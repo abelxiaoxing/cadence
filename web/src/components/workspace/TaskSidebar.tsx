@@ -3,7 +3,14 @@
  * MIT (c) 2026 xing-shuyin. Navigation only observes the Cadence owner; no
  * session import, cwd mutation, replay or repair. A row's rename and archive
  * are explicit owner commands (`ConversationRow.tsx`). */
-import { type ReactNode, useId, useState } from "react";
+import {
+  type ReactNode,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   FiArchive,
   FiChevronDown,
@@ -18,6 +25,7 @@ import type { Activity } from "../../../../src/service/contracts/activity.ts";
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import { unsettled } from "../../client/conversation-reader";
+import { refusedAccess } from "../../client/observation-read";
 import { useConversationHistory } from "../../client/use-conversation-history";
 import type { RetainedTaskHistory } from "../../client/use-retained-task-workspace";
 import { usePage } from "../../history/use-page";
@@ -201,6 +209,79 @@ function RetainedConversations({
       <PageControls pager={pager} compact />
     </div>
   );
+}
+
+/** History keeps its last attributable work across incomplete discovery reads.
+ * Only this display projection is extended, never the gateway feed or a roster
+ * that supplies actions. Its lifetime spans the sidebar's loading/loaded views. */
+export function useHistoryDiscovery(
+  discovery?: ActivityListProps,
+  allowed = true,
+) {
+  const path = discovery?.project,
+    value = discovery?.value,
+    error = discovery?.error;
+  const previous = useRef<{ path: string; epoch: string; reports: Activity[] }>(
+    null,
+  );
+  const projection = useMemo(() => {
+    if (
+      !allowed ||
+      !path ||
+      !value ||
+      refusedAccess(error) ||
+      error === "stale"
+    )
+      return;
+    const local = value.projects.find((p) => p.path === path);
+    const activities = local?.activities ?? [];
+    const incomplete = !!error || value.completeness !== "complete";
+    const last = previous.current;
+    const seen = new Set(activities.map((a) => activityKey(path, a)));
+    const missing =
+      incomplete && last?.path === path && last.epoch === value.epoch
+        ? last.reports
+            .filter((a) => !seen.has(activityKey(path, a)))
+            .map((a) => ({ ...a, freshness: "stale" as const }))
+        : [];
+    const reports = [...activities, ...missing];
+    const selected = { path, activities: reports };
+    // Reuse the exact same attribution and producer keys as the visible rows.
+    const groups = groupProjectActivity(selected, new Set());
+    return {
+      retained: error
+        ? last?.path === path && last.epoch === value.epoch
+          ? last
+          : null
+        : {
+            path,
+            epoch: value.epoch,
+            reports: [...groups.sessions.values()].flat(),
+          },
+      value: missing.length
+        ? {
+            ...value,
+            projects: local
+              ? value.projects.map((p) => (p === local ? selected : p))
+              : [...value.projects, selected],
+          }
+        : value,
+    };
+  }, [allowed, path, value, error]);
+  useLayoutEffect(() => {
+    previous.current = projection?.retained ?? null;
+  }, [projection]);
+  if (!discovery || !path || !value) return discovery;
+  if (refusedAccess(error)) return { ...discovery, value: undefined };
+  // Changing observation identity retires the local prefix, not another
+  // directory's independent (already freshness-bounded) discovery rows.
+  return {
+    ...discovery,
+    value: projection?.value ?? {
+      ...value,
+      projects: value.projects.filter((p) => p.path !== path),
+    },
+  };
 }
 
 export function TaskSidebar({

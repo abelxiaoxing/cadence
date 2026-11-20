@@ -1081,6 +1081,7 @@ it.each([
   "failed",
   "canceled",
   "append to draft",
+  "append to previous turn draft",
 ])(
   "%s: explicit message recovery dispatches only the chosen discussion action",
   async (path) => {
@@ -1158,8 +1159,10 @@ it.each([
       if (
         path === "failed" ||
         path === "canceled" ||
-        path === "append to draft"
+        path.startsWith("append to")
       ) {
+        if (path === "append to previous turn draft")
+          await act(async () => field.change(discussionText));
         f.live = undefined;
         f.pending = [];
         f.undelivered = [
@@ -1176,17 +1179,19 @@ it.each([
         if (!restore) throw Error("missing undelivered action");
         await act(async () => restore?.());
         expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([first]);
-        if (path === "append to draft") {
+        if (path.startsWith("append to")) {
           expect(editor.draft).toBe(`${discussionText}\n${phrase}`);
           await act(async () => field.change(phrase, "deleteContentBackward"));
-          await submit();
+        }
+        expect(editor.draft).toBe(phrase);
+        expect(command).toHaveBeenCalledTimes(1);
+        await submit();
+        if (path === "append to previous turn draft") {
           expect(currentToasts().at(-1)?.text).toBe(
             "No plan is awaiting approval.",
           );
           expect(command).toHaveBeenCalledTimes(1);
         } else {
-          expect(editor.draft).toBe(phrase);
-          await submit();
           expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
             first,
             expect.objectContaining({

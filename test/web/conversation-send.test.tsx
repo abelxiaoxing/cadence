@@ -129,8 +129,8 @@ it("a pending Send pins cwd and the shown model; an explicit picker continuation
   expect(sendCommand(exit)).toMatchObject({ kind: "cadence-exit", location });
 });
 
-it.each(["lost", "uncertain", "none"])(
-  "final Send %s retains draft/context and only reliable effect:none clears the original pending ID",
+it.each(["lost", "uncertain", "none", "wrong ID", "wrong kind", "accepted"])(
+  "final Send: %s settles only on the expected receipt or reliable effect:none",
   async (outcome) => {
     const intent = captureSend({
       id: randomUUID(),
@@ -142,6 +142,25 @@ it.each(["lost", "uncertain", "none"])(
     const command = sendCommand(intent, model);
     const call = vi.fn(async () => {
       if (outcome === "lost") throw new Error("reply lost");
+      if (outcome === "wrong kind")
+        return {
+          kind: "ok",
+          value: {
+            kind: "image-upload",
+            commandId: command.commandId,
+            imageId: randomUUID(),
+            offset: 4,
+          },
+        };
+      if (outcome === "accepted" || outcome === "wrong ID")
+        return {
+          kind: "ok",
+          value: {
+            kind: "accepted",
+            commandId:
+              outcome === "wrong ID" ? randomUUID() : command.commandId,
+          },
+        };
       return {
         kind: "error",
         error: publicError(
@@ -156,7 +175,9 @@ it.each(["lost", "uncertain", "none"])(
     expect(call.mock.calls).toHaveLength(1);
     expect(call).toHaveBeenCalledWith(command);
     expect(pending.mock.calls).toEqual(
-      outcome === "none" ? [[command.commandId], [""]] : [[command.commandId]],
+      outcome === "none" || outcome === "accepted"
+        ? [[command.commandId], [""]]
+        : [[command.commandId]],
     );
     expect(intent.text).toBe("kept draft");
     expect(intent.command).toMatchObject({
@@ -164,7 +185,7 @@ it.each(["lost", "uncertain", "none"])(
       head: command.head,
       revision: 8,
     });
-    expect(reply.kind).toBe("error");
+    expect(reply.kind).toBe(outcome === "accepted" ? "ok" : "error");
     if (reply.kind === "error") {
       expect(sendFailureMessage(reply.error.effect)).toContain(
         outcome === "none" ? "not accepted" : "original command",

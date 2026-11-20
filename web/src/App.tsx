@@ -84,7 +84,10 @@ import { FilesPanel } from "./components/workspace/FilesPanel";
 import { InspectorPanel } from "./components/workspace/InspectorPanel";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
-import { TaskSidebar } from "./components/workspace/TaskSidebar";
+import {
+  TaskSidebar,
+  useHistoryDiscovery,
+} from "./components/workspace/TaskSidebar";
 import { WorkflowAgentView } from "./components/workspace/WorkflowAgentView";
 import {
   type CanCancelWorkflow,
@@ -124,7 +127,7 @@ export function App({
   homeFolder,
   projectEntries,
   notices,
-  discovery,
+  discovery: observedDiscovery,
   onOpenService,
   project,
   onChooseFolder,
@@ -318,6 +321,10 @@ export function App({
     entryRevoked ||
     accessRevoked(projectError) ||
     accessRevoked(viewerError);
+  const discovery = useHistoryDiscovery(
+    observedDiscovery,
+    !detached && !signInRequired && !wrongWorkspace,
+  );
   const conversationAvailable =
     !detached && !signInRequired && !!(workspace.workspace || projectObserved);
   const retained = useRetainedTaskWorkspace(

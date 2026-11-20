@@ -298,6 +298,7 @@ function specimen(id) {
         branches: leaf ? 1 : 0,
         commands: turns.map((t) => t.commandId),
         pending: s.waiting,
+        undelivered: s.undelivered ?? [],
       };
     }
     if (kind === "conversation-turn") {
@@ -439,7 +440,9 @@ async function intercept({ b, site, origin, wait }, s) {
       path === "/workbench/v1/activity" &&
       request.method === "GET"
     ) {
-      body = decodeActivityDiscovery(s.gateway.observe(s.roster));
+      body = s.roster.discoveryFailed
+        ? { kind: "error", error: publicError("unavailable") }
+        : decodeActivityDiscovery(s.gateway.observe(s.roster));
       s.served.add(`discovery:${s.roster.name}`);
     } else if (
       s.gateway &&
@@ -555,7 +558,12 @@ async function intercept({ b, site, origin, wait }, s) {
     if (!body) return b.send("Fetch.continueRequest", { requestId });
     return b.send("Fetch.fulfillRequest", {
       requestId,
-      responseCode: path === "/workbench/v1" ? 400 : 200,
+      responseCode:
+        path === "/workbench/v1"
+          ? 400
+          : path === "/workbench/v1/activity" && body.kind === "error"
+            ? 503
+            : 200,
       responseHeaders: [
         { name: "content-type", value: "application/json" },
         { name: "cache-control", value: "no-store" },
@@ -778,13 +786,70 @@ async function observeBootstrap(p, row) {
     const { command: c, finish } = s.pending;
     assert.equal(c.text, text);
     assert.equal(c.images.length, 1);
+    // A valid upload receipt is not a Send receipt, even for this exact ID.
+    // Every history read still answers empty until the record is published.
+    const beforeReceipt = await run(entryFrame);
+    const mismatched = {
+      kind: "image-upload",
+      commandId: c.commandId,
+      imageId: c.images[0],
+      offset: PNG.length,
+    };
+    finish(ok(mismatched));
+    s.pending = null;
+    await wait(
+      `document.querySelector('.chat-messages .banner-notice')?.textContent.includes('Send outcome is unknown') && document.querySelector('.inspector-note code')?.textContent === ${q(c.commandId)}`,
+    );
+    await press("Enter", 13);
+    const uncertain = await run(entryFrame);
+    assert.equal(uncertain.entry, "new");
+    assert.ok(
+      uncertain.same &&
+        uncertain.focus &&
+        uncertain.images === 1 &&
+        uncertain.draft === text,
+    );
+    assert.equal(uncertain.model.text, beforeReceipt.model.text);
+    assert.equal(uncertain.level.text, beforeReceipt.level.text);
+    assert.deepEqual(await ev("opticalProbe.feedback"), []);
+    const beforeObservation = s.commands.slice();
+    assert.deepEqual(
+      beforeObservation.map((c) => c.kind),
+      ["image-upload", "send", "image-upload", "send"],
+    );
     s.turns.push({ ...c, entry: "00000012", answer: "Synthetic reply." });
     s.replying = true;
-    finish(ok({ kind: "accepted", commandId: c.commandId }));
-    s.pending = null;
+    // Request the now-available record via the pending ID's own readonly
+    // refresh. Activate without moving focus, so a remount/blur on receipt
+    // cannot be hidden by returning focus to the editor afterwards.
+    await run((id) => {
+      const note = [...document.querySelectorAll(".inspector-note")].find(
+        (p) => p.querySelector("code")?.textContent === id,
+      );
+      note.querySelector("button").click();
+    }, c.commandId);
     await wait(
       `document.querySelector('.chat-workspace[data-entry="received"]') && opticalProbe.feedback.some(e=>e.text === 'Message received')`,
     );
+    const observed = await run(entryFrame);
+    assert.ok(
+      observed.same && observed.focus && !observed.draft && !observed.images,
+    );
+    assert.deepEqual(s.commands, beforeObservation);
+    assert.equal(
+      await ev(
+        `!!document.querySelector('.inspector-note code') || document.querySelector('.chat-messages').textContent.includes('Send outcome is unknown')`,
+      ),
+      false,
+    );
+    row.uncertainFirst = {
+      mismatched,
+      command: c,
+      beforeReceipt,
+      uncertain,
+      observed,
+      commands: beforeObservation,
+    };
     const add = '.chat-composer button[aria-label="Add images"]';
     await wait(
       `document.querySelector('${add}:disabled')?.getAttribute('aria-description')?.includes('reply to finish')`,
@@ -2043,6 +2108,26 @@ async function observeDirectReply(p, row) {
       await wait(`document.querySelector(${q(input)}).value===''`);
       row.directReply.withdrawals.push({ original, cancel, next });
     }
+    // A final queued input will outlive its reply. Putting it back must be
+    // just a draft edit, even when submitted later as ordinary discussion.
+    await editor.replace(phrase);
+    s.permit = "queue";
+    await press("Enter", 13, 1);
+    await until(() => s.pending, "queue before reply failure");
+    const queued = s.pending.command;
+    assert.deepEqual(queued, {
+      kind: "conversation-input",
+      commandId: queued.commandId,
+      ...target,
+      mode: "queue",
+      text: phrase,
+    });
+    s.waiting = [{ commandId: queued.commandId, mode: "queue", text: phrase }];
+    s.pending.finish(ok({ kind: "accepted", commandId: queued.commandId }));
+    s.pending = null;
+    await wait(
+      `document.querySelector('.chat-waiting.queue .chat-attempt-text')?.textContent===${q(phrase)}`,
+    );
     const button = `.conversation-row > button[title="${title}"]`;
     if (
       await ev(
@@ -2062,6 +2147,15 @@ async function observeDirectReply(p, row) {
     assert.equal(active.result, "");
     s.replying = false;
     s.roster = { ...s.roster, name: "result recorded", replyResult: "failed" };
+    s.waiting = [];
+    s.undelivered = [
+      {
+        commandId: queued.commandId,
+        status: "failed",
+        notice: "Not delivered.",
+        text: phrase,
+      },
+    ];
     await wait(
       `document.querySelector(${q(`${button} .session-state.failed`)})`,
     );
@@ -2081,6 +2175,52 @@ async function observeDirectReply(p, row) {
     assert.ok(released.inHistory && !released.working);
     assert.equal(released.result, "failed");
     row.directReply.history = { active, settling, released };
+    if (await ev(`!!document.querySelector('.panel-drawer.drawer-left.open')`))
+      await click(".navigation-toggle");
+    await wait(
+      `document.querySelector('.chat-undelivered button') && !document.querySelector('.composer-queue')`,
+    );
+    await click(input);
+    await editor.replace(discussion);
+    const ledger = s.commands.slice();
+    await click(".chat-undelivered button", "Put back in the message box");
+    const appended = await ev("opticalProbe.nativeFrame()");
+    assert.ok(appended.same && appended.focused);
+    assert.equal(appended.value, `${discussion}\n${phrase}`);
+    await run(
+      (selector, count) =>
+        document.querySelector(selector).setSelectionRange(0, count),
+      input,
+      discussion.length + 1,
+    );
+    await press("Backspace", 8);
+    const remaining = await ev("opticalProbe.nativeFrame()");
+    assert.equal(remaining.value, phrase);
+    assert.ok(remaining.same && remaining.focused);
+    assert.deepEqual(s.commands, ledger);
+    s.permit = "send";
+    await press("Enter", 13);
+    await until(
+      () => s.pending,
+      "ordinary Send after appending the undelivered text",
+    );
+    const resent = s.pending.command;
+    assert.equal(resent.kind, "send");
+    assert.equal(resent.text, phrase);
+    assert.equal(resent.head, s.turns.at(-1).entry);
+    assert.equal(resent.conversationId, s.id);
+    s.pending.finish(ok({ kind: "accepted", commandId: resent.commandId }));
+    s.pending = null;
+    await wait(
+      `!document.querySelector(${q(input)}).value && opticalProbe.nativeFrame().focused`,
+    );
+    row.directReply.appendToDraft = {
+      queued,
+      appended,
+      remaining,
+      commandsBeforeSend: ledger,
+      resent,
+    };
     row.directReply.commands = [...s.commands];
     assert.deepEqual(
       s.commands,
@@ -2090,6 +2230,8 @@ async function observeDirectReply(p, row) {
           cancel,
           next,
         ]),
+        queued,
+        resent,
       ].map(({ kind, commandId }) => ({ kind, commandId })),
     );
     assert.equal(
@@ -2423,7 +2565,7 @@ async function observeTerminalHistory(p, row, shot) {
     selections: [],
     select: null,
     observe(stage) {
-      const native = [a, b].slice(0, stage.native);
+      const native = [a, b].slice(0, stage.missing ? 0 : stage.native);
       if (stage.phase === "verifying") native.reverse();
       const activities = native.map((report) => ({
         ...report,
@@ -2546,11 +2688,15 @@ async function observeTerminalHistory(p, row, shot) {
         ),
       outside,
     );
-    assert.equal(additional.length, 1); // The other project's exact same session/instance/activity IDs survive.
-    assert.ok(
-      additional[0].includes(background) &&
-        additional[0].includes(recentFolder),
-    );
+    // Other directories still expire on the ordinary discovery deadline.
+    if (r.discoveryFailed) assert.deepEqual(additional, []);
+    else {
+      assert.equal(additional.length, 1);
+      assert.ok(
+        additional[0].includes(background) &&
+          additional[0].includes(recentFolder),
+      );
+    }
     assert.deepEqual(s.commands, []);
     const branches = await run(
       (selector) =>
@@ -2832,9 +2978,41 @@ async function observeTerminalHistory(p, row, shot) {
       stage("terminals only", 68, "finished", false, 0, 2),
       stage("one terminal", 72, "finished", false, 0, 1),
       stage("uncertain", 75, "finished", false, 0, 1, true),
-      stage("last left", 90, "finished", false, 0, 0),
+      {
+        ...stage("expired discovery", 196, "finished", false, 0, 1, true),
+        discoveryFailed: true,
+      },
+      {
+        ...stage(
+          "partial without local report",
+          197,
+          "finished",
+          false,
+          0,
+          1,
+          true,
+        ),
+        missing: true,
+      },
+      stage("terminal observed again", 198, "finished", false, 0, 1),
+      stage("last left", 200, "finished", false, 0, 0),
     ]) {
+      if (next.discoveryFailed) {
+        // Move only the specimen document's wall clock past staleActivity's
+        // retention window; keep its polling and browser frames in real time.
+        await run((now) => {
+          opticalProbe.wallClock = Date.now;
+          Date.now = () => now;
+        }, next.at);
+      }
       s.roster = next;
+      if (next.discoveryFailed || next.missing) {
+        await wait(
+          `!!document.querySelector('${outside} button')===${!next.discoveryFailed} && document.querySelector('${root} .history-terminal button')?.textContent.includes('Stale observation') && !document.querySelector('${root} .conversation-stop')`,
+        );
+      }
+      if (next.name === "terminal observed again")
+        await wait(`document.querySelector('${root} [aria-label="Working"]')`);
       if (next.partial)
         await wait(
           `document.querySelector('${root} [aria-label="Stale observation"]')`,
@@ -2851,7 +3029,10 @@ async function observeTerminalHistory(p, row, shot) {
       } else
         assert.ok(f.order.indexOf(title) > f.order.indexOf("Earlier material"));
     }
-    s.roster = stage("navigation", 100, "research", false, 2, 2);
+    await ev(
+      "Date.now = opticalProbe.wallClock; delete opticalProbe.wallClock",
+    );
+    s.roster = stage("navigation", 210, "research", false, 2, 2);
     await settledFrame();
     for (const terminal of [a, b, other]) {
       await drawer();
