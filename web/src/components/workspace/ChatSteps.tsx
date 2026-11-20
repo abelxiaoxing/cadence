@@ -33,6 +33,7 @@ import { CollapsibleHead } from "../transcript/CollapsibleHead";
 import { ChatImages } from "./ChatImages";
 import { FileChangeCard } from "./FileChangeCard";
 import { stepActive, useStepDetail } from "./turn-source";
+import "./trace-row.css";
 
 /** Turns saved before `omitted` existed carry this line in `notice`. It states
  * the retention rule rather than an outcome of the turn, so it is not shown. */
