@@ -16,8 +16,10 @@ import {
   type ErrorCode,
 } from "../src/service/contracts/core.ts";
 import {
+  decodeDesign,
   designMessage,
   designSummary,
+  newDesign,
   reviseDesign,
 } from "../src/service/contracts/design.ts";
 import {
@@ -1237,6 +1239,7 @@ it("a batch survives refresh, refuses stale edits and grants, and starts no work
     }),
   ).toMatchObject({ designId: expect.any(String) });
   expect(read().design?.questions).toEqual(designQuestionsFixture);
+  expect(read().design?.at).toEqual(expect.any(Number));
   expect(await f.tool(start, "cadence_plan", plan())).toMatchObject({
     refused: "design-pending",
   });
@@ -1322,8 +1325,90 @@ it("a batch survives refresh, refuses stale edits and grants, and starts no work
     question: "motion",
     option: "quiet",
   });
+  await f.tool(recommended, "cadence_plan", plan());
   await f.settle(recommended);
   expect(f.runs.size).toBe(0);
+  const ready = read();
+  const readyBinding = {
+    conversationId: id,
+    revision: ready.revision,
+    proposalId: ready.proposal!.id,
+    digest: ready.proposal!.digest,
+  };
+  const nextGrant = f.cw.approval(
+    { kind: "cadence-prepare", commandId: randomUUID(), ...readyBinding },
+    caller,
+  );
+  if (nextGrant.kind !== "cadence-grant") throw Error("grant");
+  f.cw.approval(
+    {
+      kind: "cadence-approve",
+      commandId: randomUUID(),
+      ...readyBinding,
+      grant: nextGrant.grant,
+    },
+    caller,
+  );
+  expect(read().proposal).toBeNull();
+  expect(read().design).toBeUndefined();
+  expect(() => edit(ready, [])).toThrow("stale");
+});
+
+it("design decoding stays backward compatible with undated records and active execution blocks submitted design edits", async () => {
+  const undated = newDesign(randomUUID(), {
+    questions: designQuestionsFixture,
+  });
+  expect(undated.at).toBeUndefined();
+  expect(decodeDesign(undated)).toEqual(undated);
+  const dated = newDesign(
+    randomUUID(),
+    { questions: designQuestionsFixture },
+    undefined,
+    1_700_000_000_000,
+  );
+  expect(decodeDesign(dated)).toEqual(dated);
+  expect(() => decodeDesign({ ...dated, at: -1 })).toThrow("invalid");
+  expect(() => decodeDesign({ ...dated, at: "now" })).toThrow("invalid");
+
+  // Legacy persisted state from before retirement-on-approval may still carry
+  // a submitted design while an implementation run is active: edits refuse.
+  const f = fixture(),
+    id = randomUUID(),
+    turn = f.send(id, "enter");
+  await f.tool(turn, "cadence_design", { questions: designQuestionsFixture });
+  await f.settle(turn);
+  const submitTurn = f.send(id, "message", "按你推荐的来");
+  await f.settle(submitTurn);
+  const current = f.cw.records.state(id);
+  const runId = randomUUID();
+  f.active.push({
+    id: runId,
+    goal: "Legacy running implementation",
+    status: "running",
+    phase: "implementing",
+    notice: "",
+    steps: [],
+  } as unknown as WorkflowRun);
+  writeFileSync(
+    f.cw.records.path(id),
+    canonicalJson({
+      schema: "cadence-conversation-workflow/1",
+      state: { ...current, runs: [runId] },
+    }),
+  );
+  expect(() =>
+    f.cw.editDesign(
+      {
+        kind: "cadence-design-edit",
+        commandId: randomUUID(),
+        conversationId: id,
+        revision: current.revision,
+        designId: current.design!.id,
+        answers: [],
+      },
+      caller,
+    ),
+  ).toThrow("conflict");
 });
 
 it("a coordinator reads current project sections without a research run", async () => {

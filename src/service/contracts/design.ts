@@ -26,6 +26,9 @@ export type DesignAnswer =
 export interface DesignDraft {
   revision: number;
   id: string;
+  /** Owner clock timestamp when this batch was published, used to anchor the
+   * submitted summary line in conversation history. */
+  at?: number;
   questions: DesignQuestion[];
   answers: DesignAnswer[];
   submitted: boolean;
@@ -162,7 +165,15 @@ export function selectDesign(
   return answers;
 }
 export function decodeDesign(v: unknown): DesignDraft {
-  const o = closed(v, ["id", "revision", "questions", "answers", "submitted"]);
+  const hasAt = v !== null && typeof v === "object" && Object.hasOwn(v, "at");
+  const o = closed(v, [
+    "id",
+    "revision",
+    "questions",
+    "answers",
+    "submitted",
+    ...(hasAt ? ["at"] : []),
+  ]);
   const questions = designQuestions({ questions: o.questions }, "record");
   const submitted = bool(o.submitted);
   const answers = designAnswers(o.answers);
@@ -174,6 +185,7 @@ export function decodeDesign(v: unknown): DesignDraft {
   return {
     id: decodeId(o.id),
     revision: integer(o.revision, 1),
+    ...(hasAt ? { at: integer(o.at, 0) } : {}),
     questions,
     answers,
     submitted,
@@ -183,6 +195,7 @@ export function newDesign(
   id: string,
   input: unknown,
   previous?: DesignDraft,
+  at?: number,
 ): DesignDraft {
   const questions = designQuestions(input, "tool");
   const retained =
@@ -194,6 +207,7 @@ export function newDesign(
   return {
     id,
     revision: 1,
+    ...(at === undefined ? {} : { at: integer(at, 0) }),
     questions,
     answers: selectDesign(questions, retained),
     submitted: false,

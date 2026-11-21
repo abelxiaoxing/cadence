@@ -22,7 +22,12 @@ import {
   type WorkflowAgent,
   WorkflowAgentGroup,
 } from "../../web/src/components/workspace/AgentDock";
-import { DesignCard } from "../../web/src/components/workspace/DesignCard.tsx";
+import {
+  DesignBar,
+  DesignDialog,
+  DesignLine,
+  placeDesign,
+} from "../../web/src/components/workspace/DesignCard.tsx";
 import { RetainedStepResult } from "../../web/src/components/workspace/RetainedStepResult";
 import {
   AssignmentBoard,
@@ -1127,35 +1132,80 @@ it.each(["en", "zh"] as const)(
   },
 );
 
-it("the Web design card shows active questions, option costs, recommendation, custom input and one submission", () => {
-  const d = newDesign(randomUUID(), { questions: designQuestionsFixture });
-  const render = (draft: typeof d, active = true, disabled = false) =>
+it("the Web design controls split pending composer strip, scrolling submitted summary and modal", () => {
+  const d = newDesign(
+    randomUUID(),
+    { questions: designQuestionsFixture },
+    undefined,
+    1_500,
+  );
+  const dialogHtml = (draft: typeof d, open = true, disabled = false) =>
     renderToStaticMarkup(
-      <DesignCard
+      <DesignDialog
         draft={draft}
-        active={active}
+        open={open}
         disabled={disabled}
+        onClose={() => {}}
         onEdit={() => {}}
         onSubmit={() => {}}
       />,
     );
-  expect(render(d)).toContain("<dialog");
-  expect(render(d, false)).not.toContain("<dialog");
-  expect(render(d, true, true)).not.toContain("<dialog");
-  expect(render(d)).toContain("Quieter surfaces");
-  expect(render(d)).toContain("Which motion?");
-  expect(render(d)).toContain("Other idea");
-  expect(render(d)).not.toContain("How much blur?");
+  const open = dialogHtml(d);
+  expect(open).toContain("<dialog");
+  expect(dialogHtml(d, false)).not.toContain("<dialog");
+  expect(open).toContain("Quieter surfaces");
+  expect(open).toContain("Which motion?");
+  expect(open).toContain("Other idea");
+  expect(open).not.toContain("How much blur?");
+  const bar = renderToStaticMarkup(
+    <DesignBar draft={d} active onOpen={() => {}} />,
+  );
+  expect(bar).toContain("composer-anchor design-bar");
+  expect(bar).toContain("0 of 2 questions answered");
+  expect(bar).toContain("Choose answers");
   const selected = reviseDesign(
     d,
     [{ question: "surface", option: "everywhere" }],
     true,
   );
-  expect(render(selected)).toContain("How much blur?");
-  expect(render(selected)).toContain("Design submitted");
-  expect(render(selected)).toContain("Review choices");
-  expect(render(selected)).not.toContain("<dialog");
-  expect(render(selected)).not.toContain("Confirm implementation");
+  const line = renderToStaticMarkup(
+    <DesignLine draft={selected} active onOpen={() => {}} />,
+  );
+  expect(line).toContain("workflow-line design-line");
+  expect(line).toContain("Design submitted");
+  expect(line).toContain("Review choices");
+  expect(line).toContain("Everywhere");
+  expect(line).not.toContain("<dialog");
+  expect(line).not.toContain("Confirm implementation");
+  const submittedDialog = dialogHtml(selected);
+  expect(submittedDialog).toContain("How much blur?");
+  expect(submittedDialog).not.toContain("Submit design");
+  const zhLine = renderToStaticMarkup(
+    <LocaleProvider initial="zh">
+      <DesignLine draft={selected} active onOpen={() => {}} />
+    </LocaleProvider>,
+  );
+  expect(zhLine).toContain("设计选项");
+  expect(zhLine).toContain("设计已提交");
+  expect(zhLine).toContain("查看或修改选择");
+  const turns = [
+    { header: { id: "t1", at: 1_000 } },
+    { header: { id: "t2", at: 2_000 } },
+  ];
+  expect(placeDesign(turns, d, false)).toEqual({ kind: "none" });
+  expect(placeDesign(turns, selected, false)).toEqual({
+    kind: "after",
+    turnId: "t1",
+  });
+  expect(placeDesign(turns, { ...selected, at: 500 }, false)).toEqual({
+    kind: "start",
+  });
+  expect(placeDesign(turns, { ...selected, at: 500 }, true)).toEqual({
+    kind: "none",
+  });
+  expect(placeDesign(turns, { ...selected, at: undefined }, false)).toEqual({
+    kind: "end",
+  });
 });
 
 it("labels the displayed bounded file and its copy action in the selected locale", () => {

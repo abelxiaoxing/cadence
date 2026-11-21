@@ -42,7 +42,12 @@ import {
 import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
 import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
-import { DesignCard } from "../../web/src/components/workspace/DesignCard";
+import {
+  DesignBar,
+  DesignDialog,
+  DesignLine,
+  useDesignModal,
+} from "../../web/src/components/workspace/DesignCard";
 import { FileChangeCard } from "../../web/src/components/workspace/FileChangeCard";
 import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
 import { RetainedStepResult } from "../../web/src/components/workspace/RetainedStepResult";
@@ -530,23 +535,40 @@ function elements<P = { children?: ReactNode }>(
     ...elements<P>(node.props.children, type),
   ];
 }
-it("presents one batch after settlement, preserves dismissal across edits and only submits on click", () => {
-  let draft = newDesign(crypto.randomUUID(), {
-    questions: designQuestionsFixture,
-  });
+it("presents one batch after settlement, preserves dismissal across edits, only submits on click and keeps the modal open while revising submitted choices", () => {
+  let draft = newDesign(
+    crypto.randomUUID(),
+    { questions: designQuestionsFixture },
+    undefined,
+    1_500,
+  );
   const onSubmit = vi.fn();
-  const card = (disabled = false) =>
-    render(() =>
-      DesignCard({
+  const draw = (disabled = false) =>
+    render(() => {
+      const modal = useDesignModal(draft, true, disabled);
+      const trigger = draft.submitted
+        ? DesignLine({ draft, active: true, onOpen: modal.open })
+        : DesignBar({ draft, active: true, onOpen: modal.open });
+      const dialogNode = DesignDialog({
         draft,
-        active: true,
+        open: modal.visible,
         disabled,
-        onSubmit,
+        onClose: modal.close,
+        onSubmit: (submitted) => {
+          draft = submitted;
+          onSubmit(submitted);
+        },
         onEdit: (answers) => {
           draft = reviseDesign(draft, answers, false);
         },
-      }),
-    );
+      });
+      return (
+        <>
+          {trigger}
+          {dialogNode}
+        </>
+      );
+    });
   const dialog = (node: ReactNode) =>
     elements<ComponentProps<typeof ActionDialog>>(node, ActionDialog)[0];
   const button = (node: ReactNode, label: string) =>
@@ -555,33 +577,47 @@ it("presents one batch after settlement, preserves dismissal across edits and on
         (e) => e.props.children === label,
       ),
     ).props;
-  expect(dialog(card(true))).toBeUndefined();
+  expect(dialog(draw(true))).toBeUndefined();
   commit();
-  card();
+  draw();
   commit();
-  dialog(card()).props.onClose?.();
+  dialog(draw()).props.onClose?.();
   draft = { ...draft, revision: draft.revision + 1 };
-  expect(dialog(card())).toBeUndefined();
-  button(card(), "Choose answers").onClick();
-  elements<{ type: string; onChange(): void }>(card(), "input")
+  expect(dialog(draw())).toBeUndefined();
+  button(draw(), "Choose answers").onClick();
+  elements<{ type: string; onChange(): void }>(draw(), "input")
     .filter((e) => e.props.type === "radio")[1]
     .props.onChange();
   expect(draft.answers).toEqual([
     { question: "surface", option: "everywhere" },
   ]);
-  button(card(), "Fill unanswered with recommendations").onClick();
+  button(draw(), "Fill unanswered with recommendations").onClick();
   expect(draft.answers).toHaveLength(3); // preserves the explicit answer and unlocks its dependent question
   expect(onSubmit).not.toHaveBeenCalled();
-  button(
-    card(),
-    "Submit design and use recommendations for unanswered questions",
-  ).onClick();
-  expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+  const expected = {
     ...draft,
     submitted: true,
     revision: draft.revision + 1,
-  });
-  expect(dialog(card())).toBeUndefined();
+  };
+  button(
+    draw(),
+    "Submit design and use recommendations for unanswered questions",
+  ).onClick();
+  expect(onSubmit).toHaveBeenCalledExactlyOnceWith(expected);
+  expect(dialog(draw())).toBeUndefined();
+  // Reopening from the submitted line and revising keeps the dialog mounted and open.
+  const reviewButton = required(
+    elements<{ className?: string; onClick(): void }>(draw(), "button").find(
+      (e) => e.props.className === "workflow-line-open",
+    ),
+  ).props;
+  reviewButton.onClick();
+  expect(dialog(draw())).toBeDefined();
+  elements<{ type: string; onChange(): void }>(draw(), "input")
+    .filter((e) => e.props.type === "radio")[0]
+    .props.onChange();
+  expect(draft.submitted).toBe(false);
+  expect(dialog(draw())).toBeDefined();
 });
 
 it.each([
@@ -1566,10 +1602,12 @@ it("a stale choice refreshes the open design without resubmitting or requiring a
     [{ question: "surface", option: "everywhere" }],
     false,
   );
-  const card = () =>
-    elements<ComponentProps<typeof DesignCard>>(f.draw().tree, DesignCard)[0]
-      .props;
-  const displayed = card();
+  const dialog = () =>
+    elements<ComponentProps<typeof DesignDialog>>(
+      f.draw().tree,
+      DesignDialog,
+    )[0].props;
+  const displayed = dialog();
   f.client.workbenchCommand.mockResolvedValueOnce({
     kind: "error",
     error: publicError("stale", "none"),
@@ -1579,9 +1617,61 @@ it("a stale choice refreshes the open design without resubmitting or requiring a
   });
   await displayed.onEdit([]);
   expect(workspace.refreshMode).toHaveBeenCalledOnce();
-  expect(card()).toMatchObject({ draft: updated, disabled: false });
+  expect(dialog()).toMatchObject({ draft: updated, disabled: false });
   await displayed.onEdit([]); // an event retained from the previous render
   expect(f.client.workbenchCommand).toHaveBeenCalledTimes(1);
+});
+
+it("places pending design above the composer, anchors submitted design in history and clears it after retirement", () => {
+  const turn1 = loaded("turn-1", undefined, 0);
+  turn1.header.at = 1_000;
+  turn1.header.status = "completed";
+  const turn2 = loaded("turn-2", undefined, 1);
+  turn2.header.at = 2_000;
+  turn2.header.status = "completed";
+  const f = workspaceFixture([turn1, turn2]);
+  workspace.modeActive = true;
+  const pending = newDesign(
+    crypto.randomUUID(),
+    { questions: designQuestionsFixture },
+    undefined,
+    1_500,
+  );
+  workspace.design = pending;
+  const first = f.draw();
+  expect(elements(first.composer.anchor, DesignBar)).toHaveLength(1);
+  expect(elements(first.tree, DesignLine)).toHaveLength(0);
+  expect(elements(first.tree, DesignDialog)).toHaveLength(1);
+
+  workspace.design = reviseDesign(pending, pending.answers, true);
+  const second = f.draw();
+  expect(elements(second.composer.anchor, DesignBar)).toHaveLength(0);
+  expect(elements(second.tree, DesignLine)).toHaveLength(1);
+  const messages = required(
+    elements<{ className?: string; children?: ReactNode }>(
+      second.tree,
+      "div",
+    ).find((el) => el.props.className === "chat-messages"),
+  );
+  const order: string[] = [];
+  const walk = (node: ReactNode) => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (!isValidElement<{ id?: string; children?: ReactNode }>(node)) return;
+    if (node.type === LazyMount && node.props.id) order.push(node.props.id);
+    else if (node.type === DesignLine) order.push("design-line");
+    else walk(node.props.children);
+  };
+  walk(messages.props.children);
+  expect(order).toEqual(["turn-1", "design-line", "turn-2"]);
+
+  workspace.design = undefined;
+  const retired = f.draw();
+  expect(elements(retired.composer.anchor, DesignBar)).toHaveLength(0);
+  expect(elements(retired.tree, DesignLine)).toHaveLength(0);
+  expect(elements(retired.tree, DesignDialog)).toHaveLength(0);
 });
 
 it("observing initial, advancing live and settled chat heads never requests an owner refresh", () => {

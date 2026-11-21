@@ -67,3 +67,44 @@
   border-inline-start: 2px solid var(--focus);
   padding-inline-start: 8px;
 }
+.composer-anchor.design-bar {
+  align-items: center;
+}
+.composer-anchor.design-bar > svg {
+  margin-top: 0;
+}
+.design-bar-text {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.design-line-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--accent-text);
+}
+.design-line-summary {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+.design-line-action {
+  flex: none;
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .design-line .workflow-line-goal {
+    flex-basis: calc(100% - 24px);
+  }
+  .design-line .workflow-line-meta.ep-state {
+    flex-basis: auto;
+    padding-left: 24px;
+  }
+  .design-line-action {
+    margin-left: auto;
+  }
+}

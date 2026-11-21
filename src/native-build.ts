@@ -2,5 +2,5 @@
 export const nativeBuild = {
   kind: "native",
   contractHash:
-    "bc59a50cd6275f2f6057fbdefee67952b16a27a13a69b4988ca26bb8d4981b08",
+    "0e8ed4db34c45cea56174df9ae6ebc6b4d830d7f8311c77f32353f4685c2482d",
 } as const;
