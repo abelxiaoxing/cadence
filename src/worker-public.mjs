@@ -968,7 +968,13 @@ export function decodeWorkerPublicRequest(v) {
   if (result.handoff.inputs.some((i) => i.assignmentId !== result.assignmentId))
     invalid();
   if (o.changes !== undefined) {
-    const c = closed(o.changes, ["root", "base", "candidate"]);
+    const hasDelta = Object.hasOwn(o.changes ?? {}, "deltaBase");
+    const c = closed(o.changes, [
+      "root",
+      "base",
+      "candidate",
+      ...(hasDelta ? ["deltaBase"] : []),
+    ]);
     const root = text(c.root, 4096, true);
     if (
       result.purpose !== "review" ||
@@ -982,7 +988,12 @@ export function decodeWorkerPublicRequest(v) {
         throw new Error("Invalid review object");
       return s;
     };
-    result.changes = { root, base: oid(c.base), candidate: oid(c.candidate) };
+    result.changes = {
+      root,
+      base: oid(c.base),
+      candidate: oid(c.candidate),
+      ...(hasDelta ? { deltaBase: oid(c.deltaBase) } : {}),
+    };
   }
   if (
     (result.taskKind !== "code" && result.purpose === "edit") ||

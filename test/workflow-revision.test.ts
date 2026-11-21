@@ -183,12 +183,10 @@ it("a recorded revision extends the run's write scope, and a path the target che
       strategy: "extract the shared type",
     }),
   );
-  await owner
-    .controller(live, owner.cwd, proposal)
-    .complete("task a", async () => {
-      if (++attempt === 1)
-        throw new AttemptFailure("needs a shared type", [first.id]);
-    });
+  await owner.gate(live, owner.cwd, proposal).verify("task a", async () => {
+    if (++attempt === 1)
+      throw new AttemptFailure("needs a shared type", [first.id]);
+  });
   expect(live.run.scope).toEqual(["shared/types.ts"]);
   expect(owner.scope(live, proposal)).toEqual([
     "a.txt",
@@ -215,12 +213,10 @@ it("a recorded revision extends the run's write scope, and a path the target che
     reply(second.id, { level: "replan", scope: ["docs/usage.md"] }),
   );
   attempt = 0;
-  await owner
-    .controller(live, owner.cwd, proposal)
-    .complete("task b", async () => {
-      if (++attempt === 1)
-        throw new AttemptFailure("needs a document", [second.id]);
-    });
+  await owner.gate(live, owner.cwd, proposal).verify("task b", async () => {
+    if (++attempt === 1)
+      throw new AttemptFailure("needs a document", [second.id]);
+  });
   expect(live.run.scope).toEqual(["shared/types.ts", "docs/usage.md"]);
   expect(prompts.at(-1)).toContain("could not be used");
   expect(prompts.at(-1)).toContain("docs/guide.md");
@@ -245,8 +241,8 @@ it("a deviation is recorded on the run, shown to later workers and the review, a
   );
   let attempt = 0;
   await owner
-    .controller(live, owner.cwd, proposal)
-    .complete("verification", async () => {
+    .gate(live, owner.cwd, proposal)
+    .verify("verification", async () => {
       if (++attempt === 1) throw new AttemptFailure("format failed", [step.id]);
     });
   expect(live.run.deviations).toMatchObject([
@@ -308,7 +304,9 @@ it("hands complete review conditions directly to a focused repair and accepts on
   owner.editAttempt = vi.fn(async (_l, _c, _p, _id, prompt, writes) => {
     expect(prompt).toContain(issue.evidence);
     expect(prompt).toContain(issue.verify);
-    expect(writes).toEqual(issue.writes);
+    expect(prompt).toContain("a.txt");
+    // V4 ReviewRepair grants full candidate write scope (issue.writes are location hints).
+    expect(writes).toEqual(["a.txt", "b.txt"]);
     tree.files.set("a.txt", "changed");
   });
   await owner.verifyAndRepair(live, cwd, proposal, false);
@@ -452,12 +450,9 @@ it("a revision made while assignments are scheduled is told the route, changes i
     }),
   );
   let attempt = 0;
-  await owner
-    .controller(live, child, proposal)
-    .complete("assignment a", async () => {
-      if (++attempt === 1)
-        throw new AttemptFailure("needs an entry", [first.id]);
-    });
+  await owner.gate(live, child, proposal).verify("assignment a", async () => {
+    if (++attempt === 1) throw new AttemptFailure("needs an entry", [first.id]);
+  });
   // The diagnosis saw what is still waiting and what it would write.
   expect(prompts[0]).toContain("Assignments of the current route");
   expect(prompts[0]).toContain("- a [running; writes a.txt] A");
@@ -484,8 +479,8 @@ it("a revision made while assignments are scheduled is told the route, changes i
   );
   attempt = 0;
   await owner
-    .controller(live, owner.cwd, proposal)
-    .complete("verification", async () => {
+    .gate(live, owner.cwd, proposal)
+    .verify("verification", async () => {
       if (++attempt === 1)
         throw new AttemptFailure("checks failed", [second.id]);
     });

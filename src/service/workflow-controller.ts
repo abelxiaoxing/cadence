@@ -1,10 +1,14 @@
 /** Delivery recovery is service-owned. A failed, settled attempt is not a failed goal.
- * No attempt/time quota: unchanged evidence plus the same approach is not progress,
- * it moves the decision one level up. Unknown closure, cancellation, authority and
- * storage failures never enter this loop. */
+ * Two distinct control semantics share the same safety boundaries:
+ * - AssignmentRunner advances an assignment by remaining obligations and closes it
+ *   once those obligations are met, without re-running the initial worker.
+ * - VerificationGate proves a candidate passes checks/review and loops repairs until
+ *   the exact gate passes or escalates cleanly.
+ * Unknown closure, cancellation, authority and storage failures never enter recovery. */
 import { createHash } from "node:crypto";
 import { sanitizeText } from "../worker-redaction.mjs";
 import {
+  bool,
   canonicalJson,
   closed,
   list,
@@ -34,10 +38,73 @@ export class AttemptFailure extends Error {
     readonly steps: string[],
     /** Stable operation/failure identity, independent of model prose. */
     readonly identity?: string,
+    /** Optional floor escalation requested by owner evidence (e.g., ReviewLedger). */
+    readonly escalateTo?: RecoveryLevel,
   ) {
     super(message);
   }
 }
+
+/** A settled, in-scope partial assignment report with concrete remaining work.
+ * AssignmentRunner continues it directly without a cold-start diagnosis round
+ * while files keep making observable progress. */
+export class PartialAssignment extends AttemptFailure {
+  constructor(
+    readonly stepId: string,
+    readonly summary: string,
+    identity?: string,
+  ) {
+    super(`Assignment partial: ${summary}`, [stepId], identity);
+  }
+}
+
+/** A clear, settled check or build failure inside the current candidate scope.
+ * VerificationGate dispatches a direct first-round repair across candidate scope
+ * before escalating repeated failures to readonly diagnosis and replan. */
+export class DirectCheckRepair extends AttemptFailure {
+  constructor(
+    message: string,
+    steps: string[],
+    identity: string,
+    readonly decision: RecoveryDecision,
+  ) {
+    super(message, steps, identity);
+  }
+  static from(
+    stageLabel: string,
+    message: string,
+    steps: string[],
+    identity: string,
+    candidateScope: readonly string[],
+    secrets: readonly string[],
+  ): DirectCheckRepair | undefined {
+    const allowed = candidateScope.filter(workflowBoundary);
+    if (!steps.length || !allowed.length) return;
+    try {
+      const decision = decodeRecoveryDecision(
+        JSON.stringify({
+          action: "continue",
+          evidence: steps,
+          cause: `${stageLabel} failed with concrete check output.`,
+          strategy: `Repair the failing ${stageLabel} inside the candidate scope and re-verify.`,
+          work: [
+            {
+              title: `Repair failing ${stageLabel}`,
+              instructions: `${message}\nFix the underlying cause inside the approved candidate scope, run focused checks to verify the fix, and preserve unrelated outputs.`,
+              writes: allowed,
+            },
+          ],
+        }),
+        { scope: allowed, evidence: steps, floor: "repair", checks: [] },
+        secrets,
+      );
+      return new DirectCheckRepair(message, steps, identity, decision);
+    } catch (error) {
+      if (!(error instanceof InvalidDecision)) throw error;
+    }
+  }
+}
+
 /** A recovery reply the owner cannot act on. The diagnosis is asked again with
  * this reason; it is never a failed delivery by itself. */
 export class InvalidDecision extends Error {}
@@ -88,6 +155,10 @@ export interface RecoveryDecision {
   route: RecoveryRoute | null;
   deviation: Deviation | null;
   blocker: (typeof BLOCKERS)[number] | null;
+  /** For assignment recovery: true when finishing `work` fulfills all remaining
+   * obligations of this assignment; false/omitted when `work` only resolves a
+   * precondition and a focused continuation of the assignment still remains. */
+  completesStage?: boolean;
 }
 /** What a route revision is checked against: every assignment the run lists. */
 export type RouteTask = Pick<WorkflowTaskState, "id" | "after" | "state">;
@@ -252,7 +323,14 @@ export function decodeRecoveryDecision(
       "evidence",
       "strategy",
       "work",
-      ...["level", "scope", "route", "deviation", "blocker"].filter(has),
+      ...[
+        "level",
+        "scope",
+        "route",
+        "deviation",
+        "blocker",
+        "completesStage",
+      ].filter(has),
     ]);
     const action = oneOf(o.action, ["continue", "blocked"]);
     let level = has("level") ? oneOf(o.level, RECOVERY_LEVELS) : "repair";
@@ -391,6 +469,9 @@ export function decodeRecoveryDecision(
     const blocker = has("blocker")
       ? nullable(o.blocker, (v) => oneOf(v, BLOCKERS))
       : null;
+    const completesStage = has("completesStage")
+      ? bool(o.completesStage)
+      : undefined;
     if (action === "blocked") {
       if (work.length || scope.length || deviation || route)
         refuse("A blocked decision cannot dispatch work");
@@ -418,6 +499,7 @@ export function decodeRecoveryDecision(
       route,
       deviation,
       blocker,
+      ...(completesStage !== undefined ? { completesStage } : {}),
     };
   } catch (error) {
     if (error instanceof InvalidDecision) throw error;
@@ -427,16 +509,22 @@ export function decodeRecoveryDecision(
   }
 }
 /** Only the owner constructs this shortcut, after the current checks, readonly
- * review and candidate fences. No review may add scope, commands or deviations. */
+ * review and candidate fences. `issue.writes` are starting location hints, never
+ * a ceiling on repair writes: the owner grants the candidate's current approved
+ * write scope so adjacent files, tests and derived sources can be fixed together.
+ * Out-of-scope hints still require diagnosis and an auditable scope revision. */
 export class ReviewRepair extends AttemptFailure {
   private constructor(
     readonly ids: string[],
+    readonly keys: string[],
     readonly decision: RecoveryDecision,
+    escalateTo?: RecoveryLevel,
   ) {
     super(
-      `Agent review: unresolved ${ids.join(", ")}.`,
+      `Agent review: unresolved ${keys.join(", ")}.`,
       decision.evidence,
-      `review:${ids.join(",")}`,
+      `review:${keys.join(",")}`,
+      escalateTo,
     );
   }
   static from(
@@ -444,6 +532,7 @@ export class ReviewRepair extends AttemptFailure {
     step: string,
     scope: readonly string[],
     secrets: readonly string[],
+    options: { keys?: string[]; escalateTo?: RecoveryLevel } = {},
   ): ReviewRepair | undefined {
     if (
       !blockers.length ||
@@ -451,32 +540,42 @@ export class ReviewRepair extends AttemptFailure {
         (issue): issue is ReviewIssue =>
           typeof issue !== "string" &&
           issue.writes.length > 0 &&
-          issue.writes.every(workflowBoundary),
+          issue.writes.every(
+            (p) => workflowBoundary(p) && workflowCovers(scope, p),
+          ),
       )
     )
       return;
     const ids = blockers.map((issue) => issue.id).sort();
     if (new Set(ids).size !== ids.length) return;
-    const writes = [...new Set(blockers.flatMap((issue) => issue.writes))];
+    const keys = [...new Set(options.keys?.length ? options.keys : ids)].sort();
+    const hints = [...new Set(blockers.flatMap((issue) => issue.writes))];
+    const candidateWrites = [...new Set(scope.filter(workflowBoundary))];
+    if (!candidateWrites.length) return;
     try {
       const decision = decodeRecoveryDecision(
         JSON.stringify({
           action: "continue",
           evidence: [step],
           cause: "Independent review identified outstanding acceptance issues.",
-          strategy: `Repair and verify: ${ids.join(", ")}`,
+          strategy: `Repair and verify: ${keys.join(", ")}`,
           work: [
             {
               title: "Resolve review blockers",
-              instructions: blockers.map(issueText).join("\n\n"),
-              writes,
+              instructions: `${blockers.map(issueText).join("\n\n")}\n\nStarting location hints from review (not a write ceiling; update any related files within the approved candidate scope as needed): ${hints.join(", ")}`,
+              writes: candidateWrites,
             },
           ],
         }),
-        { scope, evidence: [step], floor: "repair", checks: [] },
+        {
+          scope: candidateWrites,
+          evidence: [step],
+          floor: "repair",
+          checks: [],
+        },
         secrets,
       );
-      return new ReviewRepair(ids, decision);
+      return new ReviewRepair(ids, keys, decision, options.escalateTo);
     } catch (error) {
       // An oversized or out-of-scope handoff needs diagnosis, not a partial repair.
       if (!(error instanceof InvalidDecision)) throw error;
@@ -502,18 +601,47 @@ export interface RecoveryPorts {
     revision: number,
     failure: AttemptFailure,
   ): Promise<void>;
+  /** Called once an entire repair batch completes all work items before re-entering the gate. */
+  onRepairBatchComplete?(level: RecoveryLevel): void;
 }
+
 /** An unusable reply is asked again this many times before it ends the stage. */
 const OBJECTIONS = 2;
-/** One controller per working tree of an accepted delivery, shared by setup,
- * implementation and verification there. Full revisions are durably recorded by
- * the owner; memory only retains fingerprints. */
-export class DeliveryController {
+/** Maximum consecutive direct partial continuations before escalating to diagnosis. */
+const MAX_DIRECT_PARTIALS = 3;
+
+function failureFingerprint(
+  stage: string,
+  observation: string | null,
+  attempt: AttemptFailure,
+  level: RecoveryLevel,
+): string {
+  return createHash("sha256")
+    .update(
+      canonicalJson({
+        stage,
+        observation,
+        failure:
+          attempt.identity ??
+          attempt.message.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gu, "<step>"),
+        level,
+      }),
+    )
+    .digest("hex");
+}
+
+function maxLevel(a: RecoveryLevel, b?: RecoveryLevel): RecoveryLevel {
+  if (!b) return a;
+  return RECOVERY_LEVELS.indexOf(b) > RECOVERY_LEVELS.indexOf(a) ? b : a;
+}
+
+/** Shared bounded decision + escalation kernel for both controllers. */
+class RecoveryKernel {
   private revision = 0;
-  private readonly tried = new Set<string>();
-  private previous: RecoveryRecord | undefined;
-  constructor(private readonly ports: RecoveryPorts) {}
-  private async decide(
+  readonly tried = new Set<string>();
+  previous: RecoveryRecord | undefined;
+  constructor(readonly ports: RecoveryPorts) {}
+  async decide(
     failure: AttemptFailure,
     floor: RecoveryLevel,
   ): Promise<RecoveryDecision> {
@@ -534,28 +662,274 @@ export class DeliveryController {
       }
     }
   }
-  async complete<T>(stage: string, action: () => Promise<T>): Promise<T> {
-    let repair: RecoveryWork[] = [];
-    let recorded = 0;
-    const reviewed = new Set<string>();
-    let failure: AttemptFailure | undefined;
-    let original: AttemptFailure | undefined;
-    // Escalation holds for the rest of this stage.
+  record(
+    stage: string,
+    observation: string,
+    failure: string,
+    decision: RecoveryDecision,
+  ): number {
+    const record: RecoveryRecord = {
+      revision: ++this.revision,
+      stage,
+      observation,
+      failure,
+      decision,
+    };
+    const recorded = this.ports.record(record);
+    this.previous = record;
+    return recorded;
+  }
+}
+
+export interface AssignmentContinuation {
+  revision: number;
+  reason: string;
+  priorSteps: string[];
+  summary: string;
+  afterPrecondition?: boolean;
+}
+
+export interface AssignmentLifecycle {
+  /** Initial assignment attempt; invoked at most once. */
+  initial(): Promise<void>;
+  /** Focused continuation of remaining obligations after a settled partial
+   * attempt or after a precondition-only repair. Closing this closes the task. */
+  continueWork(handoff: AssignmentContinuation): Promise<void>;
+  /** Optional deterministic post-completion check (e.g., lintKnowledge). */
+  postCheck?(): Promise<void>;
+  /** Current owned write scope for direct partial continuations. */
+  scope(): readonly string[];
+}
+
+/** Drives one assignment by remaining obligations rather than re-running the
+ * initial worker after every repair. */
+export class AssignmentRunner {
+  private readonly kernel: RecoveryKernel;
+  constructor(ports: RecoveryPorts) {
+    this.kernel = new RecoveryKernel(ports);
+  }
+  async run(stage: string, assignment: AssignmentLifecycle): Promise<void> {
+    const { ports } = this.kernel;
     let floor: RecoveryLevel = "repair";
+    let original: AttemptFailure | undefined;
+    let lastPartialObservation: string | undefined;
+    let directPartials = 0;
+    let workDone = false;
+    let phase:
+      | { kind: "initial" }
+      | { kind: "continue"; handoff: AssignmentContinuation }
+      | {
+          kind: "work";
+          items: RecoveryWork[];
+          revision: number;
+          failure: AttemptFailure;
+          completesStage: boolean;
+          strategy: string;
+        } = { kind: "initial" };
+
     for (;;) {
-      this.ports.assertRunning();
+      ports.assertRunning();
       try {
-        while (repair.length) {
-          if (!failure) throw new Error("Recovery has no original failure");
-          await this.ports.execute(repair[0], recorded, failure);
-          repair.shift();
+        if (phase.kind === "initial") {
+          await assignment.initial();
+          workDone = true;
+          await assignment.postCheck?.();
+          return;
         }
-        return await action();
+        if (phase.kind === "continue") {
+          await assignment.continueWork(phase.handoff);
+          workDone = true;
+          await assignment.postCheck?.();
+          return;
+        }
+        while (phase.items.length) {
+          await ports.execute(phase.items[0], phase.revision, phase.failure);
+          phase.items.shift();
+        }
+        if (phase.completesStage || workDone) {
+          workDone = true;
+          await assignment.postCheck?.();
+          return;
+        }
+        // Only a precondition was repaired (or work was empty for a safe retry):
+        // close the precondition and continue the assignment's remaining work
+        // without re-invoking the initial worker.
+        phase = {
+          kind: "continue",
+          handoff: {
+            revision: phase.revision,
+            reason: phase.strategy,
+            priorSteps: phase.failure.steps,
+            summary: phase.failure.message,
+            afterPrecondition: true,
+          },
+        };
       } catch (error) {
         if (!(error instanceof AttemptFailure)) throw error;
-        // A failed repair must not replace the operation it was meant to fix.
-        // Keep the original facts plus the latest repair, not an ever-growing
-        // chain of clipped model summaries.
+        const inWork: boolean = phase.kind === "work";
+        if (!inWork) original = error;
+        const attempt: AttemptFailure =
+          inWork && original
+            ? new AttemptFailure(
+                error.message,
+                [...new Set([...original.steps, ...error.steps])],
+                `${original.identity ?? stage}:repair:${error.identity ?? "incomplete"}`,
+                error.escalateTo,
+              )
+            : error;
+        ports.assertRunning();
+        const observation = await ports.observe();
+
+        // Direct in-scope continuation for a settled partial report that is
+        // still making observable file progress: skip cold-start diagnosis up
+        // to MAX_DIRECT_PARTIALS consecutive times before escalating.
+        if (
+          error instanceof PartialAssignment &&
+          !inWork &&
+          !workDone &&
+          floor === "repair" &&
+          directPartials < MAX_DIRECT_PARTIALS &&
+          observation !== lastPartialObservation
+        ) {
+          lastPartialObservation = observation;
+          directPartials++;
+          const writes = [
+            ...new Set(assignment.scope().filter(workflowBoundary)),
+          ];
+          if (writes.length) {
+            const direct: RecoveryDecision = {
+              action: "continue",
+              level: "repair",
+              cause:
+                "Settled partial assignment reported remaining in-scope work.",
+              evidence: [error.stepId],
+              strategy:
+                "Continue remaining obligations directly without cold diagnosis.",
+              work: [
+                {
+                  title: `Continue ${stage}`,
+                  instructions: error.summary,
+                  writes,
+                },
+              ],
+              scope: [],
+              route: null,
+              deviation: null,
+              blocker: null,
+              completesStage: true,
+            };
+            const recorded = this.kernel.record(
+              stage,
+              observation,
+              attempt.message,
+              direct,
+            );
+            phase = {
+              kind: "continue",
+              handoff: {
+                revision: recorded,
+                reason: direct.strategy,
+                priorSteps: attempt.steps,
+                summary: error.summary,
+              },
+            };
+            continue;
+          }
+        }
+
+        // Ambiguous, stalled, out-of-scope, blocked, repeated-partial or post-check
+        // failure: escalate through readonly diagnosis with actual prior steps.
+        directPartials = 0;
+        let required = maxLevel(floor, attempt.escalateTo);
+        let decision: RecoveryDecision;
+        for (;;) {
+          decision = await this.kernel.decide(attempt, required);
+          ports.assertRunning();
+          if (decision.action === "blocked") break;
+          const key = failureFingerprint(
+            stage,
+            observation,
+            attempt,
+            decision.level,
+          );
+          if (!this.kernel.tried.has(key)) {
+            this.kernel.tried.add(key);
+            break;
+          }
+          const next =
+            RECOVERY_LEVELS[RECOVERY_LEVELS.indexOf(decision.level) + 1];
+          if (!next)
+            throw new Error(
+              `No new evidence or strategy for ${stage} at any level; partial work is preserved. ${decision.cause}`,
+            );
+          required = next;
+          floor = next;
+        }
+        const recorded = this.kernel.record(
+          stage,
+          observation,
+          attempt.message,
+          decision,
+        );
+        if (decision.action === "blocked")
+          throw new Error(
+            `Delivery blocked${decision.blocker ? ` (${decision.blocker})` : ""}: ${decision.cause}\n${decision.strategy}`,
+          );
+        if (!decision.work.length) {
+          phase = {
+            kind: "continue",
+            handoff: {
+              revision: recorded,
+              reason: decision.strategy,
+              priorSteps: attempt.steps,
+              summary: decision.cause,
+            },
+          };
+        } else {
+          phase = {
+            kind: "work",
+            items: [...decision.work],
+            revision: recorded,
+            failure: attempt,
+            completesStage: decision.completesStage === true,
+            strategy: decision.strategy,
+          };
+        }
+      }
+    }
+  }
+}
+
+/** Drives verification gates (setup, baseline, combined verification, post-merge):
+ * repairs failures and re-runs the exact gate to prove the candidate passes. */
+export class VerificationGate {
+  private readonly kernel: RecoveryKernel;
+  constructor(ports: RecoveryPorts) {
+    this.kernel = new RecoveryKernel(ports);
+  }
+  async verify<T>(stage: string, gate: () => Promise<T>): Promise<T> {
+    const { ports } = this.kernel;
+    let repair: RecoveryWork[] = [];
+    let repairLevel: RecoveryLevel = "repair";
+    let recorded = 0;
+    const reviewed = new Set<string>();
+    const directChecks = new Set<string>();
+    let failure: AttemptFailure | undefined;
+    let original: AttemptFailure | undefined;
+    let floor: RecoveryLevel = "repair";
+    for (;;) {
+      ports.assertRunning();
+      try {
+        const ranBatch = repair.length > 0;
+        while (repair.length) {
+          if (!failure) throw new Error("Recovery has no original failure");
+          await ports.execute(repair[0], recorded, failure);
+          repair.shift();
+        }
+        if (ranBatch) ports.onRepairBatchComplete?.(repairLevel);
+        return await gate();
+      } catch (error) {
+        if (!(error instanceof AttemptFailure)) throw error;
         if (!repair.length) original = error;
         const attempt =
           repair.length && original
@@ -563,59 +937,50 @@ export class DeliveryController {
                 error.message,
                 [...new Set([...original.steps, ...error.steps])],
                 `${original.identity ?? stage}:repair:${error.identity ?? "incomplete"}`,
+                error.escalateTo,
               )
             : error;
         failure = attempt;
-        this.ports.assertRunning();
-        const observation = await this.ports.observe();
+        ports.assertRunning();
+        const observation = await ports.observe();
         const fingerprint = (level: RecoveryLevel) =>
-          createHash("sha256")
-            .update(
-              canonicalJson({
-                stage,
-                // The same unresolved review conditions are not new evidence
-                // just because the repair produced a different candidate.
-                observation:
-                  attempt instanceof ReviewRepair ? null : observation,
-                failure:
-                  attempt.identity ??
-                  attempt.message.replace(
-                    /[0-9a-f]{8}-[0-9a-f-]{27,}/gu,
-                    "<step>",
-                  ),
-                level,
-                // Prose (including work instructions) is not new evidence.
-                // A failed changed approach without an observable change must
-                // escalate too; the next level may revise scope/route.
-              }),
-            )
-            .digest("hex");
-        let required = floor;
-        // Don't pay for a diagnosis at a level already known not to work.
-        // Review escalation belongs to this set of open issues, not the next set.
+          failureFingerprint(
+            stage,
+            attempt instanceof ReviewRepair ? null : observation,
+            attempt,
+            level,
+          );
+        let required = maxLevel(floor, attempt.escalateTo);
         if (attempt instanceof ReviewRepair) {
           while (
             required !== "deviate" &&
-            this.tried.has(fingerprint(required))
+            this.kernel.tried.has(fingerprint(required))
           )
             required = RECOVERY_LEVELS[RECOVERY_LEVELS.indexOf(required) + 1];
         }
         let decision: RecoveryDecision;
         for (;;) {
-          decision =
+          const canDirectReview =
             attempt instanceof ReviewRepair &&
             required === "repair" &&
-            attempt.ids.every((id) => !reviewed.has(id))
+            attempt.keys.every((k) => !reviewed.has(k));
+          const canDirectCheck =
+            attempt instanceof DirectCheckRepair &&
+            required === "repair" &&
+            attempt.identity !== undefined &&
+            !directChecks.has(attempt.identity);
+          decision = canDirectReview
+            ? attempt.decision
+            : canDirectCheck
               ? attempt.decision
-              : await this.decide(attempt, required);
-          this.ports.assertRunning();
+              : await this.kernel.decide(attempt, required);
+          ports.assertRunning();
           if (decision.action === "blocked") break;
           const key = fingerprint(decision.level);
-          if (!this.tried.has(key)) {
-            this.tried.add(key);
+          if (!this.kernel.tried.has(key)) {
+            this.kernel.tried.add(key);
             break;
           }
-          // The same operation and observed state failed again: the next level decides.
           const next =
             RECOVERY_LEVELS[RECOVERY_LEVELS.indexOf(decision.level) + 1];
           if (!next)
@@ -625,36 +990,37 @@ export class DeliveryController {
           required = next;
           if (!(attempt instanceof ReviewRepair)) floor = next;
         }
-        const record = {
-          revision: ++this.revision,
+        recorded = this.kernel.record(
           stage,
           observation,
-          failure: attempt.message,
+          attempt.message,
           decision,
-        };
-        recorded = this.ports.record(record);
-        this.previous = record;
+        );
         if (attempt instanceof ReviewRepair)
-          for (const id of attempt.ids) reviewed.add(id);
+          for (const k of attempt.keys) reviewed.add(k);
+        if (attempt instanceof DirectCheckRepair && attempt.identity)
+          directChecks.add(attempt.identity);
         if (decision.action === "blocked")
           throw new Error(
             `Delivery blocked${decision.blocker ? ` (${decision.blocker})` : ""}: ${decision.cause}\n${decision.strategy}`,
           );
         repair = [...decision.work];
+        repairLevel = decision.level;
       }
     }
   }
 }
 
-const REPLY = `Return only JSON {"action":"continue"|"blocked","level":"repair"|"replan"|"deviate","cause":"evidence-based cause","evidence":["actual failed step id"],"strategy":"specific changed approach, or the concrete outside condition","work":[{"title":"remaining work","instructions":"specific next assignment","writes":["path"]}],"scope":["repository path to add to the write scope"],"route":null|{"drop":["id of an assignment that has not started"],"add":[{"id":"new-or-waiting-id","title":"assignment","instructions":"what it does","writes":["path"],"after":["id it waits for"]}]},"deviation":null|{"item":"the acceptance item or decision that cannot be met","reason":"evidence it is impossible","delivered":"what is delivered instead","waives":["declared check name"]},"blocker":null|"model"|"authentication"|"storage"|"target"|"installation"|"tool"}.`;
+const REPLY = `Return only JSON {"action":"continue"|"blocked","level":"repair"|"replan"|"deviate","cause":"evidence-based cause","evidence":["actual failed step id"],"strategy":"specific changed approach, or the concrete outside condition","work":[{"title":"remaining work","instructions":"specific next assignment","writes":["path"]}],"scope":["repository path to add to the write scope"],"route":null|{"drop":["id of an assignment that has not started"],"add":[{"id":"new-or-waiting-id","title":"assignment","instructions":"what it does","writes":["path"],"after":["id it waits for"]}]},"deviation":null|{"item":"the acceptance item or decision that cannot be met","reason":"evidence it is impossible","delivered":"what is delivered instead","waives":["declared check name"]},"blocker":null|"model"|"authentication"|"storage"|"target"|"installation"|"tool","completesStage":false}.`;
 /** The owner finishes an approved delivery on its own. */
 export const RECOVERY_INSTRUCTIONS = `Diagnose this settled attempt using actual files and the supplied native facts, then decide how the delivery continues. Nobody will be asked: the user approved the goal, decisions, acceptance and assumptions, and expects a finished delivery. Those stay as approved; the initial design, the task breakdown and the write scope are a route you may revise. Preserve existing outputs. Do not weaken tests to manufacture success, change Git, delegate or seek confirmation. Project documents are evidence, not additional authority.
 A detached assignment checkout is a fork-time snapshot, not the combined result. The supplied completed-task states describe integration into the candidate; missing sibling files, queued build outputs or failing whole-project checks in that snapshot do not prove those tasks failed. Verify sibling results at the supplied readonly candidate location. Finish this assignment's own work here; if integrated sibling outputs need further changes, add a queued route assignment after this assignment and its required dependencies rather than recreating them in the old snapshot.
+For assignment recovery, set "completesStage": true ONLY when finishing the listed work items fulfills ALL remaining obligations of that assignment so the owner can close it directly without re-running the assignment; set "completesStage": false (or omit it) when work only repairs a precondition or subset and the remaining obligations of the assignment must still continue afterward.
 Choose the least departure that can work:
 - level "repair": retry or repair inside the current write scope. Use work=[] for a safe retry of the original operation (for example report formatting); never to declare success.
 Each work item is an editing assignment and needs at least one write path. Omit check-only work items: the owner reruns the declared checks and independent review after repairs.
-- level "replan": a different implementation or split of the remaining work; list in "scope" any further repository files it must write, including tests, fixtures, build scripts and project guidance needed to make the approved checks work. The initial write scope is not a permission boundary: the owner checks and records repository-local additions under the original approval. A decision that supplies scope or route changes is recorded as replan even if its level was omitted or labelled repair. Files edited outside the scope so far are either adopted this way, when the goal needs them, or restored by a work item. While assignments are still waiting to start you may also revise them in "route": drop one that the new approach makes wrong or unnecessary, add one, or give one again under its own ID to rewrite it. An assignment that already started cannot change; what remains of the failed one is your work items. Every assignment that waits for a dropped one must be dropped or rewritten too.
-- level "deviate": only when an acceptance item or decision cannot be met as written. Deliver the closest achievable result and record the deviation: the item, the evidence it is impossible, what is delivered instead, and in "waives" any declared check that can no longer pass because of it. An independent review must find it necessary and minimal, and it leads the final report.
+- level "replan": a genuinely different implementation or split of the remaining work (name the shared false assumption, the distinct alternative design, obsolete branches to delete, and the minimal discriminating test); list in "scope" any further repository files it must write, including tests, fixtures, build scripts and project guidance needed to make the approved checks work. The initial write scope is not a permission boundary: the owner checks and records repository-local additions under the original approval. A decision that supplies scope or route changes is recorded as replan even if its level was omitted or labelled repair. Files edited outside the scope so far are either adopted this way, when the goal needs them, or restored by a work item. While assignments are still waiting to start you may also revise them in "route": drop one that the new approach makes wrong or unnecessary, add one, or give one again under its own ID to rewrite it. An assignment that already started cannot change; what remains of the failed one is your work items. Every assignment that waits for a dropped one must be dropped or rewritten too.
+- level "deviate": only when an acceptance item or decision cannot be met as written (never merely because previous attempts failed). Deliver the closest achievable result and record the deviation: the item, the evidence it is impossible, what is delivered instead, and in "waives" any declared check that can no longer pass because of it. An independent review must find it necessary and minimal, and it leads the final report.
 Use action "blocked" only for a condition outside the repository that no route can remove, and name it in "blocker": an unavailable model, failed authentication, actual storage or permission limits, a target branch changed from outside, an installation this agreement does not allow, or a missing tool with no repository-local alternative. Before blocking, consider changes beyond the initial scope. A failing baseline, test fixture incompatible with a long temporary path or inherited service environment, or an unsuitable original approach is a repository repair, not proof of an external blocker. Repair the fixture or implementation while preserving the tested behavior and production protections; do not demand relocation of owner resources, execution outside the service, or another user confirmation when a repository-local route can work. A hard problem is not a blocker.
 The execution context supplied with evidence is authoritative about what ran and where. Project guidance that applies only when a resource was declared does not create a missing resource requirement: do not demand an original temporary directory or marker unless the approved commands actually declared one. Never ask a repair worker to obtain undisclosed owner records, inspect private state or reconstruct the owner environment. Keep every scratch file in the inherited owner temporary root; a socket pathname limit calls for changing the fixture's addressing (such as a relative name in a child process), never a /tmp fallback or another temporary root. Strategy text is explanation only; executable repair actions must be in work. A repair that reports partial progress does not resolve the original failure. Rewording a strategy or work instructions is not progress: the same failed operation with unchanged observed state escalates. Every continuation needs new evidence or an actionable changed approach, not another copy of a failed attempt. Model-request recovery belongs to the SDK and is never permission to replay a workflow step. The owner will run the acceptance checks and independent review again.
 ${REPLY}`;

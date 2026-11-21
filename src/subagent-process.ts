@@ -100,6 +100,9 @@ export interface ProcessSpec {
   /** Owner-only native check recording, mutually exclusive with SDK protocol. */
   checkRecording?: CheckRecording;
   onCheckNative?: (native: CheckNativeSettlement) => void;
+  /** On POSIX timeout after direct-child close, reports whether probing the
+   * detached process group confirmed ESRCH (zero surviving processes in group). */
+  onGroupSettled?: (settled: boolean) => void;
   protocol?: boolean;
   childRunId?: string;
   expectedRequest?: WorkerPublicRequest;
@@ -319,6 +322,33 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         durationMs: Date.now() - started,
         stdin: "not-required",
       });
+      if (spec.onGroupSettled) {
+        let groupSettled = false;
+        if (closed && launched && process.platform !== "win32" && child.pid) {
+          try {
+            process.kill(-child.pid, 0);
+            groupSettled = false;
+            // Direct child exited while descendants in its POSIX process group
+            // remained alive; clearTimeout(killTimer) cancelled the deferred
+            // SIGKILL, so terminate the remaining process group now while
+            // conservatively keeping groupSettled = false. Note that descendants
+            // calling setsid()/setpgid() leave this PGID and cannot be observed here.
+            if (
+              (outcome === "timeout" || outcome === "canceled") &&
+              (!spec.maySignal || spec.maySignal())
+            ) {
+              try {
+                process.kill(-child.pid, "SIGKILL");
+              } catch {
+                /* Best-effort orphan cleanup; never implies settlement. */
+              }
+            }
+          } catch (error) {
+            groupSettled = (error as NodeJS.ErrnoException)?.code === "ESRCH";
+          }
+        }
+        spec.onGroupSettled(groupSettled);
+      }
       spec.onNative?.(
         {
           ...(stopCause ? { stop: stopCause } : {}),

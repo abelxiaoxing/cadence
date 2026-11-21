@@ -1291,3 +1291,13 @@ The conversation title opens the current plan; simply viewing it does not valida
 Background replies and workflows appear alongside their conversations in history.
 Completed steps fold together without hiding errors or unfinished calls.
 The composer shields the last lines of text, and the desktop question rail remains available for keyboard navigation.
+
+## 2.3.0 release candidate
+
+Version-4 delivery agreements (`task-branch-v2`) converge by remaining obligations and behavior families on exact candidate OIDs.
+`AssignmentRunner` continues settled partial assignments within scope (bounded before escalating to diagnosis), while `VerificationGate` separates check/review convergence from assignment execution.
+Owner-synced `build` commands validate declared outputs, fast checks run fail-fast with Stage 4 code pre-review before heavy suites, and `checks[].target: "skip"` omits designated heavy checks in the target checkout while retaining target ref and exact source-byte verification.
+`ReviewLedger` tracks behavior families privately under `workflows-v1`, supports `delta`/`full` Git evidence bounded by serialized response bytes, and stops honestly after two failed architectural replan routes.
+Development checkpoints stay detached under private run refs until single-parent delivery sealing (`C0` before shell-free knowledge curation, reused on verified zero-edit runs, or `C1` with full re-verification when knowledge changes), advancing the named task branch only at final fast-forward integration.
+Owner-managed dependency links (`links`) record parent/symlink identity before creation and unlink safely before worktree residue checks; process reports stay in private service storage rather than user repository commits.
+Full `verify` and review-fix regressions passed on Linux (controlled fixtures, not paid-provider or native Windows/macOS qualification).

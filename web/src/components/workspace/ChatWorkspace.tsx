@@ -855,7 +855,7 @@ export function ChatWorkspace({
     !!draftModel &&
     canonicalJson(draftModel) !== canonicalJson(context?.model ?? null);
   const planApprovable =
-    state?.proposal?.plan.version === 3 &&
+    state?.proposal?.plan.version === 4 &&
     state.enabled &&
     state.id === id &&
     !!summary &&
@@ -883,7 +883,7 @@ export function ChatWorkspace({
   const planOpen = reviewed && review.open;
   const planPanelId = `current-plan-${id}`;
   const approvalAction =
-    state?.proposal?.plan.version === 3
+    state?.proposal?.plan.version === 4
       ? planAction(
           state.proposal,
           actionsReady,

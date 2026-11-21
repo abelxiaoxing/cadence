@@ -13,6 +13,12 @@ const TRANSCRIPT_LIMIT =
 
 export interface ReviewIssue {
   id: string;
+  /** V4 structured review: acceptance item or invariant (e.g. "AC-3"). */
+  source?: string;
+  /** V4 structured review: owner-assigned family ID (e.g. "F01") or "new". */
+  family?: string;
+  /** V4 structured review: concise description of a newly reported family. */
+  familySummary?: string;
   evidence: string;
   verify: string;
   writes: string[];
@@ -21,14 +27,27 @@ type Blocker = string | ReviewIssue;
 export const issueText = (issue: Blocker): string =>
   typeof issue === "string"
     ? issue
-    : `${issue.id}: ${issue.evidence}\nVerify: ${issue.verify}`;
+    : `${issue.id}${issue.family || issue.source ? ` [${[issue.source, issue.family].filter(Boolean).join(" / ")}]` : ""}: ${issue.evidence}\nVerify: ${issue.verify}`;
+
+const ISSUE_KEYS = new Set([
+  "id",
+  "source",
+  "family",
+  "familySummary",
+  "evidence",
+  "verify",
+  "writes",
+]);
+const FAMILY_REF = /^(?:new|F[0-9]{2,4})$/u;
+const EXISTING_FAMILY_REF = /^F[0-9]{2,4}$/u;
 
 function isBlocker(value: unknown): value is Blocker {
   if (typeof value === "string") return true;
-  if (!value || typeof value !== "object") return false;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const issue = value as Partial<ReviewIssue>;
+  const keys = Object.keys(issue);
+  if (keys.some((k) => !ISSUE_KEYS.has(k))) return false;
   return (
-    Object.keys(issue).length === 4 &&
     typeof issue.id === "string" &&
     /^[a-z][a-z0-9-]{0,47}$/.test(issue.id) &&
     typeof issue.evidence === "string" &&
@@ -36,14 +55,28 @@ function isBlocker(value: unknown): value is Blocker {
     typeof issue.verify === "string" &&
     !!issue.verify.trim() &&
     Array.isArray(issue.writes) &&
-    issue.writes.every((p) => typeof p === "string")
+    issue.writes.every((p) => typeof p === "string") &&
+    (issue.source === undefined ||
+      (typeof issue.source === "string" &&
+        !!issue.source.trim() &&
+        Buffer.byteLength(issue.source) <= 128)) &&
+    (issue.family === undefined ||
+      (typeof issue.family === "string" && FAMILY_REF.test(issue.family))) &&
+    (issue.familySummary === undefined ||
+      (typeof issue.familySummary === "string" &&
+        !!issue.familySummary.trim() &&
+        Buffer.byteLength(issue.familySummary) <= 256))
   );
 }
 
 /** Accepts the requested JSON verdict alone, fenced, or embedded in prose. */
-export function reviewVerdict(
-  reply: string,
-): { approved: boolean; summary: string; blockingIssues: Blocker[] } | null {
+export function reviewVerdict(reply: string): {
+  approved: boolean;
+  summary: string;
+  blockingIssues: Blocker[];
+  closedFamilies?: string[];
+  pendingBrowser?: string[];
+} | null {
   let malformed = false;
   const decode = (raw: string) => {
     let v: unknown;
@@ -73,10 +106,43 @@ export function reviewVerdict(
       malformed = true;
       return null;
     }
+    let closedFamilies: string[] | undefined;
+    if (o.closedFamilies !== undefined) {
+      if (
+        !Array.isArray(o.closedFamilies) ||
+        o.closedFamilies.length > 64 ||
+        !o.closedFamilies.every(
+          (id) => typeof id === "string" && EXISTING_FAMILY_REF.test(id),
+        )
+      ) {
+        malformed = true;
+        return null;
+      }
+      closedFamilies = [...new Set(o.closedFamilies)];
+    }
+    let pendingBrowser: string[] | undefined;
+    if (o.pendingBrowser !== undefined) {
+      if (
+        !Array.isArray(o.pendingBrowser) ||
+        o.pendingBrowser.length > 32 ||
+        !o.pendingBrowser.every(
+          (item) =>
+            typeof item === "string" &&
+            !!item.trim() &&
+            Buffer.byteLength(item) <= 256,
+        )
+      ) {
+        malformed = true;
+        return null;
+      }
+      pendingBrowser = [...o.pendingBrowser];
+    }
     return {
       approved: o.approved && issues.length === 0,
       summary: typeof o.summary === "string" ? o.summary : "",
       blockingIssues: issues,
+      ...(closedFamilies ? { closedFamilies } : {}),
+      ...(pendingBrowser ? { pendingBrowser } : {}),
     };
   };
   const body = reply.trim();
@@ -137,22 +203,43 @@ export function reviewReport(
   const cleanIssues = verdict.blockingIssues.map((issue) => {
     const clean = (s: string) => sanitizeText(s, secrets);
     if (typeof issue === "string") return clean(issue);
-    // Never turn a redacted selector into an editing destination.
+    // Never turn a redacted selector into an editing destination or family ID.
     if (
       clean(issue.id) !== issue.id ||
+      (issue.family !== undefined && clean(issue.family) !== issue.family) ||
       issue.writes.some((p) => clean(p) !== p)
     )
       return clean(issueText(issue));
+    const cleanSource =
+      issue.source !== undefined ? clean(issue.source) : undefined;
+    const cleanFamilySummary =
+      issue.familySummary !== undefined
+        ? clean(issue.familySummary)
+        : undefined;
     return {
       ...issue,
+      ...(cleanSource !== undefined
+        ? { source: diagnosticText(cleanSource, 128) }
+        : {}),
+      ...(cleanFamilySummary !== undefined
+        ? { familySummary: diagnosticText(cleanFamilySummary, 256) }
+        : {}),
       evidence: clean(issue.evidence),
       verify: clean(issue.verify),
     };
   });
+  const cleanClosed = verdict.closedFamilies?.filter(
+    (id) => sanitizeText(id, secrets) === id,
+  );
+  const cleanPending = verdict.pendingBrowser?.map((item) =>
+    diagnosticText(sanitizeText(item, secrets), 256),
+  );
   const complete = {
     approved: verdict.approved,
     summary: cleanSummary,
     blockingIssues: cleanIssues,
+    ...(cleanClosed?.length ? { closedFamilies: cleanClosed } : {}),
+    ...(cleanPending?.length ? { pendingBrowser: cleanPending } : {}),
   };
   if (Buffer.byteLength(JSON.stringify(complete)) <= 16384)
     return { text: canonicalJson(complete, 16384), truncated: false };
@@ -166,6 +253,14 @@ export function reviewReport(
         blockingIssues: cleanIssues
           .slice(0, 16)
           .map((issue) => diagnosticText(issueText(issue), 256)),
+        ...(cleanClosed?.length ? { closedFamilies: cleanClosed } : {}),
+        ...(cleanPending?.length
+          ? {
+              pendingBrowser: cleanPending
+                .slice(0, 16)
+                .map((item) => diagnosticText(item, 128)),
+            }
+          : {}),
       },
       16384,
     ),
@@ -231,6 +326,8 @@ export function implementationReport(
  * selected from sanitized complete text, never a raw clipped preview. */
 export class WorkflowTranscript {
   overflowed = false;
+  /** True if any non-readonly tool (other than read/grep/find/ls/changes/cadence_report) started. */
+  hasWriteToolCall = false;
   private pending = false;
   private readonly capture: TurnCapture;
   /** Null while the current assistant message exceeds the tracker's bound. */
@@ -262,6 +359,7 @@ export class WorkflowTranscript {
       // Inspection cannot change the reported candidate. Unknown tools, shell,
       // writes and a replacement report still invalidate it before admission.
       if (["read", "grep", "find", "ls", "changes"].includes(e.name)) return;
+      if (e.name !== "cadence_report") this.hasWriteToolCall = true;
       this.reportText = undefined;
       this.reportDetails.clear();
       this.reportCapture = undefined;

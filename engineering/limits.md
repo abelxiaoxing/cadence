@@ -36,7 +36,7 @@ Image input has no Cadence-specific count, byte, dimension or pixel quota; brows
 `src/image-content.mjs` (`IMAGE_LIMITS`) keeps upload/history chunks at 256KiB base64 characters and ephemeral staging valid for 10min idle; base64 adds about one third.
 The private worker image pipe is checked against the exact owner-declared byte length and SHA-256, not a fixed image payload ceiling; each active turn separately holds its admitted message bytes.
 
-Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 initial assignments (IDs up to 48 characters) and at most 48 listed by one run once revisions add and supersede some (`route`), 32 questions per research run (the tool schema states no count, so only this bound refuses one, by name), 16 checks per set and four explicit setup commands.
+Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 initial assignments (IDs up to 48 characters) and at most 48 listed by one run once revisions add and supersede some (`route`), 32 questions per research run (the tool schema states no count, so only this bound refuses one, by name), 16 checks per set, 8 owner-synced build commands (`builds`), 8 managed dependency links (`links`) and four explicit setup commands.
 An agreement's goal, route, decisions, assumptions and acceptance share 32KiB (`context`, the worker context every assignment is given them in), an assignment's instructions are 8KiB and its title 256 bytes inside the 32KiB worker prompt, and a reading's reason is 1KiB (`reason`); a refusal states the field, its size and the bound.
 How many workflow workers of one run are in flight is an execution limit, not a plan bound: `PARALLEL` in `src/service/workflows.ts` (default 4, at most 16), set by `CADENCE_PARALLEL` in the owner's environment; a value that is not a whole number from 1 is the default.
 An owner lets 64 auth preparations wait their turn (`PREPARATIONS` in `src/service/model-context.ts`).
@@ -44,7 +44,7 @@ Adaptive delivery and every Agent have no fixed repair-round count or total runt
 New setup/check definitions omit `timeoutMs` by default; explicit values (100–2147483647ms, the native timer range) remain exact, including already approved plans.
 Historical task-check codecs retain their original 20min validation boundary; they grant no current execution authority.
 Implementation uses one stable candidate on a new named branch after approval, plus at most one temporary child worktree per assignment (256 recorded artifacts per run).
-`CHANGE_LIMITS` in `src/change-tools.mjs` bounds four live Git evidence streams, 2KiB raw pages, 120s idle expiry and a 30s active-page budget; stop joins actual child closure.
+`CHANGE_LIMITS` in `src/change-tools.mjs` bounds four live Git evidence streams, 8KiB target raw pages (`pageBytes`) capped by a 12KiB serialized tool-response envelope ceiling (`responseBytes`), 120s idle expiry and a 30s active-page budget; stop joins actual child closure.
 `src/service/repository-coordination.ts` bounds lease waiting at 30s with 50ms polling and recovery inspection at 256 active owner intents; no live lease expires by age.
 Pi's effective settings own agent-layer request retries/backoff; `WORKER_POLICY` in `src/worker-model.mjs` keeps provider-internal retries and cache warming off.
 No Cadence retry count replaces the configured Pi policy.

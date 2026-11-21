@@ -136,6 +136,7 @@ it.each([undefined, false, true])(
           };
           const args = {
             mode: null,
+            scope: null,
             path: null,
             cursor: "returned",
             close: true,

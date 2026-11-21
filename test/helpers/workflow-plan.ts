@@ -4,11 +4,13 @@ export const plan = (): WorkflowPlan => ({
   design: "Implement two files without touching existing files.",
   decisions: "No remote push or installation.",
   acceptance: "Both files contain their expected text.",
-  version: 3,
+  version: 4,
   assumptions: "",
   documents: [],
   reviewReads: [],
   policy: { installs: false },
+  build: [],
+  links: [],
   tasks: [
     {
       id: "a",

@@ -12,7 +12,9 @@ import {
 } from "../../src/service/workflow-delivery.ts";
 import { deliveryTarget, gitRead } from "../../src/service/workflow-git.ts";
 
-export function deliveryFixture() {
+export function deliveryFixture(
+  policy: "task-branch-v1" | "task-branch-v2" = "task-branch-v1",
+) {
   const home = mkdtempSync(join(tmpdir(), "delivery-"));
   const root = join(home, "repo"),
     state = join(home, "state");
@@ -43,7 +45,7 @@ export function deliveryFixture() {
     epoch = randomUUID(),
     run = randomUUID();
   const binding = {
-    policy: "task-branch-v1" as const,
+    policy,
     target: deliveryTarget(root, { head: base, branch: "refs/heads/main" }),
   };
   const view = deliveryObservation(

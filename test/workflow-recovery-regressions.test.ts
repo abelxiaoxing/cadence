@@ -91,13 +91,23 @@ function fixture() {
       owner.finishStep(live, step, success);
       return { result: success, step };
     },
-    recoverStage: async (
+    runGate: async (
       _live: unknown,
       _cwd: string,
       _proposal: unknown,
       _stage: string,
       action: () => Promise<unknown>,
     ) => action(),
+    runAssignment: async (
+      _live: unknown,
+      _cwd: string,
+      _proposal: unknown,
+      _stage: string,
+      lifecycle: { initial(): Promise<void>; postCheck?(): Promise<void> },
+    ) => {
+      await lifecycle.initial();
+      await lifecycle.postCheck?.();
+    },
   });
   return { owner, live, proposal };
 }
@@ -109,20 +119,8 @@ it("generated delivery documents preserve literal agreement text and pass the re
     "owner | gateway\n" +
     "````````html\n<script>example only</script>\n````````\n";
   const changed = ["src/<literal>.ts", "a|b.md", "a`b.md"];
-  const planBody = owner.documentBody(
-    live,
-    definition,
-    "plan/plan.md",
-    changed,
-  );
-  const resultBody = owner.documentBody(
-    live,
-    definition,
-    "plan/result.md",
-    changed,
-  );
-  writeFileSync(join(owner.cwd, "plan.md"), planBody);
-  writeFileSync(join(owner.cwd, "result.md"), resultBody);
+  const reportBody = owner.privateReportMarkdown(live, definition, changed);
+  writeFileSync(join(owner.cwd, "report.md"), reportBody);
   const lint = spawnSync(
     process.execPath,
     [
@@ -136,12 +134,10 @@ it("generated delivery documents preserve literal agreement text and pass the re
   );
   expect(lint.error).toBeUndefined();
   expect(lint.status, lint.stdout + lint.stderr).toBe(0);
-  const literal = planBody.match(
-    /^# Workflow plan\n\n(`{3,})text\n([\s\S]*)\1\n$/u,
-  );
+  const literal = reportBody.match(/## Plan\n\n(`{3,})text\n([\s\S]*)\1\n$/u);
   expect(literal?.[2]).toBe(readableWorkflowPlan(definition));
-  expect(resultBody).toContain(changed.join("\n"));
-  expect(resultBody).toContain("This file is not a verification result");
+  expect(reportBody).toContain(changed.join("\n"));
+  expect(reportBody).toContain("stored privately in Cadence service state");
 });
 it("setup recovery retries only the failed command, never preceding successful effects", async () => {
   const { owner, live, proposal } = fixture();
@@ -167,7 +163,7 @@ it("setup recovery retries only the failed command, never preceding successful e
     }
     return { result: success };
   };
-  owner.recoverStage = async (
+  owner.runGate = async (
     _l: unknown,
     _c: string,
     _p: unknown,
@@ -205,13 +201,15 @@ it("baseline recovery cites only the failed checks of the current round", async 
     title: string,
   ) => {
     const step = owner.step(live, title, "check");
-    const result = [0, 3].includes(number++)
+    // Round 1 fails `first` (fail-fast marks `second` not-run);
+    // Round 2 passes `first` (call 1) and fails `second` (call 2).
+    const result = [0, 2].includes(number++)
       ? { ...success, outcome: "failed", exitCode: 1 }
       : success;
     owner.finishStep(live, step, result);
     return { result, step };
   };
-  owner.recoverStage = async (
+  owner.runGate = async (
     _l: unknown,
     _c: string,
     _p: unknown,
@@ -230,6 +228,8 @@ it("baseline recovery cites only the failed checks of the current round", async 
     throw new Error("fixture stop");
   };
   await expect(owner.implement(live, proposal)).rejects.toThrow("fixture stop");
+  // Round 1 recorded [first(failed), second(not-run)]; round 2 recorded [first(ok), second(failed)].
+  expect(live.run.steps[1].status).toBe("not-run");
   expect(failures).toEqual([[live.run.steps[0].id], [live.run.steps[3].id]]);
 });
 it("cleanup quarantine cannot be overwritten by a completed workflow status", async () => {
@@ -248,9 +248,9 @@ it("cleanup quarantine cannot be overwritten by a completed workflow status", as
 it("a stage failure is attributed to the step it settled, not the newest step of the run", async () => {
   const { owner, live } = fixture();
   const cited: string[][] = [];
-  // Stand in for the controller: note what recovery would be asked to diagnose.
-  owner.controller = () => ({
-    complete: async (_stage: string, action: () => Promise<unknown>) => {
+  // Stand in for the gate: note what recovery would be asked to diagnose.
+  owner.gate = () => ({
+    verify: async (_stage: string, action: () => Promise<unknown>) => {
       try {
         return await action();
       } catch (error) {
@@ -260,14 +260,14 @@ it("a stage failure is attributed to the step it settled, not the newest step of
     },
   });
   const failure = { ...success, outcome: "failed", exitCode: 1 };
-  // The fixture stubs recoverStage; this exercises the owner's own.
-  const recoverStage = (
+  // Exercise the owner's own runGate.
+  const runGate = (
     Workflows.prototype as unknown as {
-      recoverStage(...args: unknown[]): Promise<unknown>;
+      runGate(...args: unknown[]): Promise<unknown>;
     }
-  ).recoverStage.bind(owner);
+  ).runGate.bind(owner);
   await expect(
-    recoverStage(live, owner.cwd, live.proposal, "setup: tool", () => {
+    runGate(live, owner.cwd, live.proposal, "setup: tool", () => {
       const failed = owner.step(live, "setup: tool", "check");
       owner.finishStep(live, failed, failure);
       // Another assignment records a step before this failure surfaces.
@@ -278,7 +278,7 @@ it("a stage failure is attributed to the step it settled, not the newest step of
   expect(cited).toEqual([[live.run.steps[0].id]]);
   // A failure that settled no step is not turned into a repair.
   await expect(
-    recoverStage(live, owner.cwd, live.proposal, "setup: tool", () => {
+    runGate(live, owner.cwd, live.proposal, "setup: tool", () => {
       owner.success(failure);
     }),
   ).rejects.not.toBeInstanceOf(AttemptFailure);
@@ -335,7 +335,7 @@ it("failed target preflight never dispatches an editor into the target or replay
   Object.assign(proposal.plan, {
     setup: [{ name: "target", command: "false", placement: "target" }],
   });
-  owner.recoverStage = vi.fn();
+  owner.runGate = vi.fn();
   owner.check = vi.fn(async () => ({
     result: { ...success, outcome: "failed", exitCode: 1 },
   }));
@@ -343,7 +343,7 @@ it("failed target preflight never dispatches an editor into the target or replay
     "Operation failed",
   );
   expect(owner.check).toHaveBeenCalledTimes(1);
-  expect(owner.recoverStage).not.toHaveBeenCalled();
+  expect(owner.runGate).not.toHaveBeenCalled();
 });
 
 it("the owner passes original check context to both diagnosis and repair, without requiring private-record access", async () => {
@@ -402,9 +402,9 @@ it("the owner passes original check context to both diagnosis and repair, withou
   ) => {
     prompts.push(prompt);
   };
-  const controller = owner.controller(live, owner.cwd, proposal);
+  const gate = owner.gate(live, owner.cwd, proposal);
   let attempt = 0;
-  await controller.complete("setup", async () => {
+  await gate.verify("setup", async () => {
     if (++attempt === 1)
       throw new AttemptFailure("Silent failure", [failed.id], "branch");
   });
@@ -520,8 +520,8 @@ it.each(["web", "README.md", "test/socket.test.ts"])(
     let attempt = 0;
     try {
       await owner
-        .controller(live, child, proposal)
-        .complete("assignment server", async () => {
+        .gate(live, child, proposal)
+        .verify("assignment server", async () => {
           if (++attempt === 1)
             throw new AttemptFailure("partial assignment", [failed.id]);
         });
@@ -647,7 +647,7 @@ it("target prerequisite failure names preparation, retains the original outcome 
       text: "original command and output",
     };
     owner.check = vi.fn(async () => ({ result: native, step }));
-    owner.recoverStage = vi.fn();
+    owner.runGate = vi.fn();
     const create = vi.fn(),
       prepareHome = vi.fn();
     Object.assign(live, {
@@ -662,7 +662,7 @@ it("target prerequisite failure names preparation, retains the original outcome 
         "Implementation has not started; no task worktree was created",
       ),
     });
-    expect(owner.recoverStage).not.toHaveBeenCalled();
+    expect(owner.runGate).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
     expect(prepareHome).not.toHaveBeenCalled();
     expect(owner.check).toHaveBeenCalledTimes(1);

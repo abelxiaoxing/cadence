@@ -1,13 +1,13 @@
 # Named branches and adaptive worktree delivery
 
 One approved local delivery has one named branch and one stable candidate worktree; assignments that run side by side each use a temporary child worktree beside it.
-`Workflows` remains the execution owner; `DeliveryController` keeps evidence-led recovery and `project-knowledge.ts` keeps verified learning.
+`Workflows` remains the execution owner; `AssignmentRunner` and `VerificationGate` (`workflow-controller.ts`) separate remaining-obligation assignment closure from candidate verification/review convergence, `workflow-review-ledger.ts` tracks behavior families privately, `workflow-links.ts` manages narrow dependency symlinks, and `project-knowledge.ts` keeps verified learning.
 This is not a second executor, fixed task pipeline, Git daemon, sandbox or transactional application system.
 
 ## Entry and authorization
 
 Enabling `/cadence`, discussing a goal, researching, refreshing or reconnecting creates no Git branch or worktree.
-Only admission of a freshly approved version-3 `local-merge` agreement authorizes creation.
+Only admission of a freshly approved version-4 `local-merge` agreement (`task-branch-v2`) authorizes creation; earlier agreements (`task-branch-v1`) remain readable readonly.
 Each new admitted delivery has its own run ID, branch and worktree; clarification and recovery within that delivery reuse them.
 Completion keeps conversation mode enabled; a new goal still needs its own agreement and approval.
 `working-copy` remains separately explicit, never a fallback after isolated delivery fails.
@@ -31,9 +31,12 @@ There is no implicit fetch, pull, push, deployment or switch of the user's check
 `workflow-git.ts` owns bounded Git identity, ancestry, scope and residue observations; `contracts/workflow.ts` owns the closed portable DTOs.
 Git mutations still run through the workflow's recorded native runner, including the noninterruptible target fast-forward.
 
-The branch is `refs/heads/cadence/<sanitized-goal>-<full-run-id>`.
+The branch is `refs/heads/cadence/<sanitized-goal>-<full-run-id>`, atomically reserved at the baseline commit when the candidate is prepared and advanced only to the final signed-off delivery commit right before `merge --ff-only`.
 The goal is a readable label; the unique run ID is the identity, and existing refs/paths are never adopted or overwritten.
-The stable candidate lives at `<stateHome>/cadence-worktrees-v1/<project-hash>/<run-id>/integration`.
+The stable candidate lives at `<stateHome>/cadence-worktrees-v1/<project-hash>/<run-id>/integration` on a detached HEAD (`task-branch-v2`), pinning intermediate development, sibling-merge and delivery commits under private refs (`refs/cadence/runs/<run-id>/checkpoints/<n>`) with intent-before-ref journaling so Git GC never reaps them while `taskBranch` stays clean.
+Before sealing final delivery, the owner builds one single-parent commit (`C0` before knowledge curation, or `C1` if shell-free knowledge curation edits files) directly on top of the verified target frontier via `git commit-tree` + `git reset --soft`.
+Only after confirmed post-merge checks and confirmed worktree removal are this run's confirmed private checkpoint refs deleted by exact expected OID; `taskBranch` is always retained, and failure, cancellation or unknown closure retain both worktrees and private checkpoint refs.
+Owner-managed dependency links declared in `plan.links` (`workflow-links.ts`) record parent and symlink `dev`/`ino`/`target` before confirming and are unlinked strictly before `worktreeResidue()` only when that exact identity still holds; any replaced or retargeted entry refuses unlink and retains the worktree.
 The candidate collects all work, and checks, review, knowledge maintenance and recovery of the combined result use it.
 `Workflows.assignments` schedules the current route until none of its assignments is left: the agreement's, as plan revisions changed the ones that had not started (`WorkflowTaskState` lists every one, a dropped one as `superseded`, each with the revision that last changed it).
 One whose dependencies are integrated and whose write paths no running assignment owns is ready; up to the execution limit (`parallelLimit`) run at once and the rest wait.
@@ -144,8 +147,10 @@ Restart marks incomplete stages unknown without resuming implementation, commits
 
 ## Regression owners
 
-- `task-worktree`: real Git branch/ref/candidate/scope, exact acceptance, repeated deliveries and residue retention.
-- `workflow-delivery-runtime`: adaptive owner plus delivery controller with controlled native/worker ports; partial work, recovery beyond old quotas, verified knowledge, exact final acceptance, post-merge repair, changed targets and cancellation.
+- `task-worktree`: real Git branch/ref/candidate/scope (`task-branch-v1` retained and `task-branch-v2` detached checkpoints, private refs, single-parent sealing, exact ref cleanup), exact acceptance, repeated deliveries and residue retention.
+- `workflow-links`: owner-managed dependency link validation, identity-recorded provisioning, safe unlinking under trailing-slash `.gitignore`, and refusal/retention when replaced, retargeted or accompanied by unknown ignored residue.
+- `workflow-review-ledger`: behavior-family convergence (`ReviewLedger`), V4 review verdicts/reports, Stage 4 fast+pre-review ordering before heavy checks, and POSIX process-group settlement gating for timed-out checks.
+- `workflow-delivery-runtime`: adaptive owner plus `AssignmentRunner`/`VerificationGate` with controlled native/worker ports; optimistic Stage 5 `C0` checks before `exclusive`, shell-free zero-edit `learn()` same-OID `C0` reuse vs `C1` re-verification, private-only reports, `target:skip` with mandatory ref/source checks, post-merge repair on top of merged history, changed targets, cancellation and crash checkpoint-intent recovery.
 - `workflow-delivery-admission`: proposal/receipt persistence and bound target; the longer full admission case remains slow.
 - `repository-coordination`, `repository-recovery`: original-operation leases, managed-owner refusal and exact-epoch archive/recovery boundaries.
 - `workflow-delivery-runtime`: overlapping implementations and delivery while a sibling still works, refresh-before-curation ordering, final guidance and post-check branch/HEAD fences (controlled ports).

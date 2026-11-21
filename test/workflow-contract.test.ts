@@ -202,11 +202,13 @@ it("retained agreements remain readable but only a current one authorizes delive
     documents: _documents,
     reviewReads: _reviewReads,
     policy: _policy,
+    build: _build,
+    links: _links,
     tasks,
     ...body
   } = current;
   const earlierTasks = tasks.map(({ reads: _reads, ...task }) => task);
-  // The original fixed pipeline, and adaptive delivery in a fixed write scope.
+  // The original fixed pipeline, v2 fixed-scope adaptive, and v3 self-revising plans.
   const fixed = {
     ...body,
     tasks: earlierTasks,
@@ -219,7 +221,16 @@ it("retained agreements remain readable but only a current one authorizes delive
     version: 2,
     knowledge: ["docs/guide.md"],
   };
-  for (const retained of [fixed, adaptive]) {
+  const v3 = {
+    ...body,
+    tasks,
+    version: 3,
+    assumptions: "",
+    documents: [],
+    reviewReads: [],
+    policy: { installs: false },
+  };
+  for (const retained of [fixed, adaptive, v3]) {
     expect(decodeWorkflowPlan(retained)).toEqual(retained);
     expect(() => decodeWorkflowPlan(retained, { strict: true })).toThrow(
       "readonly",
@@ -230,7 +241,8 @@ it("retained agreements remain readable but only a current one authorizes delive
     { ...current, repairAttempts: 2 },
     { ...current, knowledge: [] },
     { ...adaptive, assumptions: "" },
-    { ...current, version: 4 },
+    { ...v3, build: [] },
+    { ...current, version: 5 },
   ])
     expect(() => decodeWorkflowPlan(mixed)).toThrow();
   for (const path of ["../secret.md", ".env", "notes.txt"])
@@ -554,4 +566,75 @@ it("partial and blocked are assignment reports, not check/review approval or run
         decodeWorkflowRun({ ...run, steps: [{ ...run.steps[0], kind }] }),
       ).toThrow();
   }
+  // not-run is valid for check steps only (e.g. fail-fast trailing checks or target-skipped checks).
+  expect(
+    decodeWorkflowRun({
+      ...run,
+      steps: [
+        { ...run.steps[0], kind: "check", status: "not-run", exitCode: null },
+      ],
+    }).steps[0].status,
+  ).toBe("not-run");
+  expect(() =>
+    decodeWorkflowRun({
+      ...run,
+      steps: [{ ...run.steps[0], kind: "review", status: "not-run" }],
+    }),
+  ).toThrow();
+});
+
+it("v4 plans express build outputs, check tier/target and managed links without extra forms", () => {
+  const p = workflowPlanInput({
+    ...plan(),
+    build: [
+      {
+        name: "web",
+        command: "bun run build:web",
+        outputs: ["web/dist", "provenance/webui-reuse.json"],
+      },
+    ],
+    links: [
+      { path: "node_modules" },
+      { path: "web/node_modules", placement: "candidate" },
+    ],
+    checks: [
+      {
+        name: "verify",
+        command: "bun run verify",
+        tier: "fast",
+        target: "run",
+      },
+      {
+        name: "optical",
+        command: "node scripts/qualify-optical.mjs",
+        tier: "heavy",
+        target: "skip",
+      },
+    ],
+  });
+  expect(p.version).toBe(4);
+  expect(p.build?.[0].outputs).toEqual([
+    "web/dist",
+    "provenance/webui-reuse.json",
+  ]);
+  expect(p.links).toEqual([
+    { path: "node_modules" },
+    { path: "web/node_modules", placement: "candidate" },
+  ]);
+  const readable = readableWorkflowPlan(p);
+  expect(readable).toContain("## Build (owner-synced derived outputs)");
+  expect(readable).toContain("web/dist, provenance/webui-reuse.json");
+  expect(readable).toContain("## Managed dependency links");
+  expect(readable).toContain("[worktree] node_modules -> node_modules");
+  expect(readable).toContain("verify [fast, target:run]");
+  expect(readable).toContain("optical [heavy, target:skip]");
+  for (const invalid of [
+    { ...p, build: [{ name: "b", command: "run", outputs: [] }] },
+    { ...p, build: [{ name: "b", command: "run", outputs: [".env"] }] },
+    { ...p, links: [{ path: ".git/hooks" }] },
+    { ...p, links: [{ path: "node_modules" }, { path: "node_modules" }] },
+    { ...p, checks: [{ name: "c", command: "run", tier: "medium" }] },
+    { ...p, checks: [{ name: "c", command: "run", target: "always" }] },
+  ])
+    expect(() => workflowPlanInput(invalid)).toThrow(WorkflowInputError);
 });

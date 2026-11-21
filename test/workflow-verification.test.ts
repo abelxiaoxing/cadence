@@ -3,10 +3,17 @@ import { expect, it, vi } from "vitest";
 import { Workflows } from "../src/service/workflows.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
-const observation = vi.hoisted(() => ({ value: "a".repeat(64) }));
+const observation = vi.hoisted(() => ({
+  value: "a".repeat(64),
+  snapshotFiles: new Map<string, string | null>(),
+}));
 vi.mock("../src/service/workflow-git.ts", async (original) => ({
   ...(await original<typeof import("../src/service/workflow-git.ts")>()),
   sourceIdentityAsync: async () => observation.value,
+  workingSnapshot: async () => ({
+    git: true,
+    paths: new Map(observation.snapshotFiles),
+  }),
 }));
 it.each(["stable", "check-failed", "check-change", "review-change"])(
   "verification binds actual source and step identities: %s",
@@ -28,7 +35,7 @@ it.each(["stable", "check-failed", "check-change", "review-change"])(
     const owner = Object.assign(Object.create(Workflows.prototype), {
       root: "/fixture",
       save() {},
-      recoverStage: async (
+      runGate: async (
         _live: unknown,
         _cwd: string,
         _p: unknown,
@@ -89,3 +96,124 @@ it.each(["stable", "check-failed", "check-change", "review-change"])(
     }
   },
 );
+
+it("fail-fast runs fast checks before heavy checks, marks unstarted trailing checks not-run, and still runs waived checks", async () => {
+  const ran: string[] = [];
+  const p = plan();
+  p.checks = [
+    { name: "optical", command: "optical", tier: "heavy" },
+    { name: "waived-lint", command: "lint", tier: "fast" },
+    { name: "unit", command: "unit", tier: "fast" },
+  ];
+  const live = {
+    abort: new AbortController(),
+    run: {
+      id: randomUUID(),
+      epoch: randomUUID(),
+      steps: [] as unknown[],
+      deviations: [
+        {
+          revision: 1,
+          item: "lint",
+          reason: "waived",
+          delivered: "alt",
+          waives: ["waived-lint"],
+        },
+      ],
+    },
+  };
+  const owner = Object.assign(Object.create(Workflows.prototype), {
+    root: "/fixture",
+    o: { secrets: () => [] },
+    save() {},
+    write() {},
+    check: async (_live: unknown, _cwd: string, c: { name: string }) => {
+      ran.push(c.name);
+      const step = owner.step(live, c.name, "check");
+      const failed = c.name === "waived-lint" || c.name === "unit";
+      const result = {
+        outcome: failed ? "failed" : "completed",
+        closed: true,
+        exitCode: failed ? 1 : 0,
+        signal: null,
+        durationMs: 1,
+        text: "",
+        output: failed ? `${c.name} failed` : "ok",
+        truncated: false,
+      };
+      owner.finishStep(live, step, result);
+      return { result, step };
+    },
+  });
+  const observed: { id: string; status: string }[] = [];
+  const waived = new Set<string>();
+  const passed = await owner.checks(
+    live,
+    "/candidate",
+    p,
+    false,
+    observed,
+    waived,
+  );
+  expect(passed).toBe(false);
+  // Fast tier ran before heavy; waived-lint ran and failed without stopping unit;
+  // non-waived unit failure stopped early so heavy optical was marked not-run.
+  expect(ran).toEqual(["waived-lint", "unit"]);
+  expect(waived.size).toBe(1);
+  expect(observed.map((s) => s.status)).toEqual([
+    "failed",
+    "failed",
+    "not-run",
+  ]);
+});
+
+it("syncBuild accepts edits inside declared outputs and refuses unauthorized edits outside outputs", async () => {
+  const p = plan();
+  p.build = [
+    {
+      name: "web",
+      command: "bun run build:web",
+      outputs: ["web/dist", "provenance/webui-reuse.json"],
+    },
+  ];
+  const makeOwner = (mutatedPath: string) => {
+    observation.snapshotFiles = new Map([["web/dist/app.js", "before"]]);
+    const live = {
+      abort: new AbortController(),
+      delivered: new Set<string>(),
+      run: { id: randomUUID(), epoch: randomUUID(), steps: [] as unknown[] },
+    };
+    const owner = Object.assign(Object.create(Workflows.prototype), {
+      root: "/fixture",
+      o: { secrets: () => [] },
+      assertRunning() {},
+      save() {},
+      write() {},
+      check: async (_live: unknown, _cwd: string, c: { name: string }) => {
+        const step = owner.step(live, `build: ${c.name}`, "check");
+        observation.snapshotFiles.set(mutatedPath, "after");
+        const result = {
+          outcome: "completed",
+          closed: true,
+          exitCode: 0,
+          signal: null,
+          durationMs: 1,
+          text: "",
+          output: "built",
+          truncated: false,
+        };
+        owner.finishStep(live, step, result);
+        return { result, step };
+      },
+    });
+    return { live, owner };
+  };
+  const okCase = makeOwner("provenance/webui-reuse.json");
+  await okCase.owner.syncBuild(okCase.live, "/candidate", { plan: p });
+  expect(okCase.live.delivered.has("provenance/webui-reuse.json")).toBe(true);
+
+  const badCase = makeOwner("LICENSE");
+  await expect(
+    badCase.owner.syncBuild(badCase.live, "/candidate", { plan: p }),
+  ).rejects.toThrow(/modified files outside its declared outputs.*LICENSE/u);
+});

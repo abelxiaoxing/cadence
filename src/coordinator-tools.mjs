@@ -22,6 +22,46 @@ const CHECK = Type.Object({
     }),
   ),
 });
+const PLAN_CHECK = Type.Object({
+  ...CHECK.properties,
+  tier: Type.Optional(
+    Type.Union([Type.Literal("fast"), Type.Literal("heavy")], {
+      description:
+        "Cost tier only: fast (default) runs before heavy and stops early on failure; heavy marks slow browser/integration suites. Does not decide target post-merge execution.",
+    }),
+  ),
+  target: Type.Optional(
+    Type.Union([Type.Literal("run"), Type.Literal("skip")], {
+      description:
+        "Whether this check reruns in the target checkout after fast-forward merge: run (default) or skip. Target ref, HEAD and delivered source-byte verification never skip.",
+    }),
+  ),
+});
+const BUILD = Type.Object({
+  ...CHECK.properties,
+  outputs: Type.Array(Type.String(), {
+    description:
+      "Declared repository-relative derived output paths this build may write (never tests, licenses or upstream provenance).",
+  }),
+});
+const SETUP_LINK = Type.Object({
+  path: Type.String({
+    description:
+      "Checkout-relative path inside the worktree where the owner creates a managed symlink (e.g. node_modules or web/node_modules).",
+  }),
+  source: Type.Optional(
+    Type.String({
+      description:
+        "Checkout-relative dependency path in the original checkout to link to. Defaults to path.",
+    }),
+  ),
+  placement: Type.Optional(
+    Type.Union([Type.Literal("candidate"), Type.Literal("worktree")], {
+      description:
+        "candidate: link only in the stable candidate; worktree (default): link in the candidate and every detached child.",
+    }),
+  ),
+});
 const READING = Type.Union([
   Type.Object({
     path: Type.String({ description: "Project document to read first." }),
@@ -248,9 +288,21 @@ export const PLAN_PARAMETERS = Type.Object({
     }),
     { description: "One to 16 assignments." },
   ),
-  checks: Type.Array(CHECK, {
+  checks: Type.Array(PLAN_CHECK, {
     description: "The real acceptance commands: at least one, at most 16.",
   }),
+  build: Type.Optional(
+    Type.Array(BUILD, {
+      description:
+        "Optional owner-synced build commands run after edits before combined verification, at most eight. Each names the exact repository-relative derived outputs it may touch.",
+    }),
+  ),
+  links: Type.Optional(
+    Type.Array(SETUP_LINK, {
+      description:
+        "Optional owner-managed dependency symlinks from the original checkout into worktrees (e.g. node_modules), at most eight. Created and identity-verified by the owner so cleanup unlinks only its own links without following into shared dependencies.",
+    }),
+  ),
   setup: Type.Optional(
     Type.Array(
       Type.Object({

@@ -276,30 +276,34 @@ it("opens and closes the current plan at the title, not the stream tail; later d
   expect(read).not.toHaveBeenCalled();
 });
 
-function recordedProposal(version: 2 | 3 | undefined) {
+function recordedProposal(version: 2 | 3 | 4 | undefined) {
   const p = proposal("Recorded material");
-  if (version !== 3) {
+  if (version !== 4) {
     const {
       version: _version,
       assumptions,
       documents,
       reviewReads,
       policy,
+      build: _build,
+      links: _links,
       tasks,
       ...retained
     } = p.plan;
     p.plan = decodeWorkflowPlan({
       ...retained,
-      tasks: tasks.map(({ reads, ...task }) => task),
-      ...(version === 2
-        ? { version, knowledge: [] }
-        : { projectContext: "Older context", repairAttempts: 2 }),
+      tasks: version === 3 ? tasks : tasks.map(({ reads, ...task }) => task),
+      ...(version === 3
+        ? { version, assumptions, documents, reviewReads, policy }
+        : version === 2
+          ? { version, knowledge: [] }
+          : { projectContext: "Older context", repairAttempts: 2 }),
     });
   }
   return p;
 }
 
-it.each([2, undefined, 3] as const)(
+it.each([2, 3, undefined, 4] as const)(
   "version %s: real title disclosure and workspace eligibility under matched and stale bindings",
   (version) => {
     const p = recordedProposal(version);
@@ -351,7 +355,7 @@ it.each([2, undefined, 3] as const)(
       expect(card).toContain(
         renderToStaticMarkup(<pre>{readableWorkflowPlan(p.plan)}</pre>),
       );
-      if (version !== 3) {
+      if (version !== 4) {
         expect(card).toMatch(
           /class="plan-status" role="status">This plan is read-only. A new proposal is required for implementation.<\/p>/,
         );
@@ -722,7 +726,7 @@ function discussionFixture(version: ChoiceVersion) {
   return { client, command, prepare, model };
 }
 
-it.each([2, undefined] as const)(
+it.each([2, 3, undefined] as const)(
   "version %s: submitting to the collapsed read-only proposal explains the refusal; discussion still sends",
   async (version) => {
     const p = recordedProposal(version);

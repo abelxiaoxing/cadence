@@ -45,9 +45,9 @@ Local operation errors neither hide an independent observation error nor imply t
 
 ## Automatic conversation workflow
 
-Native/browser approval binds a version-3 delivery agreement: goal, explicit decisions, acceptance, the coordinator's assumptions, the initial route with its assignments and write paths, what each assignment and the review read first, exact setup/baseline/acceptance commands, the installation policy and the local delivery policy.
+Native/browser approval binds a version-4 delivery agreement: goal, explicit decisions, acceptance, the coordinator's assumptions, the initial route with its assignments and write paths, what each assignment and the review read first, exact setup/baseline/acceptance commands (with optional `checks[].tier` fast/heavy and `checks[].target` run/skip), optional owner-synced `build` steps with declared outputs, optional owner-managed dependency `links`, the installation policy and the local delivery policy.
 Goal, decisions, acceptance and assumptions stay as approved; the route, the assignments and the write scope are the owner's to revise after approval, without a repair budget and without asking again.
-Version-2 agreements (a fixed write scope) and unversioned ones stay readable and cannot be approved for execution.
+Version-3, version-2 and unversioned agreements stay readable and cannot be approved for execution.
 Setup never implicitly copies dependency trees, profiles or credentials.
 Each new setup command declares `placement`: `target` preflight runs once in the original checkout before worktree creation; `candidate` preparation runs once in the stable candidate; `worktree` preparation runs in the candidate and every detached child.
 Stages run in that order, retaining command order within each stage, with the conversation-relative cwd mapped into each checkout.
@@ -106,9 +106,9 @@ The run keeps its current route, its added scope and its deviations (`WorkflowRu
 Dependent assignments wait for completion.
 Unknown originals, Cancel and authority/storage failures stop new work.
 An editing worker with nonzero exit needs a settled, successful cleanup diagnostic before recovery; direct-child close alone cannot authorize another editor.
-A timed-out shell check is not automatically replayed because descendant/tool closure was not established.
-The owner assembles implementation, curated knowledge and deliverable notes before candidate checks and independent Agent review.
-Final verification and integration outcomes stay in owner records.
+A timed-out shell check may enter diagnosis/replan only when its POSIX process group is confirmed settled (`ESRCH`); an unsettled timeout is never replayed.
+The owner runs owner-synced builds inside their declared `outputs`, converges fast checks fail-fast and code pre-review before heavy checks, stabilizes behavior on single-parent `C0` before shell-free knowledge maintenance, and seals `C1` only if knowledge changed (reusing exact `C0` check evidence only on verified zero-edit runs).
+Final verification, behavior-family review ledgers (`review-ledger.json`), workflow reports (`report.json`, `report.md`) and integration outcomes stay in private owner records rather than repository commits.
 Repairs and changed candidate identities require fresh evidence.
 Failed checks, rejected review, unparseable review and settled worker failures can enter diagnosis and repair without further routine confirmation.
 A repair worker exercises the affected behavior with focused checks before reporting completed or partial; these observations never count as owner acceptance.

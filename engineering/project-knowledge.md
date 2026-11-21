@@ -77,8 +77,9 @@ The records are kept as long as the runs they point into; nothing is deleted to 
 
 ## Curation
 
-After implementation and before the assembled candidate goes to checks and review, one editing assignment per delivery maintains knowledge (`Workflows.learn`).
-For a version-3 agreement it maintains the managed store, whose paths then belong to the run's write scope, plus any existing documents the agreement names in `documents`.
+After implementation stabilizes behavior checks on `C0` (and after incorporating verified sibling changes under exclusive target checkout access for local delivery), one shell-free curating assignment per delivery maintains knowledge (`Workflows.learn`).
+Stripping shell tools (`bash`/`powershell`) from the `knowledge` worker physically prevents unobservable side effects; when zero edits occur, Stage 6 reuses exact `C0` check evidence for final sign-off, whereas any knowledge change seals a single-parent `C1` and re-runs all declared checks and independent review.
+For a version-4 agreement it maintains the managed store, whose paths then belong to the run's write scope, plus any existing documents the agreement names in `documents`.
 A fast-forward cannot carry ignored paths or ones the target checkout has its own changes to; then the store is skipped with a note in the run, and only named documents are maintained.
 Direct working-copy delivery always maintains it.
 

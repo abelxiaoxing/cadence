@@ -48,7 +48,7 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
     cwd,
     root: cwd,
     o: {
-      owner: { state: "idle" },
+      owner: { state: "idle", lease: { assert() {} } },
       secrets: () => [],
       coordination: {
         files: {
@@ -56,6 +56,12 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
             records.has(path)
               ? { bytes: Buffer.from(JSON.stringify(records.get(path))) }
               : undefined,
+          create: (path: string, body: string) => {
+            records.set(path, body.startsWith("{") ? JSON.parse(body) : body);
+          },
+          replace: (path: string, _expected: unknown, body: string) => {
+            records.set(path, body.startsWith("{") ? JSON.parse(body) : body);
+          },
         },
       },
     },
@@ -178,7 +184,7 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
   expect(reviews).toBe(1);
   expect(readFileSync(join(cwd, "knowledge.md"), "utf8")).toContain("Verified");
   expect(owner.setup).toHaveBeenCalledTimes(2); // candidate, then per-worktree preparation
-  expect(owner.publish).toHaveBeenCalledTimes(1);
+  expect([...records.keys()].some((p) => p.endsWith("report.json"))).toBe(true);
   expect([...records.keys()].some((p) => p.includes("revisions/1.json"))).toBe(
     true,
   );
