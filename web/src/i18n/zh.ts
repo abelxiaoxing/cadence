@@ -2,7 +2,6 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
-  "Ordinary send": "普通发送",
   "Explain this project": "介绍一下这个项目",
   "Help me plan a change": "帮我规划一项改动",
   "Message received": "消息已接收",
@@ -161,8 +160,6 @@ export const zh = {
   "Model selection is unavailable until the current conversation and execution state are observed.":
     "读取当前会话和执行状态后才能选择模型。",
   "Cadence state unavailable": "Cadence 状态未确认",
-  "Cadence on next Send": "下次发送开启 Cadence",
-  "Cadence off": "Cadence 已关闭",
   "Read the current execution state before approving this plan.":
     "请先读取当前执行状态，再批准此计划。",
   "Wait for the current reply before approving this plan.":
@@ -1261,6 +1258,8 @@ export const zh = {
   "Type a message below. Turn on Cadence mode to agree on a plan before implementation.":
     "在下方输入消息开始对话。打开 Cadence 模式可以先商定计划再实施。",
   "Cadence mode": "Cadence 模式",
+  "Turn on Cadence": "开启 Cadence",
+  "Turn off Cadence": "关闭 Cadence",
   "Cadence mode is on. Click to exit it.": "Cadence 模式已开启，点击退出。",
   "Your next message turns on Cadence mode. Click to cancel.":
     "发送下一条消息时将开启 Cadence 模式，点击取消。",

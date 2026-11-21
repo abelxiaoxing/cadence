@@ -6,7 +6,7 @@
 
 Kind: pitfall
 
-Why: with an inherited TMPDIR deeper than 107 characters an absolute socket path fails at bind, so the fixture spawns a short-lived child with a deliberately long temporary cwd and binds the relative name, while the refusal assertion still names the long absolute path.
+Why: an absolute socket path over the 107-byte sun_path bound fails at bind, so the fixture builds a path provably longer than the bound and binds a relative name in a short-lived child's cwd, while the refusal assertion still names the long absolute path.
 
 Anchors: `test/research-tools.test.mjs#a known socket under a long temporary path is not opened as a text file`
 
