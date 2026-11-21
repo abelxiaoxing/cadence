@@ -1078,6 +1078,7 @@ function buttonIn(tree: ReactNode, label: string) {
 
 it.each([
   "starter",
+  "undo starter edit",
   "reference",
   "cold draft",
   "replacement plan",
@@ -1112,7 +1113,8 @@ it.each([
       if (path === "cold draft")
         sessionStorage.setItem("cadence:draft:workspace:chat", phrase);
       await draw();
-      if (path === "starter") {
+      const starter = path === "starter" || path === "undo starter edit";
+      if (starter) {
         const choose = descendant<ComponentProps<typeof ChatWelcome>>(
           tree,
           (e) => e.type === ChatWelcome,
@@ -1125,6 +1127,11 @@ it.each([
           field.change(label + phrase, "insertText", phrase),
         );
         expect(composer(tree).draft).toBe(label + phrase);
+        if (path === "undo starter edit") {
+          await act(async () => field.change(phrase, "deleteContentBackward"));
+          await act(async () => field.change(label + phrase, "historyUndo"));
+          expect(composer(tree).draft).toBe(label + phrase);
+        }
       } else {
         if (old) await act(async () => toggleTitle(tree));
         if (path !== "cold draft")
@@ -1147,7 +1154,7 @@ it.each([
       expect(command).not.toHaveBeenCalled();
       expect(prepare).not.toHaveBeenCalled();
       await act(async () => field.key("Enter"));
-      if (path === "starter" || path === "reference") {
+      if (starter || path === "reference") {
         expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
           expect.objectContaining({
             kind: "send",

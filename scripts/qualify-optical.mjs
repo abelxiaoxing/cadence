@@ -110,19 +110,14 @@ const groups = selectedGroups(args);
 const root = resolve(import.meta.dirname, "..");
 assertVerificationTemp(root);
 const reportDir = await mkdtemp(join(process.env.TMPDIR, "optical-evidence-"));
-const site = fixture(root),
-  origin = await site.open(),
-  // A separate loopback viewer for controls requiring a current action context.
-  // Its server still refuses and records writes, just like the readonly viewer.
-  currentSite = fixture(root, { actions: true }),
-  currentOrigin = await currentSite.open(),
-  rows = [],
+const rows = [],
   problems = [],
   performanceRows = [];
 const report = {
   coverage: args.length ? "targeted" : "full",
   groups,
-  candidate: site.build,
+  candidate: null,
+  unexpectedRequests: { readonly: [], currentContext: [] },
   hitTests: [],
   controls: [],
   attempts: [],
@@ -172,7 +167,7 @@ const report = {
   problems,
 };
 console.log(`Optical ${report.coverage} observation: ${reportDir}`);
-async function observe(group, work) {
+async function observeGroup({ b, site, currentSite, problems }, group, work) {
   const start = Date.now();
   const count = () =>
     problems.length + site.failures.length + currentSite.failures.length;
@@ -230,10 +225,11 @@ async function observe(group, work) {
   await record(count() === before ? "completed" : "failed");
 }
 const q = JSON.stringify;
-let b;
-try {
-  b = await browser(process.env.TMPDIR);
-  report.browser = b.version.product;
+async function measureGroups(groups, lane, origin, currentOrigin) {
+  const { b, site, currentSite, problems } = lane;
+  const observe = (group, work) => observeGroup(lane, group, work);
+  report.browser ??= b.version.product;
+  assert.equal(report.browser, b.version.product);
   const { evaluate: ev, send } = b;
   const run = (fn, ...args) => ev(`(${fn})(${args.map(q).join(",")})`);
   await send("Page.addScriptToEvaluateOnNewDocument", {
@@ -1879,17 +1875,54 @@ try {
       "button",
     ]);
   }
-} catch (error) {
-  problems.push(String(error));
-} finally {
-  await b?.close();
-  await Promise.all([site.close(), currentSite.close()]);
 }
-report.unexpectedRequests = {
-  readonly: site.failures,
-  currentContext: currentSite.failures,
-};
-problems.push(...site.failures, ...currentSite.failures);
+
+async function runLane(groups) {
+  const site = fixture(root);
+  const currentSite = fixture(root, { actions: true });
+  const localProblems = [];
+  let b;
+  try {
+    report.candidate ??= site.build;
+    assert.deepEqual(site.build, report.candidate);
+    assert.deepEqual(currentSite.build, report.candidate);
+    const origin = await site.open();
+    const currentOrigin = await currentSite.open();
+    b = await browser(process.env.TMPDIR);
+    await measureGroups(
+      groups,
+      { b, site, currentSite, problems: localProblems },
+      origin,
+      currentOrigin,
+    );
+  } finally {
+    try {
+      await b?.close();
+    } finally {
+      await Promise.all([site.close(), currentSite.close()]);
+      report.unexpectedRequests.readonly.push(...site.failures);
+      report.unexpectedRequests.currentContext.push(...currentSite.failures);
+      problems.push(
+        ...localProblems,
+        ...site.failures,
+        ...currentSite.failures,
+      );
+    }
+  }
+}
+
+// Each theme exercises the same slow, real polling transitions. Isolate their
+// profiles and fixture origins rather than accelerating timers, dropping views
+// or extending the observation deadline. Keep the full timing matrix serial.
+const lanes =
+  args[0] === "--group=quiet-workspace"
+    ? ["dark", "light"].map((theme) =>
+        groups.filter((g) => g.split(":")[1] === theme),
+      )
+    : [groups];
+for (const result of await Promise.allSettled(lanes.map(runLane))) {
+  if (result.status === "rejected") problems.push(String(result.reason));
+}
 await writeFile(
   join(reportDir, "summary.json"),
   JSON.stringify(report, null, 2),
@@ -1898,7 +1931,7 @@ console.log(
   JSON.stringify({
     reportDir,
     coverage: report.coverage,
-    build: report.candidate.buildId,
+    build: report.candidate?.buildId,
     scenes: rows.length,
     conversationViews:
       report.quietWorkspace.length + report.transcriptPolish.length,

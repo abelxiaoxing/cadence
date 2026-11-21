@@ -246,8 +246,9 @@ export function useHistoryDiscovery(
         : [];
     const reports = [...activities, ...missing];
     const selected = { path, activities: reports };
-    // Reuse the exact same attribution and producer keys as the visible rows.
-    const groups = groupProjectActivity(selected, new Set());
+    // Retain what both local surfaces can display. Incompatible terminals
+    // remain discovery-only; the history grouping still excludes them.
+    const groups = groupProjectActivity(selected, new Set(), "discovery");
     return {
       retained: error
         ? last?.path === path && last.epoch === value.epoch

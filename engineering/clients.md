@@ -266,6 +266,8 @@ While that turn runs it takes further messages like an ordinary reply (see [Ordi
 The owner retains one current proposal until replacement, mode exit or admission.
 **View current plan** at the conversation title opens it above the mounted transcript; refresh, further discussion or a new binding starts collapsed.
 No approval control follows later messages down the stream.
+Native Undo and Redo restore editor text, never plan approval.
+An edit restored within one uninterrupted ordinary discussion can still be sent as discussion; when origins conflict, matching text alone cannot authorize it.
 Details disclose the full agreement, execution binding and (after an explicit revalidation in this view) the previous context.
 Plans and research in another conversation may proceed while an implementation runs; a conversation with its own accepted implementation cannot start another implementation or investigation until it settles.
 Research IDs are recorded only once accepted.
@@ -720,6 +722,7 @@ Native checkout resolution is asynchronous and cancellable; registry owners reus
 Closing or invalidating the observer aborts only its reads; it cannot cancel execution.
 Only work represented in the selected project’s history prefix is subtracted from discovery: owner work by source, epoch and run/command ID, terminal work by instance and activity ID.
 Other projects, incompatible reader scopes and reports without a session remain separate, even when their session IDs match.
+An incomplete discovery read can retain a missing local terminal as stale in its original disclosure; it does not make incompatible history navigable or grant Stop.
 Limits and uncertainty windows live beside the constants in these modules.
 On a failed read, the general discovery list drops reports whose observation is more than 120 seconds old.
 Capacity, corrupt state and missing observations can also make a successful response partial, even when empty.
