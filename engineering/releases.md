@@ -1282,3 +1282,12 @@ Disabled controls explain why the action is unavailable without shifting the his
 The WebUI connects adjacent tool calls and thinking steps with a fine rail and shows a glass card only when its details are opened.
 The reply's copy action sits in its byline; the running Stop button and active trace nodes respect reduced motion.
 Local Chromium fixture checks at 320px and 1440px measured 32px folded rows and aligned labels in both themes, without a live provider or service deployment.
+
+## 2.2.7 release candidate
+
+A new conversation starts with its editor centered.
+It moves to the transcript footer after the first confirmed Send without replacing the editor.
+The conversation title opens the current plan; simply viewing it does not validate or approve it.
+Background replies and workflows appear alongside their conversations in history.
+Completed steps fold together without hiding errors or unfinished calls.
+The composer shields the last lines of text, and the desktop question rail remains available for keyboard navigation.

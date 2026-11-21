@@ -533,6 +533,24 @@ it("pins only the selected directory's exact work through expired and incomplete
     response = discovery([]);
     await tick();
     check(0);
+    // Incompatible terminals stay in local discovery, never in the
+    // namesake's history. Only a complete observation can retire them.
+    const unshared = { ...a, history: "unavailable" as const };
+    response = discovery([unshared]);
+    await tick();
+    response = { ...discovery([]), completeness: "partial", unavailable: 1 };
+    await tick();
+    const stale = renderToStaticMarkup(tree);
+    expect(details(stale)).toContain(
+      `<code>instance: ${unshared.instance}</code>`,
+    );
+    expect(details(stale)).toContain(`<code>id: ${unshared.id}</code>`);
+    expect(details(stale)).toContain("Stale observation");
+    expect(details(stale)).not.toMatch(/<button|<a |Stop|Cancel/);
+    expect(stale).not.toContain("history-activity-mark");
+    response = discovery([]);
+    await tick();
+    expect(check(0)).not.toContain(unshared.instance);
     // No retained identity crosses a directory, gateway epoch or access denial.
     for (const reset of ["directory", "epoch", "forbidden"]) {
       response = first;

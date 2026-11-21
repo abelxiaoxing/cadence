@@ -233,52 +233,36 @@ function liveInputOutcome(
     : inputOutcome(reply);
 }
 type DraftEntry = ComposerDraft & { parked?: ComposerDraft };
-// Native history exposes the restored text, not which edit it came from.
-// Keep short edits, not just finished phrases: undo can restore an unfinished
-// word which the user then completes. Never evict a conflicting source and
-// later mistake the same text for unambiguous. An untracked edit has no proof.
-// The longest forms cover unfinished words even when the caret is in the
-// middle. This only filters bookkeeping; cadenceApproval alone recognizes
-// intent. Ordinary typing must not consume the entire provenance budget.
-const phraseBodies = [
-  ...["按这个计划开始", "按本计划开始", "确认计划并"].flatMap((stem) => [
-    `${stem}执行`,
-    `${stem}实施`,
-  ]),
-  "approve and execute",
-];
-function phraseFragment(key: string) {
-  const body = key.toLowerCase().replace(/[。.!！]$/u, "");
-  return phraseBodies.some((phrase) => {
-    let matched = 0;
-    for (const char of phrase) if (char === body[matched]) ++matched;
-    return matched === body.length;
-  });
-}
+// Native Undo returns text, not an edit ID. If every nonempty draft belonged
+// to one discussion, so does a restored edit, regardless of its length or
+// wording. In mixed histories only an unambiguous recorded value can prove
+// that origin. Neither proof ever carries a plan-confirmation binding.
 const MAX_ORIGIN_KEYS = 512;
 const MAX_ORIGIN_TEXT = 32;
-type PhraseOrigins = ReadonlyMap<string, symbol | null>;
-function rememberPhrase(
-  origins: PhraseOrigins,
-  entry: DraftEntry,
-): PhraseOrigins {
+type DraftOrigins = {
+  common?: symbol | null;
+  short: ReadonlyMap<string, symbol | null>;
+};
+function rememberDraft(origins: DraftOrigins, entry: DraftEntry): DraftOrigins {
   const key = entry.text.trim();
-  if (!key || key.length > MAX_ORIGIN_TEXT) return origins;
-  const previous = origins.get(key);
-  if (
-    previous === undefined &&
-    (origins.size >= MAX_ORIGIN_KEYS ||
-      (!cadenceApproval(key) && !phraseFragment(key)))
-  )
-    return origins;
+  if (!key) return origins;
   const source =
-    // Native undo doesn't tell us that the user selected a history entry.
-    !entry.parked &&
-    typeof entry.source === "symbol" &&
-    (previous === undefined || previous === entry.source)
-      ? entry.source
-      : null;
-  return previous === source ? origins : new Map(origins).set(key, source);
+    !entry.parked && typeof entry.source === "symbol" ? entry.source : null;
+  const common =
+    origins.common === undefined || origins.common === source ? source : null;
+  let short = origins.short;
+  const previous = short.get(key);
+  // Never evict a conflict to make space: missing evidence fails closed.
+  if (
+    key.length <= MAX_ORIGIN_TEXT &&
+    (previous !== undefined || short.size < MAX_ORIGIN_KEYS)
+  ) {
+    const known = previous === undefined || previous === source ? source : null;
+    if (previous !== known) short = new Map(short).set(key, known);
+  }
+  return short === origins.short && common === origins.common
+    ? origins
+    : { common, short };
 }
 function stored(key: string, fallback = "") {
   try {
@@ -388,15 +372,15 @@ export function ChatWorkspace({
   // A plan confirmation gets its source from an explicit composer edit below.
   const [{ entry }, updateEditor] = useState<{
     entry: DraftEntry;
-    origins: PhraseOrigins;
+    origins: DraftOrigins;
   }>(() => ({
     entry: { text: stored(draftKey, initialDraft?.text) },
-    origins: new Map(),
+    origins: { short: new Map() },
   }));
   const setEntry = useCallback(
-    (edit: (prior: DraftEntry, origins: PhraseOrigins) => DraftEntry) => {
+    (edit: (prior: DraftEntry, origins: DraftOrigins) => DraftEntry) => {
       updateEditor((prior) => {
-        const origins = rememberPhrase(prior.origins, prior.entry);
+        const origins = rememberDraft(prior.origins, prior.entry);
         const entry = edit(prior.entry, origins);
         return entry === prior.entry ? prior : { entry, origins };
       });
@@ -968,7 +952,8 @@ export function ChatWorkspace({
           return {
             text,
             source:
-              origins.get(text.trim()) === recoveredSource
+              (origins.common ?? origins.short.get(text.trim())) ===
+              recoveredSource
                 ? recoveredSource
                 : undefined,
           };

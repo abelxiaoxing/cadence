@@ -1144,11 +1144,17 @@ async function observeOrdinaryPhrase(p, row, paths) {
         const prompt = await ev(`document.activeElement.value`);
         assert.equal(prompt, "Explain this project");
         continued = await editor.append(phrase, prompt + phrase);
-        await run(
-          (length) => document.activeElement.setSelectionRange(0, length),
-          prompt.length,
-        );
-        await press("Backspace", 8);
+        const removeStarter = async () => {
+          await run(
+            (length) => document.activeElement.setSelectionRange(0, length),
+            prompt.length,
+          );
+          await press("Backspace", 8);
+          await wait(`document.activeElement.value===${q(phrase)}`);
+        };
+        await removeStarter();
+        restored = await editor.restore(false, prompt + phrase);
+        await removeStarter();
       } else if (via === "recall confirmed Send") {
         assert.equal(s.turns.at(-1)?.kind, "send");
         assert.equal(s.turns.at(-1).text, phrase);
@@ -1168,7 +1174,20 @@ async function observeOrdinaryPhrase(p, row, paths) {
       } else {
         await send("Input.insertText", { text: phrase });
         if (attachment) {
-          await click(".chat-image-remove");
+          // The thumbnail can mount while the previous Send is still settling
+          // or before the resized form has painted. Target the usable control,
+          // not the first DOM match, and record its stable geometry before input.
+          const remove = `${composer} .chat-image-remove:enabled`;
+          await wait(
+            `document.querySelector(${q(input)})?.value===${q(phrase)} && document.querySelector(${q(remove)})`,
+          );
+          const control = await p.observeButton(
+            "remove draft image",
+            remove,
+            "Remove image: facet.png",
+          );
+          assert.equal(control.keyboardFocus, true);
+          await click(remove);
           await wait(`!document.querySelector('.chat-image-draft')`);
           await click(input);
         } else {
@@ -2584,7 +2603,7 @@ async function observeTerminalHistory(p, row, shot) {
         freshness: stage.partial ? "unknown" : "current",
       }));
       const local = stage.unshared
-        ? [unshared[0], ...unshared].map((report) => ({
+        ? (stage.missing ? [] : [unshared[0], ...unshared]).map((report) => ({
             ...report,
             observedAt: stage.at,
             phase: stage.phase,
@@ -3236,6 +3255,25 @@ async function observeTerminalHistory(p, row, shot) {
     await wait(`document.querySelector(${q(namesake)})`);
     await open();
     row.unsharedTerminals.loaded = await inspect(true);
+    s.roster = {
+      ...s.roster,
+      name: "unshared omitted",
+      partial: true,
+      missing: true,
+    };
+    await wait(
+      `document.querySelector(${q(group)})?.innerText.includes('Stale observation')`,
+    );
+    row.unsharedTerminals.omitted = await inspect(true);
+    assert.ok(
+      row.unsharedTerminals.omitted.reports.every((r) =>
+        r.text.includes("Stale observation"),
+      ),
+    );
+    s.roster = { ...s.roster, name: "unshared retired", partial: false };
+    await wait(`!document.querySelector(${q(group)})`);
+    assert.deepEqual(gateway.selections, selected);
+    assert.deepEqual(s.commands, []);
   } finally {
     await stop();
   }

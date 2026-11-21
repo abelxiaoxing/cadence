@@ -68,6 +68,9 @@ Use the same private temporary environment as for `verify`.
 For a repair, select one named group, for example `node scripts/qualify-optical.mjs --group=agent-scroll:dark:390`, `--group=dark:320`, `--group=reading` or `--group=forced-colors`; `--group=agent-scroll` checks that behavior across all six views.
 For the conversation UI, run `--group=quiet-workspace` and `--group=transcript-polish` against the **same** canonical build.
 Each selects dark/light at 320, 390 and 1440 CSS px, including reduced motion at 390; suffix `:<theme>:<width>` for one view.
+The targeted `quiet-workspace` command runs one isolated Chromium profile and fixture origin pair per theme concurrently; widths stay sequential within a theme.
+This preserves real polling and the existing command budget for all six observations.
+The no-argument timing matrix remains serial.
 In `quietWorkspace`, type a draft and paste an image before the direct owner's first workspace read resolves; compare the focused editor node, text and attachment before and after that read.
 A separate first-message sequence distinguishes a held/refused Send from an accepted one.
 
