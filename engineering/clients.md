@@ -259,6 +259,7 @@ Use `/cadence [goal]` at the beginning of an explicit Send, or select Cadence on
 Prefix-only entry asks for a goal; ordinary subsequent messages, refresh, completion and cancellation retain mode until explicit exit.
 Mode/plan/run links belong to the owner-private versioned conversation-control store; browser storage holds only drafts (with the anchor of a message being rewritten), the prompts this tab sent (sessionStorage, for recall), display preferences and uncertain attempt IDs.
 The coordinator is an isolated SDK child with only bounded research/proposal/status tools; it cannot call write/edit/bash, approve itself, or load arbitrary extensions.
+Its static dialogue policy travels in `request.instructions` (`LIMITS.instructionsBytes`), while per-turn placement, run/plan/design state and the project route table are budgeted together into `request.context` (`COORDINATOR_CONTEXT_BYTES`, 32KiB) and mounted into Pi's `appendSystemPrompt` section so Pi's shared session `.jsonl` records only the user's message.
 A research call returns one entry per question in the order asked (`status`, the first 4KiB of its text and, for an answered one, its `investigation`), not the run record; a bridge refusal carries the service's fixed error code.
 It holds no checkout barrier while awaiting research, so the existing worker barrier cannot deadlock its parent and status conversation can proceed during implementation.
 One coordinator turn per conversation is admitted at a time (bounded per owner); separate project owners remain independent.

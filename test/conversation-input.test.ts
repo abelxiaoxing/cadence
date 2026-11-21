@@ -246,10 +246,19 @@ function fixture(root = mkdtempSync(join(tmpdir(), "conversation-input-"))) {
     assertQuiescent: () => gate.assertQuiescent(),
   });
   const prepared = { status: "prepared", prepared: {} };
-  const prepareTracked = vi.fn(() => ({
-    settled: Promise.resolve(),
-    result: Promise.resolve(prepared),
-  }));
+  const preparedRequests: {
+    instructions: string;
+    context: string;
+    role: { role: string; sha256: string };
+    prompt: string;
+  }[] = [];
+  const prepareTracked = vi.fn((options?: { request?: any }) => {
+    if (options?.request) preparedRequests.push(options.request);
+    return {
+      settled: Promise.resolve(),
+      result: Promise.resolve(prepared),
+    };
+  });
   let secrets: string[] = [];
   const workbench = new Workbench({
     coordination,
@@ -301,6 +310,7 @@ function fixture(root = mkdtempSync(join(tmpdir(), "conversation-input-"))) {
     epoch,
     workbench,
     gate,
+    preparedRequests,
     holdPreparation() {
       const entered = deferred(),
         allow = deferred();
@@ -1114,4 +1124,47 @@ it("the reasons recorded for an undelivered message are words the browser can sa
   );
   for (const notice of [NOT_DELIVERED, UNOBSERVED])
     expect(translations).toContain(`"${notice}":`);
+});
+
+it("coordinator turns keep static instructions in request.instructions and dynamic context in request.context", async () => {
+  const f = fixture();
+  const staticInstructions = "STATIC COORDINATOR POLICY.";
+  const dynamicContext = `CONVERSATION CONTEXT (data): route\n${"R".repeat(8192)}`;
+  const control: ConversationControl = {
+    instructions: staticInstructions,
+    context: ({ cwd, checkoutRoot }) =>
+      `${dynamicContext}\ncwd=${cwd};root=${checkoutRoot}`,
+    accept() {},
+    onTool: async () => ({}),
+    settle: async () => {},
+  };
+  const run = await f.start(randomUUID(), "Plan it", null, control);
+  run.worker.ready();
+  run.worker.turn(run.commandId, "Plan it");
+  run.worker.end();
+  await f.settled[0];
+  expect(f.preparedRequests).toHaveLength(1);
+  expect(f.preparedRequests[0].instructions).toBe(staticInstructions);
+  expect(f.preparedRequests[0].context).toContain(dynamicContext);
+  expect(f.preparedRequests[0].context).toContain("cwd=");
+  expect(f.preparedRequests[0].instructions).not.toContain(
+    "CONVERSATION CONTEXT",
+  );
+
+  // Even a minimal ConversationControl without a context builder puts
+  // CONVERSATION CONTEXT in request.context instead of request.instructions.
+  const fallbackRun = await f.start(randomUUID(), "Plan again", null, {
+    instructions: "MINIMAL POLICY.",
+    accept() {},
+    onTool: async () => ({}),
+    settle: async () => {},
+  });
+  fallbackRun.worker.ready();
+  fallbackRun.worker.turn(fallbackRun.commandId, "Plan again");
+  fallbackRun.worker.end();
+  await f.settled[1];
+  expect(f.preparedRequests[1].instructions).toBe("MINIMAL POLICY.");
+  expect(f.preparedRequests[1].context).toContain(
+    "CONVERSATION CONTEXT (data):",
+  );
 });

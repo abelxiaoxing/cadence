@@ -492,7 +492,11 @@ try {
         ? `${instructions}\n\n${toolkit.instructions}`
         : instructions,
     getSystemPromptSource: () => undefined,
-    getAppendSystemPrompt: () => [],
+    // Conversation workers mount dynamic turn/project context in Pi's
+    // appendSystemPrompt section so static instructions stay under 16KiB
+    // and Pi's shared session JSONL records only the user's actual message.
+    getAppendSystemPrompt: () =>
+      conversation && publicRequest.context ? [publicRequest.context] : [],
     getAppendSystemPromptSources: () => [],
     extendResources: () => {},
     reload: async () => {
@@ -803,7 +807,7 @@ try {
     }
   }
   const suppliedPrompt = [
-    publicRequest.context,
+    ...(conversation ? [] : [publicRequest.context]),
     ...(!conversation && kind !== "code"
       ? [
           `Investigation roots: ${JSON.stringify(workspace.roots)}. Relative file-tool paths use the first root; select other roots explicitly. Start with these paths rather than broad parent trees. There is no total runtime deadline. Report observed evidence, truncation and unresolved questions honestly.`,

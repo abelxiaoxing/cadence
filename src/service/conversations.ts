@@ -97,8 +97,20 @@ interface Options {
   /** Where the sessions live; defaults to Pi's own resolution. */
   sessionDir?: string;
 }
+export function conversationContextLine(
+  execution: Pick<ExecutionContext, "cwd" | "checkoutRoot">,
+): string {
+  return `CONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.checkoutRoot}. Workflow writes are checkout-root-relative; tools, investigation roots and checks use this conversation cwd.`;
+}
 export interface ConversationControl {
+  /** Static coordinator policy carried in request.instructions (<= 16KiB). */
   instructions: string;
+  /** Dynamic per-turn project and conversation context carried in
+   * request.context (<= 32KiB) and mounted into Pi's appendSystemPrompt
+   * without writing into the shared session JSONL. */
+  context?: (
+    execution: Pick<ExecutionContext, "cwd" | "checkoutRoot">,
+  ) => string;
   reply?: string;
   accept(): void;
   onTool: NonNullable<ProcessSpec["onCoordinator"]>;
@@ -1128,8 +1140,13 @@ export class Conversations {
       if (!selected) throw new ContractError("stale");
       this.o.models.assertCurrent(selected);
       const instructions = control
-        ? `${control.instructions}\nCONVERSATION CONTEXT (data): cwd ${live.execution.cwd}; checkout root ${live.execution.checkoutRoot}. Workflow writes are checkout-root-relative; tools, investigation roots and checks use this conversation cwd.`
+        ? control.instructions
         : "Ordinary conversation.";
+      const context = control
+        ? control.context
+          ? control.context(live.execution)
+          : conversationContextLine(live.execution)
+        : "";
       const request = decodeWorkerPublicRequest({
         protocol: 2,
         taskId: randomUUID(),
@@ -1143,7 +1160,7 @@ export class Conversations {
           role: control ? "design-explorer" : "implementation-worker",
           sha256: hash(instructions),
         },
-        context: "",
+        context,
         instructions,
         prompt: accepted.command.text,
         ...(live.images?.length ? { imageCount: live.images.length } : {}),
