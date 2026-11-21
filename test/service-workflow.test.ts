@@ -288,7 +288,7 @@ it("real generated owner: independent assignments run in their own worktrees bes
     for (const name of [
       "worktree-integration",
       "worktree-tasks",
-      "commit-candidate",
+      "seal-delivery-commit",
       "merge",
       "remove-merged-worktree",
     ])
@@ -305,13 +305,14 @@ it("real generated owner: independent assignments run in their own worktrees bes
     expect(run.notice).toContain("Changed files:");
     expect(run.notice).toContain("a.txt, b.txt");
     expect(
+      existsSync(join(f.root, ".cadence/assistant/workflows", run.id)),
+    ).toBe(false);
+    expect(
       readFileSync(
-        join(f.root, ".cadence/assistant/workflows", run.id, "result.md"),
+        join(f.c.directory, "workflows-v1", "runs", run.id, "report.md"),
         "utf8",
       ),
-    ).toMatch(
-      /^# Workflow delivery notes\n\nWritten before final candidate checks/u,
-    );
+    ).toMatch(/^# Workflow delivery report\n\nWritten after the fast-forward/u);
     expect(
       run.steps.some(
         (s) =>

@@ -1,12 +1,14 @@
 import { expect, it, vi } from "vitest";
 import {
+  AssignmentRunner,
   AttemptFailure,
-  DeliveryController,
+  DirectCheckRepair,
   decodeRecoveryDecision,
   InvalidDecision,
   MODEL_REQUEST_FAILED,
   modelFailureText,
   modelRequestFailed,
+  PartialAssignment,
   RECOVERY_BYTES,
   type RecoveryBounds,
   type RecoveryDecision,
@@ -16,7 +18,9 @@ import {
   ReviewRepair,
   type RouteTask,
   revisedRoute,
+  VerificationGate,
 } from "../src/service/workflow-controller.ts";
+import { formatStepEvidence } from "../src/service/workflow-result.ts";
 
 const decision = (
   strategy = "Inspect partial outputs and finish only missing behavior",
@@ -49,12 +53,17 @@ function fixture(overrides: Partial<RecoveryPorts> = {}) {
     execute: vi.fn(async () => {}),
     ...overrides,
   };
-  return { controller: new DeliveryController(ports), ports, records };
+  return {
+    controller: new VerificationGate(ports),
+    runner: new AssignmentRunner(ports),
+    ports,
+    records,
+  };
 }
 it("more than two failed attempts can complete one goal without another approval", async () => {
   let attempt = 0;
   const f = fixture({ observe: async () => `verified-partial-${attempt}` });
-  const result = await f.controller.complete("implementation", async () => {
+  const result = await f.controller.verify("implementation", async () => {
     if (++attempt <= 5) throw new AttemptFailure("unfinished", ["step-a"]);
     return "verified output";
   });
@@ -62,14 +71,16 @@ it("more than two failed attempts can complete one goal without another approval
   expect(f.records).toHaveLength(5);
   expect(f.records.map((r) => r.revision)).toEqual([1, 2, 3, 4, 5]);
 });
-it("only the first clear in-scope review goes straight to repair; changed bytes alone cannot repeat it", async () => {
+it("only the first clear in-scope review goes straight to repair (using full candidate scope, hints in instructions); changed bytes alone cannot repeat it", async () => {
   const issue = {
     id: "scroll",
     evidence: "acceptance 3: stationary poll jumps",
     verify: "two polls leave the offset unchanged",
     writes: ["src/view.ts"],
   };
-  const rejection = () => ReviewRepair.from([issue], "step-a", ["src"], [])!;
+  const candidateScope = ["src", "web/dist", "provenance/webui-reuse.json"];
+  const rejection = () =>
+    ReviewRepair.from([issue], "step-a", candidateScope, [])!;
   for (const issues of [
     ["uncertain"],
     [issue, issue],
@@ -87,12 +98,15 @@ it("only the first clear in-scope review goes straight to repair; changed bytes 
       level: floor,
     }),
   });
-  await f.controller.complete("verification", async () => {
+  await f.controller.verify("verification", async () => {
     if (++attempts <= 2) throw rejection();
   });
   expect(f.ports.execute).toHaveBeenCalledTimes(1);
   expect(f.records.map((r) => r.decision.level)).toEqual(["repair", "replan"]);
   expect(f.records[0].decision.work[0].instructions).toContain(issue.verify);
+  expect(f.records[0].decision.work[0].instructions).toContain("src/view.ts");
+  // issue.writes is a location hint, not a write ceiling: repair gets full candidate scope.
+  expect(f.records[0].decision.work[0].writes).toEqual(candidateScope);
 });
 it("a diagnosis can split remaining work, and a failed repair is diagnosed rather than abandoned", async () => {
   let attempts = 0,
@@ -114,7 +128,7 @@ it("a diagnosis can split remaining work, and a failed repair is diagnosed rathe
         throw new AttemptFailure("repair left a gap", ["step-a"]);
     },
   });
-  await f.controller.complete("checks", async () => {
+  await f.controller.verify("checks", async () => {
     if (++attempts === 1) throw new AttemptFailure("test failed", ["step-a"]);
   });
   expect(attempts).toBe(2);
@@ -143,7 +157,7 @@ it("unchanged evidence and an identical approach move the decision up a level in
   const work = vi.fn(async () => {
     throw new AttemptFailure("same failure", ["step-a"]);
   });
-  await expect(f.controller.complete("implementation", work)).rejects.toThrow(
+  await expect(f.controller.verify("implementation", work)).rejects.toThrow(
     "No new evidence or strategy for implementation at any level",
   );
   // repair, then replan, then deviate are each tried once before the end.
@@ -173,7 +187,7 @@ it("a reply the owner cannot act on is asked again with the reason, and is not a
     },
   });
   let attempt = 0;
-  await f.controller.complete("implementation", async () => {
+  await f.controller.verify("implementation", async () => {
     if (++attempt === 1) throw new AttemptFailure("failed", ["step-a"]);
   });
   expect(objections).toEqual([undefined, "not the requested JSON"]);
@@ -185,7 +199,7 @@ it("a reply the owner cannot act on is asked again with the reason, and is not a
     }),
   });
   await expect(
-    stubborn.controller.complete("implementation", async () => {
+    stubborn.controller.verify("implementation", async () => {
       throw new AttemptFailure("failed", ["step-a"]);
     }),
   ).rejects.toBeInstanceOf(InvalidDecision);
@@ -201,7 +215,7 @@ it("unknown, scope, storage and cancellation errors never dispatch recovery", as
   ]) {
     const f = fixture();
     await expect(
-      f.controller.complete("implementation", async () => {
+      f.controller.verify("implementation", async () => {
         throw new Error(message);
       }),
     ).rejects.toThrow(message);
@@ -221,7 +235,7 @@ it("Cancel during diagnosis prevents a proposed write from being admitted", asyn
     },
   });
   await expect(
-    f.controller.complete("implementation", async () => {
+    f.controller.verify("implementation", async () => {
       throw new AttemptFailure("failed", ["step-a"]);
     }),
   ).rejects.toThrow("canceled");
@@ -237,7 +251,7 @@ it("a real external blocker is retained, never presented as success or a request
     }),
   });
   await expect(
-    f.controller.complete("implementation", async () => {
+    f.controller.verify("implementation", async () => {
       throw new AttemptFailure("unavailable API", ["step-a"]);
     }),
   ).rejects.toThrow("Delivery blocked (model)");
@@ -504,7 +518,7 @@ it("model recovery exhaustion never starts diagnosis or replays an earlier repai
     },
   });
   await expect(
-    f.controller.complete("implementation", async () => {
+    f.controller.verify("implementation", async () => {
       if (++original === 1)
         throw new AttemptFailure("needs splitting", ["step-a"]);
     }),
@@ -610,7 +624,7 @@ it("a repair is dispatched under the revision the run recorded for its decision"
       dispatched.push(revision);
     },
   });
-  await f.controller.complete("implementation", async () => {
+  await f.controller.verify("implementation", async () => {
     if (++attempt <= 2) throw new AttemptFailure("unfinished", ["step-a"]);
     return "done";
   });
@@ -745,7 +759,7 @@ it("the same route with unchanged evidence is not a new approach", async () => {
     },
   });
   let attempt = 0;
-  await f.controller.complete("assignment b", async () => {
+  await f.controller.verify("assignment b", async () => {
     if (++attempt <= 2) throw new AttemptFailure("unfinished", ["step-a"]);
   });
   // The second identical replan was moved up instead of being replayed.
@@ -772,7 +786,7 @@ it("rephrased strategy and work cannot hide repeated failure with unchanged stat
     }),
   });
   await expect(
-    f.controller.complete("setup", async () => {
+    f.controller.verify("setup", async () => {
       throw new AttemptFailure(
         `New preview ${serial}`,
         [`step-${serial}`],
@@ -812,7 +826,7 @@ it("failed repairs retain original operation evidence and supply it to the next 
     },
   });
   let attempts = 0;
-  await f.controller.complete("setup", async () => {
+  await f.controller.verify("setup", async () => {
     if (++attempts === 1)
       throw new AttemptFailure(
         "Silent exit 1",
@@ -821,4 +835,296 @@ it("failed repairs retain original operation evidence and supply it to the next 
       );
   });
   expect(seen).toEqual([["original-setup"], ["original-setup", "repair-step"]]);
+});
+
+it("AssignmentRunner continues settled in-scope partial work directly without cold diagnosis and never re-runs initial", async () => {
+  let state = 0;
+  const calls: string[] = [];
+  const f = fixture({ observe: async () => `bytes-${state}` });
+  await f.runner.run("assignment integrate", {
+    initial: async () => {
+      calls.push("initial");
+      state++;
+      throw new PartialAssignment(
+        "step-integrate-1",
+        "Wired sidebar; remaining: wire composer and i18n",
+      );
+    },
+    continueWork: async (handoff) => {
+      calls.push(`continue:${handoff.revision}`);
+      expect(handoff.summary).toContain("wire composer and i18n");
+      state++;
+    },
+    scope: () => ["web/src"],
+  });
+  expect(calls).toEqual(["initial", "continue:1"]);
+  expect(f.ports.diagnose).not.toHaveBeenCalled();
+  expect(f.records).toHaveLength(1);
+});
+
+it("AssignmentRunner distinguishes closing final remaining obligations from repairing only a precondition", async () => {
+  // Case 1: repair-4 covers final remaining obligations (completesStage: true) -> closes integrate immediately without re-running initial or spawning a 5th worker.
+  {
+    const calls: string[] = [];
+    const f = fixture({
+      diagnose: async () => ({
+        ...decision("Finish final remaining integration obligation"),
+        work: [
+          {
+            title: "repair-4",
+            instructions: "Finish remaining wiring",
+            writes: ["web/src"],
+          },
+        ],
+        completesStage: true,
+      }),
+      execute: async (work) => {
+        calls.push(`execute:${work.title}`);
+      },
+    });
+    await f.runner.run("assignment integrate", {
+      initial: async () => {
+        calls.push("initial");
+        throw new AttemptFailure("blocked on final wiring", ["step-a"]);
+      },
+      continueWork: async () => {
+        calls.push("continue");
+      },
+      scope: () => ["web/src"],
+    });
+    expect(calls).toEqual(["initial", "execute:repair-4"]);
+  }
+  // Case 2: repair-4 fixes only a precondition (completesStage: false) -> closes only the precondition and continues remaining integrate work.
+  {
+    const calls: string[] = [];
+    const f = fixture({
+      diagnose: async () => ({
+        ...decision("Fix screenshot geometry precondition first"),
+        work: [
+          {
+            title: "fix-geometry",
+            instructions: "Fix helper geometry",
+            writes: ["web/src"],
+          },
+        ],
+        completesStage: false,
+      }),
+      execute: async (work) => {
+        calls.push(`execute:${work.title}`);
+      },
+    });
+    await f.runner.run("assignment integrate", {
+      initial: async () => {
+        calls.push("initial");
+        throw new AttemptFailure("blocked on geometry", ["step-a"]);
+      },
+      continueWork: async (handoff) => {
+        calls.push(`continue:${handoff.afterPrecondition ? "post" : "direct"}`);
+      },
+      scope: () => ["web/src"],
+    });
+    expect(calls).toEqual(["initial", "execute:fix-geometry", "continue:post"]);
+  }
+});
+
+it("AssignmentRunner escalates stalled partial attempts with unchanged files to diagnosis", async () => {
+  const f = fixture({
+    observe: async () => "unchanged-tree",
+    diagnose: vi.fn(async () => ({
+      ...decision("Resolve underlying cause"),
+      work: [{ title: "repair", instructions: "fix", writes: ["src"] }],
+      completesStage: true,
+    })),
+  });
+  let continuations = 0;
+  await f.runner.run("assignment a", {
+    initial: async () => {
+      throw new PartialAssignment("step-1", "First partial");
+    },
+    continueWork: async () => {
+      continuations++;
+      throw new PartialAssignment(
+        "step-2",
+        "Second partial with no file edits",
+      );
+    },
+    scope: () => ["src"],
+  });
+  expect(continuations).toBe(1);
+  expect(f.ports.diagnose).toHaveBeenCalledTimes(1);
+});
+
+it("VerificationGate dispatches first-round DirectCheckRepair without diagnosis, then escalates repeated check failures", async () => {
+  let runs = 0;
+  const f = fixture({
+    observe: async () => `tree-${runs}`,
+    diagnose: vi.fn(async (_failure, _previous, floor) => ({
+      ...decision("Replan after repeated check failure"),
+      level: floor,
+      work: [
+        { title: "replan-fix", instructions: "redesign", writes: ["src"] },
+      ],
+    })),
+  });
+  await f.controller.verify("verification", async () => {
+    runs++;
+    if (runs <= 2) {
+      throw DirectCheckRepair.from(
+        "acceptance checks",
+        "verify failed",
+        [`check-${runs}`],
+        "check:verify",
+        ["src", "web/dist"],
+        [],
+      )!;
+    }
+  });
+  expect(runs).toBe(3);
+  expect(f.ports.diagnose).toHaveBeenCalledTimes(1);
+  expect(f.ports.execute).toHaveBeenCalledTimes(2);
+});
+
+it("formatStepEvidence gives compact summaries to passing/not-run steps and preserves mid-output assertion traces for failures", () => {
+  const filler = `${"ok line ".repeat(60)}\n`.repeat(20);
+  const middleFailure =
+    "FAIL test/web/current-plan-entry.test.tsx\nAssertionError: expected approved=false to be true\n  at web/src/components/ChatWorkspace.tsx:142\n";
+  const output = formatStepEvidence(
+    "00000000-0000-4000-8000-000000000001",
+    [
+      {
+        stepId: "lint-step",
+        status: "completed",
+        outcome: "completed",
+        exitCode: 0,
+        closed: true,
+        truncated: false,
+        output: filler,
+      },
+      {
+        stepId: "unit-step",
+        status: "failed",
+        outcome: "failed",
+        exitCode: 1,
+        closed: true,
+        truncated: false,
+        output: `${filler}${middleFailure}${filler}`,
+      },
+      {
+        stepId: "optical-step",
+        status: "not-run",
+        outcome: "completed",
+        exitCode: null,
+        closed: true,
+        truncated: false,
+        output: "Stopped early after gating check failed.",
+      },
+    ],
+    2400,
+  );
+  expect(Buffer.byteLength(output)).toBeLessThanOrEqual(2400);
+  expect(output).toContain(
+    "AssertionError: expected approved=false to be true",
+  );
+  expect(output).toContain("ChatWorkspace.tsx:142");
+  expect(output).toContain("Not run: Stopped early");
+  expect(output).toContain(
+    "run 00000000-0000-4000-8000-000000000001 step unit-step",
+  );
+});
+
+it("AssignmentRunner bounds consecutive direct partial continuations even when files keep changing", async () => {
+  let step = 0;
+  let continuations = 0;
+  const f = fixture({
+    observe: async () => `tree-${step}`,
+    diagnose: vi.fn(async () => ({
+      ...decision("Escalate repeated partials to diagnosis"),
+      work: [
+        { title: "diagnosed-fix", instructions: "finish", writes: ["src"] },
+      ],
+      completesStage: true,
+    })),
+  });
+  await f.runner.run("assignment loop", {
+    initial: async () => {
+      step++;
+      throw new PartialAssignment("p0", "Still working 0");
+    },
+    continueWork: async () => {
+      continuations++;
+      step++;
+      throw new PartialAssignment(
+        `p${continuations}`,
+        `Still working ${continuations}`,
+      );
+    },
+    scope: () => ["src"],
+  });
+  expect(continuations).toBe(3);
+  expect(f.ports.diagnose).toHaveBeenCalledTimes(1);
+});
+
+it("AssignmentRunner skips redundant continueWork after repairing a postCheck failure", async () => {
+  const calls: string[] = [];
+  let linted = 0;
+  const f = fixture({
+    diagnose: vi.fn(async () => ({
+      ...decision("Fix lint violation"),
+      work: [{ title: "fix-lint", instructions: "trim file", writes: ["src"] }],
+    })),
+    execute: async (work) => {
+      calls.push(`execute:${work.title}`);
+    },
+  });
+  await f.runner.run("project knowledge", {
+    initial: async () => {
+      calls.push("initial");
+    },
+    continueWork: async () => {
+      calls.push("continue");
+    },
+    postCheck: async () => {
+      linted++;
+      calls.push(`postCheck:${linted}`);
+      if (linted === 1) throw new AttemptFailure("lint failed", ["k1"]);
+    },
+    scope: () => ["src"],
+  });
+  expect(calls).toEqual([
+    "initial",
+    "postCheck:1",
+    "execute:fix-lint",
+    "postCheck:2",
+  ]);
+});
+
+it("VerificationGate calls onRepairBatchComplete only after every work item in a multi-item batch completes", async () => {
+  const completedBatches: string[] = [];
+  let executed = 0;
+  let gateCalls = 0;
+  const f = fixture({
+    observe: async () => `tree-${executed}`,
+    diagnose: vi.fn(async () => ({
+      ...decision("Two-step architectural replan"),
+      level: "replan" as const,
+      work: [
+        { title: "step-1", instructions: "first edit", writes: ["src"] },
+        { title: "step-2", instructions: "second edit", writes: ["src"] },
+      ],
+    })),
+    execute: async (work) => {
+      executed++;
+      if (work.title === "step-2" && executed === 2)
+        throw new AttemptFailure("step-2 interrupted", ["r2"]);
+    },
+    onRepairBatchComplete: (level) => {
+      completedBatches.push(level);
+    },
+  });
+  await f.controller.verify("verification", async () => {
+    gateCalls++;
+    if (gateCalls === 1) throw new AttemptFailure("review failed", ["rev-1"]);
+  });
+  // First batch failed at step-2, so onRepairBatchComplete fired ONLY once the full replacement batch finished.
+  expect(completedBatches).toEqual(["replan"]);
 });

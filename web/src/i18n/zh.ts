@@ -257,6 +257,9 @@ export const zh = {
   "Task worktree": "任务工作区",
   "Delivery target": "交付目标",
   "Worktree preparation": "工作区准备",
+  "Last confirmed checkpoint": "最近确认的检查点",
+  "Managed dependency links ({count}) are owner-created and unlinked only after identity verification.":
+    "托管依赖链接（{count} 项）由服务创建，仅在身份核验通过后解除链接。",
   "Candidate commit": "候选提交",
   "Candidate acceptance": "候选验收",
   "Checks and automatic Agent review passed": "检查和自动 Agent review 已通过",

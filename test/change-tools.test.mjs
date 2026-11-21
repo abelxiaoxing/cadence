@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { createChangeTools } from "../src/change-tools.mjs";
+import { CHANGE_LIMITS, createChangeTools } from "../src/change-tools.mjs";
 import { createWorkerToolkit } from "../src/worker-toolkit.mjs";
 import { bindWorkerWorkspace } from "../src/worker-workspace.mjs";
 import { deliveryFixture } from "./helpers/delivery-fixture.ts";
@@ -22,7 +22,9 @@ function fixture() {
   owned.push(kit);
   const call = async (args, signal) => {
     const r = await kit.tools[0].execute("id", args, signal);
-    expect(Buffer.byteLength(JSON.stringify(r))).toBeLessThanOrEqual(32768);
+    expect(Buffer.byteLength(JSON.stringify(r))).toBeLessThanOrEqual(
+      CHANGE_LIMITS.responseBytes,
+    );
     return JSON.parse(r.content[0].text);
   };
   const collect = async (args) => {
@@ -149,4 +151,74 @@ it("the registry grants changes only to a review bound to its admitted investiga
       changes: { ...f.binding, root: join(f.home, "other") },
     }),
   ).toThrow("binding");
+});
+it("delta scope shows deltaBase..candidate while full scope stays readable, and escaping stays under responseBytes", async () => {
+  const f = deliveryFixture();
+  writeFileSync(join(f.root, "a.txt"), "round-1\n");
+  f.git("add", "--", "a.txt");
+  f.git("commit", "-qm", "round 1");
+  const deltaBase = f.head(f.root);
+  // Heavy JSON escaping + multi-byte UTF-8: quotes, backslashes, control chars, CJK.
+  const escapedText = `${'\\"\\\t\r\n\u0007你🚀'.repeat(400)}\n`;
+  writeFileSync(join(f.root, "b.txt"), escapedText);
+  f.git("add", "--", "b.txt");
+  f.git("commit", "-qm", "round 2");
+  const candidate = f.head(f.root);
+
+  const kit = createChangeTools({
+    root: f.root,
+    base: f.base,
+    deltaBase,
+    candidate,
+  });
+  owned.push(kit);
+  const call = async (args) => {
+    const r = await kit.tools[0].execute("id", args);
+    expect(Buffer.byteLength(JSON.stringify(r))).toBeLessThanOrEqual(
+      CHANGE_LIMITS.responseBytes,
+    );
+    return JSON.parse(r.content[0].text);
+  };
+  const collect = async (args) => {
+    const pages = [await call(args)];
+    while (pages.at(-1).nextCursor)
+      pages.push(await call({ cursor: pages.at(-1).nextCursor }));
+    return { text: pages.map((p) => p.text).join(""), pages };
+  };
+
+  // Delta paths and diff include only b.txt (deltaBase..candidate).
+  const deltaPaths = await collect({ mode: "paths", scope: "delta" });
+  expect(deltaPaths.text).toContain("b.txt");
+  expect(deltaPaths.text).not.toContain("a.txt");
+  const deltaDiff = await collect({ mode: "diff", scope: "delta" });
+  expect(deltaDiff.text).toContain("b.txt");
+  expect(deltaDiff.text).not.toContain("round-1");
+
+  // Full scope remains readable at all times (never locked out by deltaBase).
+  const fullPaths = await collect({ mode: "paths", scope: "full" });
+  expect(fullPaths.text).toContain("a.txt");
+  expect(fullPaths.text).toContain("b.txt");
+  const fullDefault = await collect({ mode: "paths" });
+  expect(fullDefault.text).toContain("a.txt");
+  expect(fullDefault.text).toContain("b.txt");
+
+  // Heavy-escaped candidate content streams losslessly under CHANGE_LIMITS.responseBytes.
+  const streamed = await collect({ mode: "candidate", path: "b.txt" });
+  expect(streamed.pages.length).toBeGreaterThan(1);
+  expect(streamed.text).toBe(escapedText);
+
+  // Invalid scope combinations are refused.
+  await expect(
+    call({ mode: "candidate", path: "b.txt", scope: "delta" }),
+  ).rejects.toThrow(/delta/i);
+
+  const noDeltaKit = createChangeTools({
+    root: f.root,
+    base: f.base,
+    candidate,
+  });
+  owned.push(noDeltaKit);
+  await expect(
+    noDeltaKit.tools[0].execute("id", { mode: "paths", scope: "delta" }),
+  ).rejects.toThrow(/delta/i);
 });

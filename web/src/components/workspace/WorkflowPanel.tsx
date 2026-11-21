@@ -8,6 +8,7 @@ import {
   FiXCircle,
 } from "react-icons/fi";
 import {
+  CURRENT_WORKFLOW_PLAN_VERSION,
   type DeliveryArtifact,
   type DeliveryObservation,
   deliveryLabels,
@@ -372,19 +373,29 @@ function ApprovalScope({ proposal }: { proposal: WorkflowProposal }) {
         </li>
         <li>
           {t(
-            plan.version === 3
+            plan.version === CURRENT_WORKFLOW_PLAN_VERSION
               ? "Approval confirms the goal, decisions, acceptance and assumptions. The service then finishes on its own: it may adjust the route and repository write scope, record reviewed deviations and update project knowledge."
               : "This retained agreement is read-only. Its declared paths and commands are fixed.",
           )}
         </li>
         <li>
           {t(
-            plan.version === 3 && plan.policy?.installs
+            plan.version === CURRENT_WORKFLOW_PLAN_VERSION &&
+              plan.policy?.installs
               ? "Revisions may add dependency installs with the project’s package manager."
               : plan.setup.length
                 ? "Dependency installs are limited to the listed setup commands."
                 : "No dependency installation.",
           )}{" "}
+          {plan.version === CURRENT_WORKFLOW_PLAN_VERSION &&
+            !!plan.links?.length && (
+              <>
+                {t(
+                  "Managed dependency links ({count}) are owner-created and unlinked only after identity verification.",
+                  { count: plan.links.length },
+                )}{" "}
+              </>
+            )}
           {t("No push, publication or deployment.")}
         </li>
       </ul>
@@ -398,7 +409,9 @@ export function PlanCard({
   canApprove,
   approvalHint,
   onApprove,
-  action = proposal.plan.version === 3 ? "approve" : "readonly",
+  action = proposal.plan.version === CURRENT_WORKFLOW_PLAN_VERSION
+    ? "approve"
+    : "readonly",
   canValidate = false,
   validating = false,
   previous,
@@ -1065,7 +1078,7 @@ export function DeliveryDetails({
 }) {
   const { t, tx } = useT();
   const labels = deliveryLabels(d, status);
-  const rows = [
+  const rows: [string, string][] = [
     [t("Task branch"), d.taskBranch],
     [t("Task worktree"), d.worktreeRoot],
     [
@@ -1073,6 +1086,16 @@ export function DeliveryDetails({
       `${d.binding.target.branch} @ ${d.binding.target.head}`,
     ],
     [t("Worktree preparation"), tx(labels.preparation)],
+    ...(d.binding.policy === "task-branch-v2" ||
+    d.lastCheckpoint !== undefined ||
+    d.checkpointCount !== undefined
+      ? [
+          [
+            t("Last confirmed checkpoint"),
+            `${d.lastCheckpoint ?? t(labels.missingCandidate)}${d.checkpointCount ? ` (${d.checkpointCount})` : ""}`,
+          ] as [string, string],
+        ]
+      : []),
     [t("Candidate commit"), d.candidate ?? t(labels.missingCandidate)],
     [
       t("Candidate acceptance"),

@@ -20,6 +20,7 @@ import {
   type ExecutionContext,
 } from "./models.ts";
 
+export const CURRENT_WORKFLOW_PLAN_VERSION = 4 as const;
 export const WORKFLOW_LIMITS = {
   tasks: 16,
   /** Assignments one run may list in all, counting those its revisions added
@@ -30,6 +31,8 @@ export const WORKFLOW_LIMITS = {
    * the tool schema states no count, so only this bound refuses one. */
   questions: 32,
   checks: 16,
+  builds: 8,
+  links: 8,
   bytes: 256 * 1024,
   /** Goal, route, decisions, assumptions and acceptance together: every
    * worker of the delivery is given them, inside its 32KiB context. */
@@ -42,14 +45,36 @@ export const WORKFLOW_LIMITS = {
   historyScans: 16,
   historyIdleMs: 120000,
 } as const;
+export type WorkflowCheckTier = "fast" | "heavy";
+export type WorkflowCheckTarget = "run" | "skip";
 export interface WorkflowCheck {
   name: string;
   command: string;
   timeoutMs?: number;
+  /** V4: execution cost tier (`fast` default). Never implies skipping post-merge target checks. */
+  tier?: WorkflowCheckTier;
+  /** V4: whether this check reruns in the target checkout after fast-forward merge (`run` default). */
+  target?: WorkflowCheckTarget;
+}
+/** V4: owner-synced build step whose edits must stay inside its declared outputs. */
+export interface WorkflowBuild {
+  name: string;
+  command: string;
+  outputs: string[];
+  timeoutMs?: number;
+}
+/** V4: narrow owner-managed dependency symlink provisioned from the original checkout. */
+export interface WorkflowSetupLink {
+  path: string;
+  source?: string;
+  placement?: "candidate" | "worktree";
 }
 /** Setup placement is part of approval. Missing only in retained agreements,
  * where the original meaning (every worktree) is preserved. */
-export interface WorkflowSetup extends WorkflowCheck {
+export interface WorkflowSetup {
+  name: string;
+  command: string;
+  timeoutMs?: number;
   placement?: "target" | "candidate" | "worktree";
 }
 /** Something a worker should read before it starts: a project document (and
@@ -63,29 +88,34 @@ export interface WorkflowTask {
   instructions: string;
   writes: string[];
   after: string[];
-  /** Version 3: what this assignment reads first. */
+  /** Version 3+: what this assignment reads first. */
   reads?: WorkflowReading[];
 }
-/** Version 3: what the owner may do on its own after approval, beyond revising
+/** Version 3+: what the owner may do on its own after approval, beyond revising
  * the route, the assignments and their write scope. */
 export interface WorkflowPolicy {
   /** Whether a revision may add dependency-installation setup commands. */
   installs: boolean;
 }
 export interface WorkflowPlan {
-  /** Version 3 admits self-revising delivery. Version 2 (adaptive delivery in a
-   * fixed write scope) and unversioned plans are retained and readonly. */
-  version?: 2 | 3;
+  /** Version 4 admits behavioral-convergence single-commit delivery with owner-synced
+   * builds, tiered/target-explicit checks, managed dependency links and private process
+   * reports. Versions 3, 2 and unversioned plans remain readable and readonly. */
+  version?: 2 | 3 | 4;
   /** Version 2 only: approved documentation write paths. */
   knowledge?: string[];
-  /** Version 3: what the coordinator decided on the user's behalf; approval
+  /** Version 3+: what the coordinator decided on the user's behalf; approval
    * confirms these with the goal, decisions and acceptance. */
   assumptions?: string;
-  /** Version 3: existing project documents this delivery may update. */
+  /** Version 3+: existing project documents this delivery may update. */
   documents?: string[];
-  /** Version 3: what the independent review reads first. */
+  /** Version 3+: what the independent review reads first. */
   reviewReads?: WorkflowReading[];
   policy?: WorkflowPolicy;
+  /** Version 4: deterministic owner-synced build commands with declared output paths. */
+  build?: WorkflowBuild[];
+  /** Version 4: owner-managed dependency symlinks from the original checkout. */
+  links?: WorkflowSetupLink[];
   goal: string;
   design: string;
   decisions: string;
@@ -109,7 +139,7 @@ export interface DeliveryTarget {
   head: string;
 }
 export interface DeliveryBinding {
-  policy: "task-branch-v1";
+  policy: "task-branch-v1" | "task-branch-v2";
   target: DeliveryTarget;
 }
 export interface AcceptanceRecord {
@@ -146,7 +176,13 @@ export interface DeliveryObservation {
   workspace: {
     head: string;
     state: "preparing" | "ready" | "removed" | "retained";
+    /** V4 (`task-branch-v2`) uses detached development checkpoints until final sign-off. */
+    mode?: "branch" | "detached";
   } | null;
+  /** V4: latest confirmed private checkpoint OID pinned under refs/cadence/runs/<id>/checkpoints/*. */
+  lastCheckpoint?: string | null;
+  /** V4: count of confirmed private development/delivery checkpoints. */
+  checkpointCount?: number;
   candidate: string | null;
   acceptance: AcceptanceRecord | null;
   integration: {
@@ -220,6 +256,7 @@ export interface WorkflowStep {
     | "rejected"
     | "partial"
     | "blocked"
+    | "not-run"
     | "failed"
     | "canceled"
     | "timeout"
@@ -459,8 +496,17 @@ const taskId = (v: unknown, strict = false) => {
 };
 /** The identity a new assignment may take. */
 export const workflowTaskId = (v: unknown) => taskId(v, true);
-export function decodeWorkflowCheck(v: unknown, path = "check"): WorkflowCheck {
-  const o = fields(path, v, ["name", "command"], ["timeoutMs"]);
+export function decodeWorkflowCheck(
+  v: unknown,
+  path = "check",
+  options: { v4Check?: boolean } = {},
+): WorkflowCheck {
+  const o = fields(
+    path,
+    v,
+    ["name", "command"],
+    ["timeoutMs", ...(options.v4Check ? ["tier", "target"] : [])],
+  );
   return {
     name: words(`${path}.name`, o.name, 128, true),
     command: words(`${path}.command`, o.command, 4096, true),
@@ -474,6 +520,91 @@ export function decodeWorkflowCheck(v: unknown, path = "check"): WorkflowCheck {
               throw new Error(
                 "is a whole number of milliseconds from 100 to 2147483647, or left out for no timeout",
               );
+            }
+          }),
+        }),
+    ...(o.tier === undefined
+      ? {}
+      : {
+          tier: at(`${path}.tier`, () => {
+            try {
+              return oneOf(o.tier, ["fast", "heavy"] as const);
+            } catch {
+              throw new Error("is fast or heavy");
+            }
+          }),
+        }),
+    ...(o.target === undefined
+      ? {}
+      : {
+          target: at(`${path}.target`, () => {
+            try {
+              return oneOf(o.target, ["run", "skip"] as const);
+            } catch {
+              throw new Error("is run or skip");
+            }
+          }),
+        }),
+  };
+}
+function decodeWorkflowBuild(
+  v: unknown,
+  path: string,
+  strict: boolean,
+): WorkflowBuild {
+  const o = fields(path, v, ["name", "command", "outputs"], ["timeoutMs"]);
+  const { outputs: rawOutputs, ...command } = o;
+  const outputs = entries(`${path}.outputs`, rawOutputs, 64, (entry, item) =>
+    at(item, () => {
+      const p = workflowPath(entry, strict);
+      if (!workflowBoundary(p))
+        throw new Error(
+          "cannot target credentials, keys, .env, .git or paths outside the repository",
+        );
+      return p;
+    }),
+  );
+  if (!outputs.length)
+    issue(
+      `${path}.outputs`,
+      "needs at least one declared repository-relative output path",
+    );
+  if (new Set(outputs).size !== outputs.length)
+    issue(`${path}.outputs`, "lists a path twice");
+  const base = decodeWorkflowCheck(command, path);
+  return { ...base, outputs };
+}
+function decodeWorkflowSetupLink(
+  v: unknown,
+  path: string,
+  strict: boolean,
+): WorkflowSetupLink {
+  const o = fields(path, v, ["path"], ["source", "placement"]);
+  const linkPath = (raw: unknown, fieldPath: string) =>
+    at(fieldPath, () => {
+      const p = workflowPath(raw, strict);
+      if (
+        !workflowBoundary(p) ||
+        p.split("/").some((segment) => segment.startsWith("."))
+      )
+        throw new Error(
+          "must be a plain checkout-relative dependency path without dot-prefixed segments",
+        );
+      return p;
+    });
+  return {
+    path: linkPath(o.path, `${path}.path`),
+    ...(o.source === undefined
+      ? {}
+      : { source: linkPath(o.source, `${path}.source`) }),
+    ...(o.placement === undefined
+      ? {}
+      : {
+          placement: at(`${path}.placement`, () => {
+            try {
+              return oneOf(o.placement, ["candidate", "worktree"] as const);
+            } catch {
+              throw new Error("is candidate or worktree");
             }
           }),
         }),
@@ -539,10 +670,11 @@ export function decodeWorkflowPlan(
     );
   }
   const version = modern ? (v as { version?: unknown }).version : undefined;
-  if (modern && version !== 2 && version !== 3)
+  if (modern && version !== 2 && version !== 3 && version !== 4)
     throw new Error("Unsupported delivery agreement version");
-  const current = version === 3;
-  if (strict && !current)
+  const v3OrNewer = version === 3 || version === 4;
+  const v4 = version === 4;
+  if (strict && !v4)
     throw new Error(
       "Publish a new delivery agreement; earlier agreements are readonly",
     );
@@ -551,8 +683,15 @@ export function decodeWorkflowPlan(
     "design",
     "decisions",
     "acceptance",
-    ...(current
-      ? ["version", "assumptions", "documents", "reviewReads", "policy"]
+    ...(v3OrNewer
+      ? [
+          "version",
+          "assumptions",
+          "documents",
+          "reviewReads",
+          "policy",
+          ...(v4 ? ["build", "links"] : []),
+        ]
       : modern
         ? ["version", "knowledge"]
         : ["projectContext", "repairAttempts"]),
@@ -582,7 +721,7 @@ export function decodeWorkflowPlan(
         "instructions",
         "writes",
         "after",
-        ...(current ? ["reads"] : []),
+        ...(v3OrNewer ? ["reads"] : []),
       ]);
       return {
         id: at(`${path}.id`, () => taskId(t.id, strict)),
@@ -597,7 +736,7 @@ export function decodeWorkflowPlan(
           WORKFLOW_LIMITS.tasks,
           (id, entry) => at(entry, () => taskId(id, strict)),
         ),
-        ...(current
+        ...(v3OrNewer
           ? { reads: decodeWorkflowReadings(t.reads, strict, `${path}.reads`) }
           : {}),
       };
@@ -644,19 +783,46 @@ export function decodeWorkflowPlan(
           "Independent tasks share write paths; assign an owner and dependency",
         );
     }
-  const commands = (value: unknown, name: string, maximum: number) =>
-    entries(name, value, maximum, decodeWorkflowCheck);
-  const checks = commands(o.checks, "checks", WORKFLOW_LIMITS.checks);
+  const commands = (
+    value: unknown,
+    name: string,
+    maximum: number,
+    v4Check = false,
+  ) =>
+    entries(name, value, maximum, (entry, path) =>
+      decodeWorkflowCheck(entry, path, { v4Check }),
+    );
+  const checks = commands(o.checks, "checks", WORKFLOW_LIMITS.checks, v4);
   if (!checks.length)
     issue("checks", "needs at least one real verification command");
+  const build = v4
+    ? entries("build", o.build, WORKFLOW_LIMITS.builds, (entry, path) =>
+        decodeWorkflowBuild(entry, path, strict),
+      )
+    : undefined;
+  const links = v4
+    ? entries("links", o.links, WORKFLOW_LIMITS.links, (entry, path) =>
+        decodeWorkflowSetupLink(entry, path, strict),
+      )
+    : undefined;
+  if (links) {
+    const linkPaths = links.map((l) => l.path);
+    for (const [i, l] of links.entries()) {
+      if (linkPaths.indexOf(l.path) !== i)
+        issue(
+          `links[${i}].path`,
+          `${quoted(l.path)} is already declared by links[${linkPaths.indexOf(l.path)}]`,
+        );
+    }
+  }
   const result: WorkflowPlan = {
     goal: words("goal", o.goal, 8192, true),
     design: words("design", o.design, 32768, true),
     decisions: words("decisions", o.decisions, 16384),
     acceptance: words("acceptance", o.acceptance, 16384, true),
-    ...(current
+    ...(v3OrNewer
       ? {
-          version: 3 as const,
+          version: (v4 ? 4 : 3) as 3 | 4,
           assumptions: words("assumptions", o.assumptions, 16384),
           documents: documentation(o.documents, "documents"),
           reviewReads: decodeWorkflowReadings(
@@ -674,6 +840,7 @@ export function decodeWorkflowPlan(
               }
             }),
           },
+          ...(v4 ? { build: build ?? [], links: links ?? [] } : {}),
         }
       : modern
         ? {
@@ -735,7 +902,7 @@ export function decodeWorkflowPlan(
   if (scope > 16384)
     issue(
       "tasks",
-      `the write paths of all assignments and documents are ${scope} bytes together; at most 16384`,
+      `the write paths of all assignments, build outputs and documents are ${scope} bytes together; at most 16384`,
     );
   const readings = (list: WorkflowReading[] | undefined, name: string) =>
     (list ?? []).flatMap((r, i): [string, string][] => [
@@ -761,6 +928,10 @@ export function decodeWorkflowPlan(
         [`${name}[${i}].command`, c.command],
       ]),
     ),
+    ...(result.build ?? []).flatMap((b, i): [string, string][] => [
+      [`build[${i}].name`, b.name],
+      [`build[${i}].command`, b.command],
+    ]),
   ] as [string, string][])
     if (
       [...value].some(
@@ -794,12 +965,14 @@ export function workflowPlanInput(v: unknown): WorkflowPlan {
     return result;
   };
   const plan = completed(v, {
-    version: 3,
+    version: CURRENT_WORKFLOW_PLAN_VERSION,
     decisions: "",
     assumptions: "",
     documents: [],
     reviewReads: [],
     policy: {},
+    build: [],
+    links: [],
     setup: [],
     baselineChecks: [],
   });
@@ -810,6 +983,22 @@ export function workflowPlanInput(v: unknown): WorkflowPlan {
       task && typeof task === "object" && !Array.isArray(task)
         ? completed(task, { after: [], reads: [] })
         : task,
+    );
+  if (Array.isArray(plan.checks))
+    plan.checks = plan.checks.map((check: unknown) =>
+      check && typeof check === "object" && !Array.isArray(check)
+        ? completed(check, {})
+        : check,
+    );
+  if (Array.isArray(plan.build))
+    plan.build = plan.build.map((b: unknown) =>
+      b && typeof b === "object" && !Array.isArray(b) ? completed(b, {}) : b,
+    );
+  if (Array.isArray(plan.links))
+    plan.links = plan.links.map((link: unknown) =>
+      link && typeof link === "object" && !Array.isArray(link)
+        ? completed(link, {})
+        : link,
     );
   return decodeWorkflowPlan(plan, { strict: true });
 }
@@ -857,11 +1046,15 @@ export function researchInput(v: unknown): {
 export function workflowDocuments(p: WorkflowPlan): string[] {
   return p.documents ?? p.knowledge ?? [];
 }
-/** The write scope the agreement starts from. A version-3 run may extend it
+/** The write scope the agreement starts from. Version 3+ runs may extend it
  * inside the repository boundary (`workflowBoundary`); earlier versions never. */
 export function workflowWrites(p: WorkflowPlan): string[] {
   return [
-    ...new Set([...p.tasks.flatMap((t) => t.writes), ...workflowDocuments(p)]),
+    ...new Set([
+      ...p.tasks.flatMap((t) => t.writes),
+      ...(p.build ?? []).flatMap((b) => b.outputs),
+      ...workflowDocuments(p),
+    ]),
   ];
 }
 /** Whether a revision may bring this path into a run's write scope: a plain
@@ -914,7 +1107,7 @@ function decodeWorkflowReadings(
   });
 }
 const agreementText = (p: WorkflowPlan) =>
-  `# ${p.goal}\n\nInitial route (${p.version === 3 ? "the owner may revise it" : "adapt within the approved boundary"}): ${p.design}\n\nExplicit decisions and non-goals: ${p.decisions}${p.assumptions ? `\n\nAssumptions confirmed with the agreement: ${p.assumptions}` : ""}\n\nAcceptance: ${p.acceptance}`;
+  `# ${p.goal}\n\nInitial route (${p.version === 3 || p.version === 4 ? "the owner may revise it" : "adapt within the approved boundary"}): ${p.design}\n\nExplicit decisions and non-goals: ${p.decisions}${p.assumptions ? `\n\nAssumptions confirmed with the agreement: ${p.assumptions}` : ""}\n\nAcceptance: ${p.acceptance}`;
 export function workflowContext(p: WorkflowPlan): string {
   return text(agreementText(p), WORKFLOW_LIMITS.context, true);
 }
@@ -958,7 +1151,7 @@ export function decodeDeliveryBinding(value: unknown): DeliveryBinding {
     "head",
   ]);
   return {
-    policy: oneOf(b.policy, ["task-branch-v1"]),
+    policy: oneOf(b.policy, ["task-branch-v1", "task-branch-v2"] as const),
     target: {
       checkoutRoot: deliveryPath(t.checkoutRoot),
       repository: deliveryPath(t.repository),
@@ -978,6 +1171,12 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
       : []),
     "preparation",
     "workspace",
+    ...(Object.hasOwn((value ?? {}) as object, "lastCheckpoint")
+      ? ["lastCheckpoint"]
+      : []),
+    ...(Object.hasOwn((value ?? {}) as object, "checkpointCount")
+      ? ["checkpointCount"]
+      : []),
     "candidate",
     "acceptance",
     "integration",
@@ -1020,7 +1219,11 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
   if (acceptance && acceptance.candidate !== candidate)
     throw new Error("Stale candidate acceptance");
   const workspace = nullable(d.workspace, (v) => {
-    const w = closed(v, ["head", "state"]);
+    const w = closed(v, [
+      "head",
+      "state",
+      ...(Object.hasOwn((v ?? {}) as object, "mode") ? ["mode"] : []),
+    ]);
     return {
       head: gitOid(w.head),
       state: oneOf(w.state, [
@@ -1029,6 +1232,9 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
         "removed",
         "retained",
       ] as const),
+      ...(w.mode === undefined
+        ? {}
+        : { mode: oneOf(w.mode, ["branch", "detached"] as const) }),
     };
   });
   const binding = decodeDeliveryBinding(d.binding),
@@ -1071,6 +1277,12 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
         }),
     preparation: oneOf(d.preparation, ["pending", "ready", "unknown"]),
     workspace,
+    ...(d.lastCheckpoint === undefined
+      ? {}
+      : { lastCheckpoint: nullable(d.lastCheckpoint, gitOid) }),
+    ...(d.checkpointCount === undefined
+      ? {}
+      : { checkpointCount: integer(d.checkpointCount, 0, 1_000_000) }),
     candidate,
     acceptance,
     integration: {
@@ -1096,6 +1308,8 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
 export function readableDelivery(binding?: DeliveryBinding): string {
   if (!binding) return "";
   const t = binding.target;
+  if (binding.policy === "task-branch-v2")
+    return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.\nAcceptance: seal a single-parent delivery commit on top of the verified target frontier, run declared checks and independent Agent review on that exact OID. A verified, non-overlapping sibling delivery may be incorporated before sealing, followed by fresh checks and review.\nDelivery: advance the task branch and fast-forward only into the bound target with that exact signed-off OID. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
   return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: new cadence/<goal>-<run-id> branch and one stable isolated worktree after approval. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.\nAcceptance: checks and automatic Agent review of the exact candidate. A verified, non-overlapping sibling delivery may be merged into the isolated candidate, followed by fresh checks and review.\nDelivery: serialized fast-forward only into the bound target at its approved, verified-sibling or own last confirmed baseline. Keep the task branch; remove only owned worktrees without any residue, including ignored files. No source/profile/dependency copying, push or deployment.`;
 }
 /** Display projection only. A missing seal is not proof of missing edits.
@@ -1128,7 +1342,13 @@ export function readableDeliveryRun(run: WorkflowRun): string {
   const d = run.delivery;
   if (!d) return "";
   const labels = deliveryLabels(d, run.status);
-  return `Task branch: ${d.taskBranch}\nWorktree: ${d.worktreeRoot}\nTarget: ${d.binding.target.branch} @ ${d.binding.target.head}\nPreparation: ${labels.preparation}\nCandidate: ${d.candidate ?? labels.missingCandidate}\nAcceptance: ${d.acceptance ? `checks + automatic Agent review of ${d.acceptance.candidate}` : labels.missingCandidate}\nIntegration: ${labels.integration}${d.integration.after ? ` @ ${d.integration.after}` : ""}${d.integration.reason ? ` — ${d.integration.reason}` : ""}\nPost-merge checks: ${d.postChecks}\nWorktree cleanup: ${labels.cleanup}${d.cleanup.reason ? ` — ${d.cleanup.reason}` : ""}\nPolicy: keep the task branch; no push or deployment.`;
+  const checkpointLine =
+    d.binding.policy === "task-branch-v2" ||
+    d.lastCheckpoint !== undefined ||
+    d.checkpointCount !== undefined
+      ? `\nLast confirmed checkpoint: ${d.lastCheckpoint ?? labels.missingCandidate}${d.checkpointCount ? ` (${d.checkpointCount} total)` : ""}`
+      : "";
+  return `Task branch: ${d.taskBranch}\nWorktree: ${d.worktreeRoot}\nTarget: ${d.binding.target.branch} @ ${d.binding.target.head}\nPreparation: ${labels.preparation}${checkpointLine}\nCandidate: ${d.candidate ?? labels.missingCandidate}\nAcceptance: ${d.acceptance ? `checks + automatic Agent review of ${d.acceptance.candidate}` : labels.missingCandidate}\nIntegration: ${labels.integration}${d.integration.after ? ` @ ${d.integration.after}` : ""}${d.integration.reason ? ` — ${d.integration.reason}` : ""}\nPost-merge checks: ${d.postChecks}\nWorktree cleanup: ${labels.cleanup}${d.cleanup.reason ? ` — ${d.cleanup.reason}` : ""}\nPolicy: keep the task branch; no push or deployment.`;
 }
 export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
   const modern =
@@ -1404,10 +1624,12 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
         status:
           s.kind === "review" && s.status === "rejected"
             ? "rejected"
-            : ["implementation", "knowledge"].includes(s.kind as string) &&
-                ["partial", "blocked"].includes(s.status as string)
-              ? oneOf(s.status, ["partial", "blocked"])
-              : status(s.status),
+            : s.kind === "check" && s.status === "not-run"
+              ? "not-run"
+              : ["implementation", "knowledge"].includes(s.kind as string) &&
+                  ["partial", "blocked"].includes(s.status as string)
+                ? oneOf(s.status, ["partial", "blocked"])
+                : status(s.status),
         text: text(s.text, 65536),
         exitCode: nullable(s.exitCode, (n) =>
           integer(n, -2147483648, 2147483647),
@@ -1435,14 +1657,20 @@ export function decodeWorkflowResponse(v: unknown): WorkflowResponse {
     expiresAt: integer(o.expiresAt, 0),
   };
 }
-const readableCheck = (c: WorkflowCheck) =>
-  `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`;
+const readableCheck = (c: WorkflowCheck, v4 = false) =>
+  `${c.name}${v4 ? ` [${c.tier ?? "fast"}, target:${c.target ?? "run"}]` : ""}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`;
+const readableBuild = (b: WorkflowBuild) =>
+  `${b.name}: ${b.command} (${b.timeoutMs === undefined ? "no timeout" : `${b.timeoutMs}ms`}) -> outputs: ${b.outputs.join(", ")}`;
+const readableLink = (l: WorkflowSetupLink) =>
+  `[${l.placement ?? "worktree"}] ${l.path} -> ${l.source ?? l.path}`;
 const readableReading = (r: WorkflowReading) =>
   "research" in r
     ? `investigation ${r.research} — ${r.reason}`
     : `${r.path}${r.section ? ` § ${r.section}` : ""} — ${r.reason}`;
 /** What approval of each agreement version lets the owner do on its own. */
 function readableAutomation(p: WorkflowPlan): string {
+  if (p.version === 4)
+    return `After approval the service works to completion without further confirmation. It advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. It stops for cancellation, uncertain settlement, external target drift, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 3)
     return `After approval the service works to completion without further confirmation. It may on its own: retry and repair a failed assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report. Declared checks always run; a check is set aside only through such a deviation, never silently. At the end it maintains the project's knowledge store under .cadence/ within its fixed budget, adding what this delivery taught and removing what went stale, when a fast-forward can carry it. It stops only for a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, a target branch changed from outside, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 2)
@@ -1451,8 +1679,9 @@ function readableAutomation(p: WorkflowPlan): string {
 }
 export function readableWorkflowPlan(p: WorkflowPlan): string {
   const documents = workflowDocuments(p);
+  const v4 = p.version === 4;
   return `# ${p.goal}\n\n## Initial route (the service may revise it)\n${p.design}\n\n## Decisions\n${p.decisions}\n\n## Acceptance\n${p.acceptance}${
-    p.version === 3
+    p.version === 3 || v4
       ? `\n\n## Assumptions (confirmed by approval)\n${p.assumptions || "None beyond the decisions above."}`
       : ""
   }\n\n## Tasks\n${workflowOrder(p.tasks)
@@ -1462,11 +1691,19 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
     )
     .join(
       "\n\n",
-    )}\n\n## Setup (explicitly authorized commands)\nExecution order: target once before worktree creation, candidate once, then worktree in the candidate and every detached child; listed order within each stage. Each command is a separate process; exports do not persist.\n${p.setup.map((c) => `[${c.placement ?? "worktree"}] ${readableCheck(c)}`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map(readableCheck).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map(readableCheck).join("\n")}${
+    )}\n\n## Setup (explicitly authorized commands)\nExecution order: target once before worktree creation, candidate once, then worktree in the candidate and every detached child; listed order within each stage. Each command is a separate process; exports do not persist.\n${p.setup.map((c) => `[${c.placement ?? "worktree"}] ${readableCheck(c)}`).join("\n") || "None; no dependency installation or copying."}${
+    v4 && p.links?.length
+      ? `\n\n## Managed dependency links (owner-created, identity-verified unlink on cleanup)\n${p.links.map(readableLink).join("\n")}`
+      : ""
+  }${
+    v4 && p.build?.length
+      ? `\n\n## Build (owner-synced derived outputs)\n${p.build.map(readableBuild).join("\n")}`
+      : ""
+  }\n\n## Baseline verification\n${p.baselineChecks.map((c) => readableCheck(c)).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => readableCheck(c, v4)).join("\n")}${
     p.reviewReads?.length
       ? `\n\n## Review reads first\n${p.reviewReads.map(readableReading).join("\n")}`
       : ""
-  }\n\n## Automation boundary\n${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and serialized fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be merged into this candidate and checked/reviewed again. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project documents\n${
+  }\n\n## Automation boundary\n${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? (v4 ? "Authorize one named task branch and detached development checkpoints in a stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, a single clean final delivery commit sealed onto the verified target frontier, and serialized fast-forward delivery of that exact checked and Agent-reviewed OID into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be incorporated before sealing the final candidate. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; unlink only owner-created managed dependency links after identity verification, then remove owned worktrees only when completely free of any remaining residue, including ignored files." : "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and serialized fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be merged into this candidate and checked/reviewed again. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue.") : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. ${v4 ? "Related project knowledge is included; workflow process reports stay in private service records." : "Related project knowledge and workflow Markdown are included."} Worktrees/tools are not a sandbox.\n\n## Project documents\n${
     p.version === undefined
       ? p.projectContext
       : documents.join("\n") ||

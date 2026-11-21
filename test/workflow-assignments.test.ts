@@ -102,13 +102,16 @@ function fixture(
     assertRunning() {
       if (live.abort.signal.aborted) throw new Error("canceled");
     },
-    recoverStage: (
+    runAssignment: async (
       _live: unknown,
       _cwd: string,
       _p: unknown,
       _stage: string,
-      action: () => Promise<unknown>,
-    ) => action(),
+      lifecycle: { initial(): Promise<void>; postCheck?(): Promise<void> },
+    ) => {
+      await lifecycle.initial();
+      await lifecycle.postCheck?.();
+    },
     setup: async (_live: unknown, cwd: string) => {
       events.push(`setup ${cwd}`);
     },

@@ -32,6 +32,7 @@ import {
   type WorkflowPlan,
   workflowCovers,
   workflowPath,
+  workflowWrites,
 } from "./contracts/workflow.ts";
 import { hash } from "./private-files.ts";
 
@@ -410,9 +411,18 @@ const CHANGED = [
 export function workflowChanged(cwd: string): string[] {
   return [...new Set(CHANGED.flatMap((args) => names(gitRead(cwd, args))))];
 }
-export async function changedPaths(cwd: string): Promise<string[]> {
-  const outputs = await Promise.all(CHANGED.map((args) => gitText(cwd, args)));
-  return [...new Set(outputs.flatMap(names))];
+export async function changedPaths(
+  cwd: string,
+  ignoredUntracked: readonly string[] = [],
+): Promise<string[]> {
+  const [worktree, staged, untracked] = await Promise.all(
+    CHANGED.map((args) => gitText(cwd, args)),
+  );
+  const skip = ignoredUntracked.length ? new Set(ignoredUntracked) : null;
+  const others = skip
+    ? names(untracked).filter((p) => !skip.has(p))
+    : names(untracked);
+  return [...new Set([...names(worktree), ...names(staged), ...others])];
 }
 /** A changed path overlaps a scope when either contains the other. */
 export function overlapping(
@@ -445,9 +455,10 @@ function assertVisibleIndex(paths: string[]): void {
 export async function assertWorkflowScope(
   cwd: string,
   allowed: readonly string[],
+  ignoredUntracked: readonly string[] = [],
 ): Promise<string[]> {
   assertVisibleIndex(indexHidden(await gitText(cwd, INDEX_FLAGS)));
-  const changes = await changedPaths(cwd);
+  const changes = await changedPaths(cwd, ignoredUntracked);
   const outside = changes.filter((name) => !workflowCovers(allowed, name));
   if (outside.length)
     throw new WorkflowRefusal(
@@ -602,9 +613,10 @@ export async function assertCommittedScope(
 export async function assertCandidate(
   cwd: string,
   candidate: string,
+  ignoredUntracked: readonly string[] = [],
 ): Promise<void> {
   if ((await gitHead(cwd)) !== candidate) throw new ContractError("stale");
-  await assertWorkflowScope(cwd, []);
+  await assertWorkflowScope(cwd, [], ignoredUntracked);
 }
 /** Consent observation: branch/HEAD, declared target contents and project
  * guidance, plus a refusal when a declared target is already dirty. Unrelated
@@ -613,12 +625,7 @@ export function workflowObservation(
   cwd: string,
   plan?: WorkflowPlan,
 ): { identity: string; head: string; branch: string } {
-  const declared = [
-    ...new Set([
-      ...(plan?.tasks.flatMap((t) => t.writes) ?? []),
-      ...(plan?.knowledge ?? []),
-    ]),
-  ];
+  const declared = plan ? workflowWrites(plan) : [];
   for (const p of declared) declaredTarget(cwd, p);
   const paths = [...new Set([".cadence/project.md", "AGENTS.md", ...declared])];
   const working = plan?.delivery === "working-copy";

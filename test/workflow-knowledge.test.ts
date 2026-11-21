@@ -107,13 +107,16 @@ function fixture(curate: (put: (path: string, text: string) => void) => void) {
     assertRunning() {},
     evidence: () => "native evidence",
     write: (p: string, v: unknown) => records.set(p, v),
-    recoverStage: (
+    runAssignment: async (
       _l: unknown,
       _c: string,
       _p: unknown,
       _stage: string,
-      action: () => Promise<unknown>,
-    ) => action(),
+      lifecycle: { initial(): Promise<void>; postCheck?(): Promise<void> },
+    ) => {
+      await lifecycle.initial();
+      await lifecycle.postCheck?.();
+    },
     editAttempt: async (
       _l: unknown,
       _c: string,

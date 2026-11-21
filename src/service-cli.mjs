@@ -3950,6 +3950,8 @@ var WORKFLOW_LIMITS = {
   route: 48,
   questions: 32,
   checks: 16,
+  builds: 8,
+  links: 8,
   bytes: 256 * 1024,
   context: 32768,
   reason: 1024,
