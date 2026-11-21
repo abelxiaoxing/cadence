@@ -129,6 +129,7 @@ function host() {
         return () => rawHandlers.delete(fn);
       },
       getEditorText: () => editor,
+      addAutocompleteProvider() {},
       setWidget: vi.fn(),
       setStatus: vi.fn(),
       select: vi.fn(async (title: string, options: string[]) => {

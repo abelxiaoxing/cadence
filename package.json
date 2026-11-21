@@ -25,6 +25,7 @@
     "src/index.ts",
     "src/native-build.ts",
     "src/native-client.ts",
+    "src/native-command-input.ts",
     "src/native-export.ts",
     "src/native-history.ts",
     "src/operator-cli.mjs",

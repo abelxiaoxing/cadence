@@ -96,7 +96,11 @@ function harness(registrar = register) {
               getSessionId: () => "startup-fixture",
             },
             ...(ctx as object),
-            ui: { setStatus() {}, ...(ctx as any).ui },
+            ui: {
+              setStatus() {},
+              addAutocompleteProvider() {},
+              ...(ctx as any).ui,
+            },
           },
         );
     },

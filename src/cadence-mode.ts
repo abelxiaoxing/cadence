@@ -67,6 +67,7 @@ import {
   type PublicError,
   type Reply,
 } from "./service-contract.ts";
+import { commandTerminalInput } from "./native-command-input.ts";
 import { CADENCE_MODE_ENTRY } from "./session-entries.mjs";
 import { diagnosticText } from "./verification-diagnostics.ts";
 import { effectiveWorkspace, resolveWorkspace } from "./workspace.ts";
@@ -177,6 +178,9 @@ export class CadenceUserInput {
       return;
     }
     if (eligible) this.value = { text, at };
+  }
+  completeCommand(before: string, after: string) {
+    if (this.value?.text === before) this.value.text = after;
   }
   openDialog(at = Date.now()) {
     this.clear();
@@ -821,14 +825,17 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       );
     status(state.runId ? "retained work; ask for status" : "ready");
     if (ctx.mode === "tui")
-      unsubscribe = ctx.ui.onTerminalInput((data) => {
-        raw.input(
-          data,
-          ctx.ui.getEditorText(),
-          guard(ctx) && ctx.isIdle() && !ctx.hasPendingMessages(),
-        );
-        return undefined;
-      });
+      unsubscribe = commandTerminalInput(
+        ctx,
+        "cadence",
+        (data) =>
+          raw.input(
+            data,
+            ctx.ui.getEditorText(),
+            guard(ctx) && ctx.isIdle() && !ctx.hasPendingMessages(),
+          ),
+        (before, after) => raw.completeCommand(before, after),
+      );
   });
   pi.on("session_shutdown", () => {
     unsubscribe?.();
