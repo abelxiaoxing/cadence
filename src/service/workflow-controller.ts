@@ -256,9 +256,16 @@ export function decodeRecoveryDecision(
     ]);
     const action = oneOf(o.action, ["continue", "blocked"]);
     let level = has("level") ? oneOf(o.level, RECOVERY_LEVELS) : "repair";
-    const cited = list(o.evidence, 32, (v) => text(v, 160, true));
+    const evidenceError =
+      "evidence must be a nonempty array of at most 32 exact failed step IDs from the supplied current evidence (at most 160 UTF-8 bytes each), not diagnostic prose; put explanations in cause or strategy";
+    let cited: string[];
+    try {
+      cited = list(o.evidence, 32, (v) => text(v, 160, true));
+    } catch {
+      return refuse(evidenceError);
+    }
     if (!cited.length || cited.some((id) => !bounds.evidence.includes(id)))
-      refuse("Recovery must cite this failure's actual step identities");
+      refuse(evidenceError);
     const scope = has("scope")
       ? list(o.scope, 64, (v) => workflowPath(v, true))
       : [];
@@ -657,6 +664,7 @@ Each work item is an editing assignment and needs at least one write path. Omit 
 - level "deviate": only when an acceptance item or decision cannot be met as written. Deliver the closest achievable result and record the deviation: the item, the evidence it is impossible, what is delivered instead, and in "waives" any declared check that can no longer pass because of it. An independent review must find it necessary and minimal, and it leads the final report.
 Use action "blocked" only for a condition outside the repository that no route can remove, and name it in "blocker": an unavailable model, failed authentication, actual storage or permission limits, a target branch changed from outside, an installation this agreement does not allow, or a missing tool with no repository-local alternative. Before blocking, consider changes beyond the initial scope. A failing baseline, test fixture incompatible with a long temporary path or inherited service environment, or an unsuitable original approach is a repository repair, not proof of an external blocker. Repair the fixture or implementation while preserving the tested behavior and production protections; do not demand relocation of owner resources, execution outside the service, or another user confirmation when a repository-local route can work. A hard problem is not a blocker.
 The execution context supplied with evidence is authoritative about what ran and where. Project guidance that applies only when a resource was declared does not create a missing resource requirement: do not demand an original temporary directory or marker unless the approved commands actually declared one. Never ask a repair worker to obtain undisclosed owner records, inspect private state or reconstruct the owner environment. Keep every scratch file in the inherited owner temporary root; a socket pathname limit calls for changing the fixture's addressing (such as a relative name in a child process), never a /tmp fallback or another temporary root. Strategy text is explanation only; executable repair actions must be in work. A repair that reports partial progress does not resolve the original failure. Rewording a strategy or work instructions is not progress: the same failed operation with unchanged observed state escalates. Every continuation needs new evidence or an actionable changed approach, not another copy of a failed attempt. Model-request recovery belongs to the SDK and is never permission to replay a workflow step. The owner will run the acceptance checks and independent review again.
+The evidence array contains only exact failed step IDs copied from Current evidence, never descriptions, file locations or an ID followed by commentary. Put diagnostic explanations in cause and strategy.
 ${REPLY}`;
 /** Terminal model-request failure after SDK recovery (or a nonretryable error).
  * This ends delivery, never opens another provider-dependent diagnosis/replay loop.

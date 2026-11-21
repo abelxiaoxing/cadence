@@ -15,6 +15,7 @@ Subsequent messages never require another activation command.
 Active-branch session entries retain mode and the last observed run, not a reusable proposal/grant or an execution replay.
 Session replacement restores normal tools before rebinding the new branch; compaction does not disable the mode.
 Entry and typed exact plan approval require fresh trusted/idle raw-terminal evidence; paste, quoted commands, RPC and extension-origin input cannot provide it.
+`src/native-command-input.ts` observes Pi's public autocomplete provider: Enter may accept the selected Cadence command name and submit it in the same synchronous input dispatch. Only that actual completion may update the raw entry's text, preserving its timestamp, exact arguments and one-use guard; a prefix alone, Tab or a later callback grants nothing. Both command registrars share this adapter without replacing the editor or altering suggestions. `test/native-command-completion.test.mjs` drives the actual Pi editor/provider through both registrars with service attachment intercepted, and covers typed/Tab/Enter paths plus raw-proof expiry, paste, disposal and mismatch refusals.
 Planning tools expose coordinated readonly subagents, proposals and observations rather than uncoordinated edits.
 Product choices use one batch with stable question and option IDs, tradeoffs, recommendations, related acceptance and optional dependencies on earlier answers.
 Native Pi keeps the editable draft in its branch entries and resumes it with `/cadence design`.

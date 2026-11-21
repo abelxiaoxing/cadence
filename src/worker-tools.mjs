@@ -40,7 +40,9 @@ export function captureShell(
       );
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort();
-      const decoder = new TextDecoder("utf-8", { fatal: true });
+      // Shell output is display text, not a UTF-8 protocol. Replace invalid
+      // bytes (including a partial EOF sequence) without aborting the command.
+      const decoder = new TextDecoder("utf-8");
       const sanitizer = new TextSanitizer(secrets);
       let output = "",
         sourceBytes = 0,

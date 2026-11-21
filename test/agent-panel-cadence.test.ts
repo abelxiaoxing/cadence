@@ -487,6 +487,7 @@ describe("shipped entrypoint", () => {
       isProjectTrusted: () => false,
       ui: {
         onTerminalInput: () => () => {},
+        addAutocompleteProvider() {},
         getEditorText: () => "",
         setStatus() {},
         notify: vi.fn(),
