@@ -5553,63 +5553,47 @@ button.link:hover:not(:disabled) {
   text-decoration: underline;
 }
 
-/* ---- Cadence mode switch ---- */
+/* ---- Cadence mode switch: one click turns the mode on or off ---- */
 .mode-toggle {
   flex: none;
   gap: 7px;
-  border-color: transparent;
+  border-radius: 999px;
   background: transparent;
-  color: var(--text-dim);
   font-size: 12px;
 }
-.mode-toggle:hover:not(:disabled) {
-  border-color: transparent;
-  background: var(--bg-elev2);
-}
+/* The old pill switch is superseded by the state icon. */
 .mode-switch {
-  position: relative;
-  width: 26px;
-  height: 15px;
-  border-radius: 999px;
-  background: var(--border);
-  transition: background 0.15s;
+  display: none;
 }
-.mode-switch::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--text-dim);
-  transition: transform 0.15s;
+.mode-toggle-icon {
+  width: 14px;
+  height: 14px;
 }
-.mode-toggle.armed {
+/* Off reads as the entry into Cadence: a dashed accent outline to click. */
+.mode-toggle.off {
   border: 1px dashed var(--accent-text);
   color: var(--accent-text);
 }
-.mode-toggle.armed .mode-switch::after {
-  transform: translateX(5px);
+.mode-toggle.off:hover:not(:disabled) {
+  background: var(--accent-soft);
 }
+/* On is a filled pill: the mode is active, one click exits it. */
 .mode-toggle.on {
-  color: var(--prism-b);
-}
-.mode-toggle.on .mode-switch {
+  border-color: var(--prism-b);
   background: var(--prism-b);
+  color: var(--on-accent);
 }
-.mode-toggle.on .mode-switch::after {
-  background: var(--on-accent);
-  transform: translateX(11px);
+.mode-toggle.on:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--primary-hover);
 }
 
 /* The label still reports mode state when the switch cannot be changed. */
 .mode-toggle:disabled {
   opacity: 1;
+  border-color: var(--border);
+  background: var(--chip-bg, var(--bg-elev2));
   color: var(--text-primary);
-}
-.mode-toggle:disabled .mode-switch {
-  opacity: 0.5;
 }
 
 /* ---- Topbar overflow menu: refresh, disconnect, build ---- */

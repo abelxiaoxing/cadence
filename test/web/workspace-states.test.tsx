@@ -1,8 +1,19 @@
+import { Children, isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
-import type { WorkbenchResult } from "../../src/service/contracts/workbench.ts";
+import type { ChoiceVersion } from "../../src/service/contracts/models.ts";
+import type {
+  CadenceConversation,
+  WorkbenchCommand,
+  WorkbenchResult,
+} from "../../src/service/contracts/workbench.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import { CadenceModeButton } from "../../web/src/components/workspace/CadenceModeButton";
+import {
+  ChatComposer,
+  type ChatComposerProps,
+} from "../../web/src/components/workspace/ChatComposer";
+import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
 import {
   FilePreview,
   FilesPanel,
@@ -14,24 +25,89 @@ const files = vi.hoisted(() => ({
   value: undefined as WorkbenchResult | undefined,
   error: undefined as string | undefined,
 }));
-vi.mock("../../web/src/client/use-workbench", () => ({
-  useWorkbench: () => ({ ...files, refresh() {} }),
+const f = vi.hoisted(() => ({
+  state: undefined as CadenceConversation | undefined,
+  catalog: undefined as ChoiceVersion | undefined,
+  no: () => {},
+}));
+vi.mock("../../web/src/client/use-workbench", async (load) => ({
+  ...(await load<typeof import("../../web/src/client/use-workbench")>()),
+  useWorkbench: (_: unknown, r: { kind?: string } | null) => ({
+    refresh: f.no,
+    error: r?.kind === "files" || r?.kind === "file" ? files.error : undefined,
+    value:
+      r?.kind === "files" || r?.kind === "file"
+        ? files.value
+        : r?.kind === "cadence-conversation"
+          ? { kind: r.kind, state: f.state }
+          : r?.kind === "conversation-context"
+            ? {
+                kind: r.kind,
+                context: {
+                  id: "chat",
+                  cwd: "/fixture",
+                  revision: 0,
+                  model: {
+                    provider: "fixture",
+                    model: "fixture",
+                    api: "openai-completions",
+                    thinking: "low",
+                  },
+                },
+              }
+            : undefined,
+  }),
+}));
+vi.mock("../../web/src/client/use-conversation", () => ({
+  useConversation: () => ({
+    summary: {
+      id: "chat",
+      title: "Fixture discussion",
+      status: "completed",
+      live: undefined,
+      origin: "webui",
+      leaf: "leaf",
+    },
+    pinned: false,
+    leaf: "leaf",
+    turns: [],
+    runs: [],
+    pending: [],
+    choose: f.no,
+    undelivered: [],
+    commands: [],
+    count: 1,
+    refresh: f.no,
+  }),
+}));
+vi.mock("../../web/src/client/use-model-catalog", () => ({
+  useModelCatalog: () => ({
+    catalog: f.catalog && {
+      version: f.catalog,
+      entries: [],
+      status: "complete",
+    },
+    reread: f.no,
+    isCurrent: () => true,
+  }),
 }));
 afterEach(() => {
   files.value = undefined;
   files.error = undefined;
+  f.state = undefined;
+  f.catalog = undefined;
+  vi.unstubAllGlobals();
 });
 
 it.each(["en", "zh"] as const)(
-  "%s: mode off, armed, confirmed and unobserved are distinct without implying approval",
+  "%s: the mode toggle is a one-click off/on switch, unknown stays disabled",
   (locale) => {
     const click = vi.fn();
-    const render = (active: boolean, armed: boolean, known = true) =>
+    const render = (active: boolean, known = true) =>
       renderToStaticMarkup(
         <LocaleProvider initial={locale}>
           <CadenceModeButton
             active={active}
-            armed={armed}
             known={known}
             disabled={false}
             onClick={click}
@@ -39,58 +115,174 @@ it.each(["en", "zh"] as const)(
         </LocaleProvider>,
       );
     const chinese = locale === "zh";
-    for (const [active, armed, known, state, text, title] of [
+    for (const [active, state, text, title] of [
       [
         false,
-        false,
-        true,
         "off",
-        chinese ? "Cadence 已关闭" : "Cadence off",
+        chinese ? "开启 Cadence" : "Turn on Cadence",
         chinese
           ? "开启 Cadence 模式：先商定计划，再开始实施。"
           : "Turn on Cadence mode: agree on a plan before implementation.",
       ],
       [
-        false,
-        true,
-        true,
-        "armed",
-        chinese ? "下次发送开启 Cadence" : "Cadence on next Send",
-        chinese
-          ? "发送下一条消息时将开启 Cadence 模式，点击取消。"
-          : "Your next message turns on Cadence mode. Click to cancel.",
-      ],
-      [
-        true,
-        true,
         true,
         "on",
-        chinese ? "Cadence 已开启" : "Cadence on",
+        chinese ? "关闭 Cadence" : "Turn off Cadence",
         chinese
           ? "Cadence 模式已开启，点击退出。"
           : "Cadence mode is on. Click to exit it.",
       ],
     ] as const) {
-      const html = render(active, armed, known);
+      const html = render(active);
       expect(html).toContain(`class="mode-toggle ${state}"`);
       expect(html).toContain(`aria-label="${text}"`);
       expect(html).toContain(`title="${title}"`);
+      expect(html).toContain('class="mode-toggle-icon"');
       expect(html).toContain(`</span>${text}</button>`);
       expect(html).not.toMatch(/disabled=|aria-pressed="true"/);
     }
     const neutral = chinese
       ? "Cadence 状态未确认"
       : "Cadence state unavailable";
-    for (const active of [false, true])
-      for (const armed of [false, true]) {
-        const html = render(active, armed, false);
-        expect(html).toContain('class="mode-toggle unknown"');
-        expect(html).toContain('disabled=""');
-        expect(html).toContain(`aria-label="${neutral}"`);
-        expect(html).toContain(`title="${neutral}"`);
-        expect(html).toContain(`</span>${neutral}</button>`);
-      }
+    for (const active of [false, true]) {
+      const html = render(active, false);
+      expect(html).toContain('class="mode-toggle unknown"');
+      expect(html).toContain('disabled=""');
+      expect(html).toContain(`aria-label="${neutral}"`);
+      expect(html).toContain(`title="${neutral}"`);
+      expect(html).toContain('class="mode-toggle-icon"');
+      expect(html).toContain(`</span>${neutral}</button>`);
+    }
     expect(click).not.toHaveBeenCalled();
+  },
+);
+
+function composer(tree: ReturnType<typeof ChatWorkspace>) {
+  const dock = Children.toArray(tree.props.children).find(
+    (el) =>
+      isValidElement<{ className?: string }>(el) &&
+      el.props.className === "composer-dock",
+  );
+  if (!isValidElement<{ children: React.ReactNode }>(dock))
+    throw Error("missing dock");
+  const editor = Children.toArray(dock.props.children).find(
+    (el) => isValidElement(el) && el.type === ChatComposer,
+  );
+  if (!isValidElement<ChatComposerProps>(editor)) throw Error("missing editor");
+  return editor.props;
+}
+
+function modeToggle(enabled: boolean) {
+  const command = vi.fn(async (cmd: WorkbenchCommand) => ({
+    kind: "ok",
+    value: { kind: "accepted", commandId: cmd.commandId },
+  }));
+  const client = new ServiceClient(transport({ workbenchCommand: command }));
+  const catalog: ChoiceVersion = {
+    epoch: crypto.randomUUID(),
+    accessGeneration: 1,
+    configRev: 1,
+    catalogId: crypto.randomUUID(),
+    conversation: { id: "chat", cwd: "/fixture" },
+  };
+  // Entering Cadence is a normal Send, so it needs a chosen model to ride on.
+  vi.spyOn(client, "models").mockResolvedValue({
+    kind: "ok",
+    value: {
+      status: "complete",
+      withheld: 0,
+      remembered: null,
+      entries: [],
+      version: catalog,
+      selected: {
+        provider: "fixture",
+        model: "fixture",
+        api: "openai-completions",
+        thinking: "low",
+        sourceSelectionId: crypto.randomUUID(),
+      },
+    },
+  });
+  f.state = {
+    id: "chat",
+    revision: 1,
+    enabled,
+    head: enabled ? "turn-1" : null,
+    proposal: null,
+    runs: [],
+  };
+  f.catalog = catalog;
+  return { client, command };
+}
+
+it.each([false, true])(
+  "%s: clicking the mode toggle sends the one-shot command and keeps the draft",
+  async (enabled) => {
+    const draft = "my draft";
+    const storage = new Map<string, string>();
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) =>
+        key === "cadence:draft:workspace:chat"
+          ? draft
+          : (storage.get(key) ?? null),
+      setItem: (key: string, value: string) => {
+        storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+    });
+    const { client, command } = modeToggle(enabled);
+    const prepare = vi.fn(async () => {});
+    let click: (() => void) | undefined, editor: ChatComposerProps | undefined;
+    function Probe() {
+      const tree = ChatWorkspace({
+        client,
+        id: "chat",
+        workspaceId: "workspace",
+        initialCwd: "/fixture",
+        enabled: true,
+        actionsReady: true,
+        modelAvailability: {
+          status: "ready",
+          epoch: "fixture",
+          attachmentVersion: 1,
+        },
+        prepareForPlan: prepare,
+        prepareForSend: prepare,
+        onModelChanged: f.no,
+        onChanged: f.no,
+        onReferenceUsed: f.no,
+      });
+      editor = composer(tree);
+      click = editor.cadence.onClick;
+      return tree;
+    }
+    renderToStaticMarkup(<Probe />);
+    if (!click || !editor) throw Error("missing mode toggle");
+    expect(editor.draft).toBe(draft);
+    click();
+    await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
+    const cmd = command.mock.calls[0][0] as WorkbenchCommand;
+    if (enabled) {
+      expect(cmd).toMatchObject({
+        kind: "cadence-exit",
+        conversationId: "chat",
+        revision: 1,
+      });
+    } else {
+      expect(cmd).toMatchObject({
+        kind: "cadence-send",
+        intent: "enter",
+        text: "/cadence",
+        conversationId: "chat",
+        revision: 1,
+      });
+    }
+    // The user draft is not consumed: the command carries the command text.
+    expect(editor.draft).toBe(draft);
+    // The one-shot command never enters the prompt history.
+    expect(storage.get("cadence:prompt-history:workspace")).toBeUndefined();
   },
 );
 
