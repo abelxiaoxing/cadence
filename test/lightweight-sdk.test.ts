@@ -3554,3 +3554,230 @@ it("worker refuses a substituted/missing inherited tool set before any model req
     cleanupSettled: true,
   });
 });
+
+it("sdk-worker mounts request.context via getAppendSystemPrompt for conversation coordinators without prepending to suppliedPrompt", async () => {
+  const runSdkContextMode = async (asConversation: boolean) => {
+    vi.resetModules();
+    const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-ctx-"));
+    const request: WorkerRequest = {
+      kind: asConversation ? "research" : "code",
+      cwd,
+      model: {
+        id: "fixture-model",
+        name: "fixture-model",
+        api: "openai-completions",
+        provider: "fixture",
+        baseUrl: "http://127.0.0.1:1/v1",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 8192,
+        maxTokens: 1024,
+      },
+      thinkingLevel: "off",
+      auth: { ok: true, apiKey: "fixture-key" },
+      instructions: "STATIC_INSTRUCTIONS_MARKER",
+      prompt: "RAW_USER_PROMPT",
+    };
+    const envelope: Record<string, any> = legacyWorkerEnvelope(request);
+    envelope.request.context = "DYNAMIC_CONTEXT_MARKER";
+    if (asConversation) {
+      envelope.request.assignmentId = "conversation";
+      envelope.conversation = {
+        session: {
+          id: "44444444-4444-4444-8444-444444444444",
+          dir: cwd,
+          file: null,
+          head: null,
+        },
+        agentDir: cwd,
+        coordinator: true,
+      };
+    }
+    let observedSystem = "";
+    let observedAppend: string[] = [];
+    let observedPrompt = "";
+    let listener: (event: any) => Promise<void> = async () => {};
+    let sessionTools: string[] = [];
+    let leafEntry: any = null;
+    const manager = {
+      appendCustomEntry: () => {},
+      buildSessionContext: () => ({ messages: [] }),
+      getLeafId: () => "leaf-0",
+      getLeafEntry: () => leafEntry,
+    };
+    const session: any = {
+      thinkingLevel: "off",
+      model: request.model,
+      getActiveToolNames: () => sessionTools,
+      systemPrompt: "",
+      messages: [
+        {
+          role: "assistant",
+          stopReason: "stop",
+          content: [{ type: "text", text: "OK" }],
+        },
+      ],
+      getLastAssistantText: () => "OK",
+      subscribe: () => () => {},
+      abort: () => Promise.resolve(),
+      dispose: () => Promise.resolve(),
+      agent: {
+        state: { tools: [] },
+        toolExecution: "parallel",
+        subscribe: (cb: typeof listener) => {
+          listener = cb;
+          return () => {};
+        },
+        streamFunction: async () => {},
+      },
+      prompt: async (text: string, options: any) => {
+        observedPrompt = text;
+        options.preflightResult(true);
+        if (asConversation) {
+          const userMsg = {
+            role: "user",
+            content: [{ type: "text", text }],
+          };
+          leafEntry = {
+            id: "u1",
+            type: "message",
+            message: userMsg,
+          };
+          await listener({
+            type: "message_start",
+            message: userMsg,
+          });
+          await listener({
+            type: "message_end",
+            message: userMsg,
+          });
+          leafEntry = {
+            id: "a1",
+            type: "message",
+            message: session.messages[0],
+          };
+        }
+        await listener({
+          type: "message_start",
+          message: { role: "assistant" },
+        });
+        await listener({
+          type: "message_end",
+          message: session.messages[0],
+        });
+      },
+    };
+    vi.doMock("@earendil-works/pi-ai", () => ({
+      InMemoryCredentialStore: class {},
+      InMemoryModelsStore: class {},
+      createProvider: (config: any) => config,
+    }));
+    vi.doMock("@earendil-works/pi-ai/api/openai-completions", () => ({}));
+    vi.doMock("@earendil-works/pi-coding-agent", async (original) => {
+      const actual =
+        await original<typeof import("@earendil-works/pi-coding-agent")>();
+      return {
+        ...actual,
+        VERSION: "fixture-sdk",
+        createLocalBashOperations: () => ({}),
+        ModelRuntime: {
+          create: async () => ({ registerNativeProvider: () => {} }),
+        },
+        createExtensionRuntime: () => ({}),
+        SessionManager: {
+          inMemory: () => manager,
+          create: () => manager,
+        },
+        SettingsManager: {
+          inMemory: (settings: any) =>
+            actual.SettingsManager.inMemory(settings),
+        },
+        createAgentSession: async (options: any) => {
+          sessionTools = options.tools;
+          observedSystem = options.resourceLoader.getSystemPrompt() ?? "";
+          observedAppend = options.resourceLoader.getAppendSystemPrompt();
+          session.systemPrompt = [observedSystem, ...observedAppend]
+            .filter(Boolean)
+            .join("\n\n");
+          return { session };
+        },
+      };
+    });
+    vi.stubEnv("CADENCE_SUBAGENT_CHILD", "1");
+    vi.stubEnv("PI_OFFLINE", "1");
+    const hadSend = Object.getOwnPropertyDescriptor(process, "send");
+    if (asConversation) {
+      Object.defineProperty(process, "send", {
+        configurable: true,
+        writable: true,
+        value: () => true,
+      });
+    }
+    vi.spyOn(process.stdin, Symbol.asyncIterator).mockImplementation(
+      async function* () {
+        yield Buffer.from(JSON.stringify(envelope));
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    vi.spyOn(process.stdout, "write").mockImplementation(((
+      text: string,
+      cb?: () => void,
+    ) => {
+      stdout += text;
+      cb?.();
+      return true;
+    }) as any);
+    vi.spyOn(process.stderr, "write").mockImplementation(((text: string) => {
+      stderr += text;
+      return true;
+    }) as any);
+    const disconnect =
+      typeof process.disconnect === "function"
+        ? vi.spyOn(process, "disconnect").mockImplementation(() => {})
+        : undefined;
+    const savedExit = process.exitCode;
+    process.exitCode = 0;
+    try {
+      await import("../src/sdk-worker.mjs" as string);
+      return {
+        exitCode: process.exitCode,
+        observedSystem,
+        observedAppend,
+        observedPrompt,
+        stdout,
+        stderr,
+      };
+    } finally {
+      process.exitCode = savedExit;
+      disconnect?.mockRestore();
+      if (asConversation) {
+        if (hadSend) Object.defineProperty(process, "send", hadSend);
+        else delete (process as any).send;
+      }
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+      vi.doUnmock("@earendil-works/pi-ai");
+      vi.doUnmock("@earendil-works/pi-ai/api/openai-completions");
+      vi.doUnmock("@earendil-works/pi-coding-agent");
+      vi.resetModules();
+    }
+  };
+
+  const conv = await runSdkContextMode(true);
+  expect(conv.stderr).toBe("");
+  expect(conv.exitCode).toBe(0);
+  expect(conv.observedSystem).toBe("STATIC_INSTRUCTIONS_MARKER");
+  expect(conv.observedAppend).toEqual(["DYNAMIC_CONTEXT_MARKER"]);
+  expect(conv.observedPrompt).toBe("RAW_USER_PROMPT");
+
+  const worker = await runSdkContextMode(false);
+  expect(worker.stderr).toBe("");
+  expect(worker.exitCode).toBe(0);
+  expect(worker.observedSystem).toBe("STATIC_INSTRUCTIONS_MARKER");
+  expect(worker.observedAppend).toEqual([]);
+  expect(worker.observedPrompt).toBe(
+    "DYNAMIC_CONTEXT_MARKER\n\nRAW_USER_PROMPT",
+  );
+});

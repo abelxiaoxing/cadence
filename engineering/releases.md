@@ -1301,3 +1301,9 @@ Owner-synced `build` commands validate declared outputs, fast checks run fail-fa
 Development checkpoints stay detached under private run refs until single-parent delivery sealing (`C0` before shell-free knowledge curation, reused on verified zero-edit runs, or `C1` with full re-verification when knowledge changes), advancing the named task branch only at final fast-forward integration.
 Owner-managed dependency links (`links`) record parent/symlink identity before creation and unlink safely before worktree residue checks; process reports stay in private service storage rather than user repository commits.
 Full `verify` and review-fix regressions passed on Linux (controlled fixtures, not paid-provider or native Windows/macOS qualification).
+
+## 2.3.1 release candidate
+
+Separates browser coordinator static dialogue policy (`request.instructions`, `<= 16KiB`) from dynamic per-turn conversation and project context (`request.context`, `<= 32KiB`) mounted via Pi 1.5.0 `appendSystemPrompt` so shared Pi session `.jsonl` files record only the user's raw prompt.
+Introduces a single budget owner (`buildCoordinatorContext`) with UTF-8-safe route-table clipping (`routeTableBrief(..., maxBytes?)`), trims duplicated schema/delivery prose from `CADENCE_INSTRUCTIONS`, and adds executable wire-budget and Pi session-isolation invariant tests to prevent `ContractError("oversize")` regressions.
+Full `verify` passed on Linux after rebuilding canonical operator, service and Web outputs and refreshing `provenance/webui-reuse.json` pins (controlled fixtures, not paid-provider or native Windows/macOS qualification).

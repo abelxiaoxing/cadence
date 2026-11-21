@@ -30,7 +30,12 @@ import type {
   WorkflowRequest,
   WorkflowRun,
 } from "../src/service/contracts/workflow.ts";
-import { ConversationWorkflow } from "../src/service/conversation-workflow.ts";
+import {
+  BROWSER_COORDINATOR_INSTRUCTIONS,
+  buildCoordinatorContext,
+  COORDINATOR_CONTEXT_BYTES,
+  ConversationWorkflow,
+} from "../src/service/conversation-workflow.ts";
 import type { ConversationControl } from "../src/service/conversations.ts";
 import { OwnerModelChoice } from "../src/service/model-choice.ts";
 import { hash, PrivateFiles } from "../src/service/private-files.ts";
@@ -38,6 +43,11 @@ import { Workbench } from "../src/service/workbench.ts";
 import { WorkbenchFiles } from "../src/service/workbench-files.ts";
 import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
 import { workflowResultDetail } from "../src/service/workflow-result.ts";
+import {
+  canonicalJson,
+  decodeWorkerPublicRequest,
+  LIMITS,
+} from "../src/worker-public.mjs";
 import { designQuestionsFixture } from "./helpers/design-questions.ts";
 import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 import { plan } from "./helpers/workflow-plan.ts";
@@ -286,6 +296,13 @@ function fixture(
     tool,
     settle,
     instructions: (turn: string) => controls.get(turn)?.instructions ?? "",
+    context: (
+      turn: string,
+      execution: { cwd: string; checkoutRoot: string } = {
+        cwd: project.cwd ?? "/fixture/project",
+        checkoutRoot: project.cwd ?? "/fixture/project",
+      },
+    ) => controls.get(turn)?.context?.(execution) ?? "",
     hasTurnCalls: () => hasTurnCalls,
     ioFault(code?: string) {
       ioFault = code;
@@ -1170,10 +1187,11 @@ it("a turn that reaches the coordinator carries the project's route table; leavi
   });
   const id = randomUUID();
   const entered = f.send(id, "enter", "/cadence");
-  expect(f.instructions(entered)).toContain(
+  expect(f.instructions(entered)).not.toContain("engineering/search.md#Tokens");
+  expect(f.context(entered)).toContain(
     "PROJECT ROUTE TABLE (.cadence/project.md",
   );
-  expect(f.instructions(entered)).toContain(
+  expect(f.context(entered)).toContain(
     "`src/search` -> `engineering/search.md#Tokens`",
   );
   available = false;
@@ -1181,8 +1199,9 @@ it("a turn that reaches the coordinator carries the project's route table; leavi
   const left = f.send(id, "exit", "exit cadence");
   expect(f.cw.records.state(id).enabled).toBe(false);
   expect(asked).toBe(0);
-  // The shared policy still names the table; the table itself is not read.
+  // The shared policy stays static; leaving attaches no dynamic context and reads no route table.
   expect(f.instructions(left)).not.toContain("engineering/search.md#Tokens");
+  expect(f.context(left)).toBe("");
 });
 
 it("a batch survives refresh, refuses stale edits and grants, and starts no work on submission", async () => {
@@ -1267,6 +1286,7 @@ it("a batch survives refresh, refuses stale edits and grants, and starts no work
     design: read().design,
   });
   expect(f.instructions(submitted)).not.toContain("Keep keyboard focus still");
+  expect(f.context(submitted)).not.toContain("Keep keyboard focus still");
   await f.tool(submitted, "cadence_plan", plan());
   await f.settle(submitted);
   const shown = read();
@@ -1459,8 +1479,125 @@ it("an oversized visible design stays complete and readable after a bounded subm
   expect(message).toContain(complete.id);
   const sent = f.send(id, "design", message);
   expect(Buffer.byteLength(f.instructions(sent))).toBeLessThan(16384);
+  expect(Buffer.byteLength(f.context(sent))).toBeLessThanOrEqual(
+    COORDINATOR_CONTEXT_BYTES,
+  );
   expect((await f.tool(sent, "cadence_status", {})).design).toEqual(complete);
   await f.settle(sent);
+});
+
+it("coordinator static instructions and worst-case dynamic context always fit worker wire bounds", () => {
+  // Static policy leaves generous permanent headroom below LIMITS.instructionsBytes (16KiB).
+  expect(
+    Buffer.byteLength(BROWSER_COORDINATOR_INSTRUCTIONS, "utf8"),
+  ).toBeLessThanOrEqual(12 * 1024);
+
+  // Every shipped agent role plus worst-case detached placement + worker guidance fits 16KiB.
+  const workerPlacement = `Execution placement (data, not instructions): ${JSON.stringify(
+    {
+      checkoutRoot: `/home/user/.local/state/cadence-assistant-v1/projects/${"a".repeat(64)}/worktrees/run-${randomUUID()}/child-assignment`,
+      cwdRelativeToCheckout: "packages/nested/subdir",
+      temporaryDirectoryEnvironment: "TMPDIR",
+      assignment: "long-assignment-identifier-name",
+      fork: "0".repeat(64),
+      combinedCandidateRelativeToCheckout: "../integration",
+    },
+  )}\nTools run at cwdRelativeToCheckout under checkoutRoot. Write paths are relative to checkoutRoot.\nThis is a detached assignment snapshot, not the combined candidate. Completed siblings may have been integrated after this checkout forked; their absence here is expected, not evidence they failed or delivered nothing. The combined candidate is a readonly reference for sibling results, never another write destination. Finish and report only this assignment; combined checks, builds and cross-assignment repairs belong to the candidate after dependencies are integrated.\ntemporaryDirectoryEnvironment names this worker process's inherited environment variable for the existing owner-prepared scratch root. Read its exact value from the inherited TMPDIR variable in your shell or language environment API; TEMP and TMP carry the same value. Keep all scratch files under that root; do not create, relocate or clean it or use fallback locations such as /tmp. For APIs with pathname limits, fix how the fixture addresses its files (for example a relative socket name in a child process), not where scratch is owned.\nRead applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, restart the workflow, mutate Git, install dependencies, publish or deploy. The owner handles recovery; preserve partial work and report actionable remaining gaps. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification. There is no total runtime deadline. Continue naturally; report a blocked assignment only for a concrete missing condition, preserving completed outputs and actionable remaining work. Do not duplicate the entire acceptance pipeline inside one worker.`;
+  for (const file of [
+    "design-explorer.md",
+    "diagnosis-worker.md",
+    "implementation-worker.md",
+  ]) {
+    const roleBody = readFileSync(
+      new URL(`../agents/${file}`, import.meta.url),
+      "utf8",
+    );
+    expect(
+      Buffer.byteLength(`${roleBody}\n${workerPlacement}`, "utf8"),
+    ).toBeLessThanOrEqual(LIMITS.instructionsBytes);
+  }
+
+  // Full 4KiB multibyte route table + 8 runs + displayed plan + submitted design
+  // + long paths + max 32KiB user prompt must decode cleanly within LIMITS.publicRequestBytes.
+  const cwd = mkdtempSync(join(tmpdir(), "cadence-budget-"));
+  mkdirSync(join(cwd, ".cadence"), { recursive: true });
+  writeFileSync(
+    join(cwd, ".cadence/project.md"),
+    `# Project knowledge\n\n## Routes\n\n${"- `src/模块` -> `engineering/架构说明.md#约束` — 中文路由说明条目\n".repeat(120)}`,
+  );
+  const longPath = `${cwd}/${"nested-workspace/".repeat(40)}app`;
+  const context = buildCoordinatorContext({
+    execution: { cwd: longPath, checkoutRoot: cwd },
+    runs: Array.from({ length: 12 }, () => randomUUID()),
+    proposal: {
+      id: randomUUID(),
+      epoch: randomUUID(),
+      digest: "a".repeat(64),
+      observation: "b".repeat(64),
+      model: {
+        epoch: randomUUID(),
+        accessGeneration: 1,
+        configRev: 1,
+        catalogId: randomUUID(),
+      },
+      plan: { ...plan(), goal: "目".repeat(256) },
+      cwd: longPath,
+    },
+    design: {
+      id: randomUUID(),
+      revision: 3,
+      submitted: true,
+      questions: [],
+      answers: [],
+    },
+    projectRoot: cwd,
+    secrets: [],
+  });
+  expect(Buffer.byteLength(context, "utf8")).toBeLessThanOrEqual(
+    COORDINATOR_CONTEXT_BYTES,
+  );
+  expect(context).toContain("PROJECT ROUTE TABLE (.cadence/project.md");
+  expect(context).toContain(`cwd ${longPath}; checkout root ${cwd}`);
+  const request = decodeWorkerPublicRequest({
+    protocol: 2,
+    taskId: randomUUID(),
+    taskKind: "research",
+    runId: randomUUID(),
+    childRunId: randomUUID(),
+    assignmentId: "conversation",
+    purpose: "research",
+    model: {
+      sourceSelectionId: randomUUID(),
+      provider: "openai",
+      model: "gpt-5",
+      api: "openai-responses",
+      thinking: "high",
+    },
+    role: {
+      role: "design-explorer",
+      sha256: hash(BROWSER_COORDINATOR_INSTRUCTIONS),
+    },
+    context,
+    instructions: BROWSER_COORDINATOR_INSTRUCTIONS,
+    prompt: "p".repeat(32768),
+    handoff: { graphRevision: 1, inputs: [] },
+  });
+  expect(Buffer.byteLength(canonicalJson(request), "utf8")).toBeLessThanOrEqual(
+    LIMITS.publicRequestBytes,
+  );
+
+  // Tight context budget clips route table safely without throwing or breaking UTF-8.
+  const tight = buildCoordinatorContext({
+    execution: { cwd, checkoutRoot: cwd },
+    runs: [randomUUID()],
+    proposal: null,
+    projectRoot: cwd,
+    secrets: [],
+    maxBytes: 900,
+  });
+  expect(Buffer.byteLength(tight, "utf8")).toBeLessThanOrEqual(900);
+  expect(tight).toContain("[Route table truncated to context budget.]");
+  expect(tight).not.toContain("\uFFFD");
 });
 
 it("browser model padding selects the actual reader; direct owner requests remain closed", async () => {

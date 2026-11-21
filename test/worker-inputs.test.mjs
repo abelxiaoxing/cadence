@@ -4,7 +4,7 @@
 // few lines repeated; the real child and owner are `service-conversation-inputs`.
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
@@ -23,6 +23,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { expect, it } from "vitest";
+import { conversationResources } from "../src/conversation-resources.mjs";
 import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
 import {
   CaptureEmitter,
@@ -506,5 +507,117 @@ it("a stopped reply delivers nothing further, and a malformed or repeated messag
     expect(f.failures).toEqual(Array(6).fill("invalid-input"));
   } finally {
     await f.close();
+  }
+});
+
+it("Pi appends conversation context to systemPrompt via getAppendSystemPrompt without polluting the shared session JSONL", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cadence-append-ctx-"));
+  const cwd = mkdtempSync(join(tmpdir(), "cadence-append-cwd-"));
+  const agentDir = mkdtempSync(join(tmpdir(), "cadence-append-agent-"));
+  const runtime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsStore: new InMemoryModelsStore(),
+    modelsPath: null,
+    allowModelNetwork: false,
+    refreshOnCreate: false,
+  });
+  runtime.registerNativeProvider(
+    createProvider({
+      id: model.provider,
+      models: [model],
+      api,
+      auth: {
+        apiKey: {
+          name: "fixture",
+          resolve: async () => ({ auth: { apiKey: "fixture-key" } }),
+        },
+      },
+    }),
+  );
+  const manager = SessionManager.create(cwd, dir, { id: randomUUID() });
+  const dynamicContext =
+    "CONVERSATION CONTEXT (data): cwd /repo; checkout root /repo.\nPROJECT ROUTE TABLE (.cadence/project.md): route-marker-only-in-system";
+  const baseLoader = {
+    getExtensions: () => ({
+      extensions: [],
+      errors: [],
+      runtime: createExtensionRuntime(),
+    }),
+    getSkills: () => ({ skills: [], diagnostics: [] }),
+    getPrompts: () => ({ prompts: [], diagnostics: [] }),
+    getThemes: () => ({ themes: [], diagnostics: [] }),
+    getAgentsFiles: () => ({ agentsFiles: [] }),
+    getSystemPrompt: () => "STATIC COORDINATOR POLICY",
+    getSystemPromptSource: () => undefined,
+    getAppendSystemPrompt: () => [dynamicContext],
+    getAppendSystemPromptSources: () => [],
+    extendResources() {},
+    reload: async () => {},
+  };
+  // Ordinary conversationResources also preserves base appendSystemPrompt entries.
+  expect(
+    conversationResources(baseLoader, cwd, agentDir).getAppendSystemPrompt(),
+  ).toEqual([dynamicContext]);
+
+  const { session } = await createAgentSession({
+    cwd,
+    agentDir: cwd,
+    model,
+    modelRuntime: runtime,
+    thinkingLevel: "off",
+    tools: [],
+    customTools: [],
+    settingsManager: SettingsManager.inMemory({
+      ...WORKER_POLICY,
+      retry: { enabled: false, provider: { maxRetries: 0 } },
+      compaction: { enabled: false },
+    }),
+    sessionManager: manager,
+    resourceLoader: baseLoader,
+  });
+  const stream = session.agent.streamFunction;
+  session.agent.streamFunction = (selected, context, options) =>
+    stream(selected, context, {
+      ...options,
+      maxRetries: 0,
+      fetch: async () => response(said("Done")),
+    });
+  try {
+    expect(session.systemPrompt).toContain("STATIC COORDINATOR POLICY");
+    expect(session.systemPrompt).toContain("route-marker-only-in-system");
+    await session.prompt("User raw question", { expandPromptTemplates: false });
+    const sessionFile = manager.getSessionFile();
+    expect(sessionFile).toBeTruthy();
+    const entries = readFileSync(sessionFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const systemEntries = entries.filter(
+      (entry) => entry.type === "message" && entry.message?.role === "system",
+    );
+    const userEntries = entries.filter(
+      (entry) => entry.type === "message" && entry.message?.role === "user",
+    );
+    // Static policy and dynamic context occupy separate diffable system sections.
+    expect(systemEntries).toHaveLength(1);
+    expect(systemEntries[0].message.sections.preamble).toBe(
+      "STATIC COORDINATOR POLICY",
+    );
+    expect(systemEntries[0].message.sections.addendum).toContain(
+      "route-marker-only-in-system",
+    );
+    // The persisted user message contains only the user's raw prompt.
+    expect(userEntries).toHaveLength(1);
+    expect(userEntries[0].message.content).toEqual([
+      { type: "text", text: "User raw question" },
+    ]);
+    expect(JSON.stringify(userEntries)).not.toContain(
+      "route-marker-only-in-system",
+    );
+    expect(JSON.stringify(userEntries)).not.toContain(
+      "CONVERSATION CONTEXT (data)",
+    );
+  } finally {
+    await session.dispose();
   }
 });

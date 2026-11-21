@@ -221,6 +221,24 @@ it("a coordinator carries only the route table: whole, sanitized, bounded, and n
     `# Project knowledge\n\n## Routes\n\n${"- `src/a` -> `docs/a.md` — a\n".repeat(400)}`,
   );
   expect(Buffer.byteLength(routeTableBrief(root, []))).toBeLessThan(4096 + 512);
+  // Explicit maxBytes caps the entire returned brief (header + body + marker)
+  // cleanly on UTF-8 boundaries, and omits the brief when the budget is too small.
+  writeFileSync(
+    join(root, ".cadence/project.md"),
+    `# 项目知识\n\n## Routes\n\n${"- `src/模块` -> `docs/中文路由.md#节` — 说明文字\n".repeat(120)}`,
+  );
+  const fullBrief = routeTableBrief(root, []);
+  expect(routeTableBrief(root, [], Buffer.byteLength(fullBrief, "utf8"))).toBe(
+    fullBrief,
+  );
+  for (const limit of [350, 500, 777, 1024]) {
+    const clipped = routeTableBrief(root, [], limit);
+    expect(Buffer.byteLength(clipped, "utf8")).toBeLessThanOrEqual(limit);
+    expect(clipped).toContain("PROJECT ROUTE TABLE (.cadence/project.md");
+    expect(clipped).toContain("[Route table truncated to context budget.]");
+    expect(clipped).not.toContain("\uFFFD");
+  }
+  expect(routeTableBrief(root, [], 100)).toBe("");
   // Whitespace alone is no table.
   writeFileSync(join(root, ".cadence/project.md"), "\n\n");
   expect(routeTableBrief(root, [])).toBe("");

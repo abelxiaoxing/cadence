@@ -40,7 +40,7 @@ export function conversationResources(base, cwd, agentDir) {
   return {
     ...base,
     getSystemPrompt: () => system,
-    getAppendSystemPrompt: () => append,
+    getAppendSystemPrompt: () => [...append, ...base.getAppendSystemPrompt()],
     getAgentsFiles: () => ({ agentsFiles }),
     getSkills: () => skills,
   };

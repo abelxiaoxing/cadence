@@ -66,6 +66,7 @@ Only owned worktrees at their accepted, delivered commit and without any residue
 Worker context remains the existing 32KiB bound and is refused rather than clipped.
 
 Browser coordination permits one active SDK coordinator turn per conversation and at most 8 per project owner (`conversation-workflow.ts`).
+Coordinator static policy fits within `LIMITS.instructionsBytes` (16KiB), while per-turn conversation placement, recent runs, plan/design metadata and the project route table share `COORDINATOR_CONTEXT_BYTES` (32KiB, budgeted in `buildCoordinatorContext` and clipped on UTF-8 boundaries when tight) via `request.context` / `appendSystemPrompt`.
 There is no per-Send bridge-call or investigation-batch quota; how many readonly workers of one investigation run at once is the execution limit above.
 Conversation-control records have no retained-directory admission cap; the bounded cache is not a storage quota.
 The bridge refuses requests/replies above 384KiB (`LIMITS.coordinatorBytes`: a plan at its 256KiB bound, or every answer of a full research run) with the fixed code `oversize`; an investigation returns 4KiB of each answer (`ANSWER_BYTES` in `conversation-workflow.ts`), and status and evidence previews label truncation and omitted steps.
