@@ -24,6 +24,7 @@ Parent process, Stop and checkout ownership remain in [lifetimes](lifetimes.md).
   The editing selection supports analysis, experiments, editing and debugging throughout the authorized implementation.
   Standard file definitions remain Pi's.
   `bash` and selected `powershell` retain Pi schemas/renderers/backends with a bounded, redacted no-spill accumulator; bash honors the pinned shell path/prefix.
+  Shell display output uses streaming UTF-8 replacement for invalid bytes and incomplete EOF sequences, not strict protocol decoding: legacy-encoded output cannot abort a command or become an event-projection failure. This does not recover the original encoding; native exit status, split-secret redaction, queue bounds and original-operation settlement remain authoritative.
   Nonconversation editing also receives `cadence_report`, not verification or authority.
   Independent research/diagnosis/review remain readonly; only fixed-candidate Review gets `changes`.
   Coordinators get only the owner bridge, never host editing or self-approval authority.
@@ -129,6 +130,7 @@ The coordinator bridge likewise keeps sent requests until their reply or actual 
 - `test/research-tools-settlement.test.mjs`: actual SDK reads delayed at the public operations seam; cancel and close cannot settle before the read does.
 - `test/research-tools-process.test.mjs`: installed SDK search adapters with controlled native spawn/close events; grep cancellation still signals its child, find waits for its original, and process failures never become empty evidence.
 - `test/worker-settings.test.ts`: Pi defaults/merges/model overrides/trust, invalid-source refusal, frozen preferences and no source writes.
+- `test/worker-shell-encoding.test.mjs`: legacy bytes, incomplete EOF, split Unicode/secrets, real exit-result preservation and capacity/settlement protection with controlled operations.
 - `test/worker-toolkit.test.mjs`: inherited editing selections including PowerShell, native shell metadata/backends, readonly boundaries, fixed cwd, standard file original settlement and coordinator isolation.
 - `test/change-tools.test.mjs`: fixed-revision evidence, UTF-8 continuation, nullable cursor arguments and native cleanup.
 - `test/coordinator-tools.test.mjs`: dispatch, cancellation, actual reply/disconnect and listener lifetime.

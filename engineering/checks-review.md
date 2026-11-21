@@ -94,6 +94,7 @@ Recovery accepts one complete JSON decision with optional surrounding diagnostic
 Markdown links and bracketed evidence labels in that prose are allowed; a decision nested inside an array remains refused.
 The entire reply stays byte-bounded; multiple objects, duplicate keys, incomplete objects and array wrappers refuse rather than selecting a convenient fragment.
 Extracted decisions still pass the same strict schema, evidence, scope, protected-path and route checks.
+Recovery `evidence` contains only exact current failed-step IDs, not diagnostic prose; invalid type, length or identity gets a field-specific objection directing explanations to `cause`/`strategy`, never ID extraction or a generic JSON-syntax diagnosis. `test/workflow-recovery-evidence.test.mjs` covers this decoder-to-controller correction with controlled work.
 Each recovery work item needs an editing path; the owner reruns checks and review without a separate check-only assignment.
 An empty `work[i].writes` is reported as that field's missing editing scope, not as an out-of-scope write or a request to expand scope.
 A revision has a level: `repair` stays inside the current write scope; `replan` may bring further repository paths into it (never credentials, keys, `.env`, `.git` or paths outside the repository, and for a fast-forward delivery never a path the target checkout has its own changes to); `deviate` records that an acceptance item or decision cannot be met as written, what is delivered instead, and which declared checks it sets aside.
