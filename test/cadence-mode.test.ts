@@ -1120,8 +1120,14 @@ it("a native batch returns confirmed answers in one tool result and editing it r
   expect(out.content[0].text).toContain("Frames");
   expect(out.content[0].text).not.toContain("How much blur?");
   expect(h.last().design.submitted).toBe(true);
+  expect(h.last().design.at).toEqual(expect.any(Number));
   expect(h.effects).toEqual(["propose"]);
   await expect(h.call("cadence_start")).rejects.toThrow("No current plan");
+  await h.call("cadence_plan", plan());
+  h.enter("按计划实施");
+  await h.emit("input", { text: "按计划实施", source: "interactive" });
+  await h.call("cadence_start");
+  expect(h.last().design).toBeUndefined();
   await h.emit("session_shutdown");
 });
 

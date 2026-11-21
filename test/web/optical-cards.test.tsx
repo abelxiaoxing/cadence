@@ -2,17 +2,18 @@ import { randomUUID } from "node:crypto";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { newDesign, reviseDesign } from "../../src/service/contracts/design.ts";
-import { DesignCard } from "../../web/src/components/workspace/DesignCard";
+import { DesignDialog } from "../../web/src/components/workspace/DesignCard";
 import { designQuestionsFixture } from "../helpers/design-questions.ts";
 
 it("projects the selected lens from the actual answer, including custom answers", () => {
   const base = newDesign(randomUUID(), { questions: designQuestionsFixture });
   const render = (answers: typeof base.answers) =>
     renderToStaticMarkup(
-      <DesignCard
+      <DesignDialog
         draft={reviseDesign(base, answers, false)}
-        active
+        open
         disabled={false}
+        onClose={() => {}}
         onEdit={() => {}}
         onSubmit={() => {}}
       />,

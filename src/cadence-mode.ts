@@ -1099,7 +1099,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           if (signal?.aborted) throw new ContractError("stale");
         };
         check();
-        state.design = newDesign(randomUUID(), input, state.design);
+        state.design = newDesign(randomUUID(), input, state.design, Date.now());
         state.proposal = null;
         permission = undefined;
         persist();
@@ -1339,7 +1339,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         )
           throw new ContractError("stale");
         const commandId = randomUUID(),
-          before = { runId: state.runId, proposal };
+          before = { runId: state.runId, proposal, design: state.design };
         let sent = false,
           started: WorkflowResponse;
         try {
@@ -1358,6 +1358,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
               // revived approval.
               state.runId = commandId;
               state.proposal = null;
+              state.design = undefined;
               persist();
               sent = true;
             },
@@ -1372,6 +1373,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           ) {
             state.runId = before.runId;
             state.proposal = before.proposal;
+            state.design = before.design;
             persist();
           }
           throw error;
@@ -1379,6 +1381,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         if (started.type !== "run") throw new ContractError("invalid");
         state.runId = started.run.id;
         state.proposal = null;
+        state.design = undefined;
         persist();
         status("executing");
         watch(ctx, started.run.id);

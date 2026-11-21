@@ -6471,7 +6471,15 @@ function selectDesign(questions, choices, fill = false) {
   return answers;
 }
 function decodeDesign(v) {
-  const o = closed(v, ["id", "revision", "questions", "answers", "submitted"]);
+  const hasAt = v !== null && typeof v === "object" && Object.hasOwn(v, "at");
+  const o = closed(v, [
+    "id",
+    "revision",
+    "questions",
+    "answers",
+    "submitted",
+    ...hasAt ? ["at"] : []
+  ]);
   const questions = designQuestions({ questions: o.questions }, "record");
   const submitted = bool(o.submitted);
   const answers = designAnswers(o.answers);
@@ -6480,12 +6488,13 @@ function decodeDesign(v) {
   return {
     id: decodeId(o.id),
     revision: integer(o.revision, 1),
+    ...hasAt ? { at: integer(o.at, 0) } : {},
     questions,
     answers,
     submitted
   };
 }
-function newDesign(id, input, previous) {
+function newDesign(id, input, previous, at2) {
   const questions = designQuestions(input, "tool");
   const retained = previous?.answers.filter((a) => {
     const before = previous.questions.find((q) => q.id === a.question);
@@ -6495,6 +6504,7 @@ function newDesign(id, input, previous) {
   return {
     id,
     revision: 1,
+    ...at2 === undefined ? {} : { at: integer(at2, 0) },
     questions,
     answers: selectDesign(questions, retained),
     submitted: false
@@ -18031,7 +18041,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "bc59a50cd6275f2f6057fbdefee67952b16a27a13a69b4988ca26bb8d4981b08",
+    contractHash: "0e8ed4db34c45cea56174df9ae6ebc6b4d830d7f8311c77f32353f4685c2482d",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -34177,8 +34187,9 @@ class ConversationWorkflow {
       const current2 = this.records.usable(conversationId);
       if (current2.state.runs.includes(runId))
         return;
+      const { design: _retired, ...withoutDesign } = current2.state;
       this.save({
-        ...current2.state,
+        ...consume ? withoutDesign : current2.state,
         revision: current2.state.revision + 1,
         ...consume ? { proposal: null } : {},
         runs: [...current2.state.runs, runId]
@@ -34418,7 +34429,7 @@ class ConversationWorkflow {
           if (name === "cadence_design") {
             let design2;
             try {
-              design2 = newDesign(randomUUID26(), args, current2.state.design);
+              design2 = newDesign(randomUUID26(), args, current2.state.design, Date.now());
             } catch (error) {
               return refusal3("invalid", diagnosticText(error instanceof Error ? error.message : "questions: invalid design", 512, this.o.secrets()));
             }
@@ -34548,6 +34559,8 @@ class ConversationWorkflow {
     const { state, file } = this.records.usable(c.conversationId);
     if (!state.enabled || !state.design || state.design.id !== c.designId || state.revision !== c.revision || this.active.has(c.conversationId))
       throw new ContractError("stale");
+    if (state.design.submitted && this.o.workflows.activeRuns().runs.some((run) => run.phase !== "research" && state.runs.includes(run.id)))
+      throw new ContractError("conflict");
     const design = reviseDesign(state.design, c.answers, false);
     const answers = design.answers;
     if (sanitizeText(canonicalJson(answers), this.o.secrets()) !== canonicalJson(answers))
@@ -34715,8 +34728,9 @@ class ConversationWorkflow {
         this.attach(state.id, c.commandId, true);
       throw error;
     }
+    const { design: _retired, ...withoutDesign } = state;
     this.save({
-      ...state,
+      ...withoutDesign,
       revision: state.revision + 1,
       proposal: null,
       runs: [...state.runs, c.commandId]
@@ -37391,7 +37405,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.1",
-  build: "11da57bc52a04bdf95b5afc4c8c7fd89dde4e50052c492d179ba4992f392dd7d",
+  build: "3e13f2dec476b66d7d758fb4dbc2143b68a4f4ac2ab8f617137e27f2e98584df",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -40980,7 +40994,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "bc59a50cd6275f2f6057fbdefee67952b16a27a13a69b4988ca26bb8d4981b08";
+  const embedded = "0e8ed4db34c45cea56174df9ae6ebc6b4d830d7f8311c77f32353f4685c2482d";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

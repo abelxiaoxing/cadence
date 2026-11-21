@@ -22,13 +22,14 @@ The browser owner retains it with its conversation revision and rejects stale ed
 At tool ingress only, omitted `when`, `null` and the provider's pair of empty dependency IDs mean an independent question.
 Partial, unknown and forward dependencies refuse the complete batch with a field path; the saved representation has no `when` for independent questions.
 A pending batch opens a modal in the visible conversation once answering is available.
-Closing it leaves the conversation card and saved choices intact; polling and editing the same draft do not reopen a dismissed modal.
-The card can reopen it and shows submitted answers without prompting again.
+Closing it leaves a single-line reminder strip above the composer with saved choices intact; polling and editing the same draft do not reopen a dismissed modal.
+Submitting replaces the composer strip with a compact single-line summary anchored in the scrolling transcript at the turn that published the batch (or at the end when undated), where it can reopen the modal to view or revise choices without prompting again.
 Filling recommendations preserves explicit answers.
 No modal is inferred from assistant prose or from a refused publication.
 Selecting or revisiting a question requires no model turn.
 Submission sends the confirmed choices for the implementation card.
-Revising design retires the previous card.
+Revising a submitted choice keeps the modal open and retires the previous plan card.
+Approving a plan for execution retires the design batch on both native and browser surfaces so further edits are rejected and only the submitted conversation text remains in history.
 Execution uses the existing exact-plan approval on the originating surface.
 
 Both surfaces declare `cadence_knowledge`, `cadence_design`, `cadence_research` and `cadence_plan` from one schema (the parameter definitions in `src/coordinator-tools.mjs`) that states shape only: no counts or sizes, so Pi's own argument check never turns a call down for a bound the model could not know.

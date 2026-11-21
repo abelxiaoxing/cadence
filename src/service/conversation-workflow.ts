@@ -288,9 +288,10 @@ export class ConversationWorkflow {
     try {
       const current = this.records.usable(conversationId);
       if (current.state.runs.includes(runId)) return;
+      const { design: _retired, ...withoutDesign } = current.state;
       this.save(
         {
-          ...current.state,
+          ...(consume ? withoutDesign : current.state),
           revision: current.state.revision + 1,
           ...(consume ? { proposal: null } : {}),
           runs: [...current.state.runs, runId],
@@ -625,7 +626,12 @@ export class ConversationWorkflow {
           if (name === "cadence_design") {
             let design: DesignDraft;
             try {
-              design = newDesign(randomUUID(), args, current.state.design);
+              design = newDesign(
+                randomUUID(),
+                args,
+                current.state.design,
+                Date.now(),
+              );
             } catch (error) {
               return refusal(
                 "invalid",
@@ -853,6 +859,15 @@ export class ConversationWorkflow {
       this.active.has(c.conversationId)
     )
       throw new ContractError("stale");
+    if (
+      state.design.submitted &&
+      this.o.workflows
+        .activeRuns()
+        .runs.some(
+          (run) => run.phase !== "research" && state.runs.includes(run.id),
+        )
+    )
+      throw new ContractError("conflict");
     const design = reviseDesign(state.design, c.answers, false);
     const answers = design.answers;
     if (
@@ -1101,9 +1116,10 @@ export class ConversationWorkflow {
         this.attach(state.id, c.commandId, true);
       throw error;
     }
+    const { design: _retired, ...withoutDesign } = state;
     this.save(
       {
-        ...state,
+        ...withoutDesign,
         revision: state.revision + 1,
         proposal: null,
         runs: [...state.runs, c.commandId],

@@ -134,7 +134,13 @@ import { turnParts } from "./ChatSteps";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome, ConversationFeedback } from "./ChatWelcome";
 import "./conversation-entry.css";
-import { DesignCard } from "./DesignCard";
+import {
+  DesignBar,
+  DesignDialog,
+  DesignLine,
+  placeDesign,
+  useDesignModal,
+} from "./DesignCard";
 import { QuestionRail } from "./QuestionRail";
 import { type ComposerDraft, useSendAnchor } from "./use-send-anchor";
 import { WaitingMessages } from "./WaitingMessages";
@@ -145,6 +151,7 @@ import {
   placeWorkflows,
   RUN_WINDOW,
   WorkflowLine,
+  workflowLive,
 } from "./WorkflowPanel";
 
 const NO_ACTIVE_RUNS: readonly string[] = [];
@@ -2415,6 +2422,54 @@ export function ChatWorkspace({
       </div>
     </div>
   ) : undefined;
+  const activeDesign = state?.enabled ? state.design : undefined;
+  const activeImplementation = useMemo(
+    () =>
+      [...flows.runs.values()].some(
+        (run) => run.phase !== "research" && workflowLive(run),
+      ),
+    [flows.runs],
+  );
+  const designDisabled =
+    !!pinned ||
+    !!anchor ||
+    attaching ||
+    busy ||
+    !!running ||
+    !actionsReady ||
+    !canSend ||
+    !cadenceKnown ||
+    !!approving ||
+    (activeImplementation && !!activeDesign?.submitted);
+  const designModal = useDesignModal(activeDesign, !hidden, designDisabled);
+  const designSlot = useMemo(
+    () => placeDesign(turns, activeDesign, earlier),
+    [turns, activeDesign, earlier],
+  );
+  const designBar =
+    activeDesign && !activeDesign.submitted ? (
+      <DesignBar
+        draft={activeDesign}
+        active={!hidden}
+        onOpen={designModal.open}
+      />
+    ) : undefined;
+  const designLine = activeDesign?.submitted ? (
+    <DesignLine
+      draft={activeDesign}
+      active={!hidden}
+      onOpen={designModal.open}
+    />
+  ) : undefined;
+  const composerAnchor =
+    designBar && strip ? (
+      <>
+        {designBar}
+        {strip}
+      </>
+    ) : (
+      (designBar ?? strip)
+    );
   return (
     <section
       className="chat-workspace"
@@ -2624,6 +2679,7 @@ export function ChatWorkspace({
             </div>
           )}
           {placed.start.map(workflowLine)}
+          {designSlot.kind === "start" && designLine}
           {rows.map(({ id, version, turn }, position) => {
             const forks = versions.get(id);
             const renderId = turn.renderId ?? turn.header.id;
@@ -2677,10 +2733,14 @@ export function ChatWorkspace({
                 </LazyMount>
                 {/* Workflows that started in this turn. */}
                 {placed.after.get(id)?.map(workflowLine)}
+                {designSlot.kind === "after" &&
+                  designSlot.turnId === id &&
+                  designLine}
               </Fragment>
             );
           })}
           {placed.end.map(workflowLine)}
+          {designSlot.kind === "end" && designLine}
           {conversation.attempt && (
             <article className="chat-attempt" aria-label={t("Message")}>
               <p className="chat-attempt-text">{conversation.attempt.text}</p>
@@ -2713,33 +2773,6 @@ export function ChatWorkspace({
                 id: approving,
               })}
             </p>
-          )}
-          {state?.enabled && state.design && (
-            <DesignCard
-              key={state.design.id}
-              draft={state.design}
-              active={!hidden}
-              error={error ? describeError(t, error) : undefined}
-              disabled={
-                !!pinned ||
-                !!anchor ||
-                attaching ||
-                busy ||
-                !!running ||
-                !actionsReady ||
-                !canSend ||
-                !cadenceKnown ||
-                !!approving
-              }
-              onEdit={editDesign}
-              onSubmit={(d) =>
-                void send(
-                  designMessage(d, CONVERSATION_SEND_BYTES),
-                  undefined,
-                  true,
-                )
-              }
-            />
           )}
           {cadenceKnown &&
             state?.enabled &&
@@ -2829,7 +2862,7 @@ export function ChatWorkspace({
           imageLockReason={imageLockReason}
           onAddImages={addImages}
           onRemoveImage={(file) => removeImages([file])}
-          anchor={strip}
+          anchor={composerAnchor}
           status={
             preparing
               ? t("Preparing execution for this Send…")
@@ -2946,6 +2979,24 @@ export function ChatWorkspace({
           onResized={keepEnd}
         />
       </div>
+      {activeDesign && (
+        <DesignDialog
+          key={activeDesign.id}
+          draft={activeDesign}
+          open={designModal.visible}
+          disabled={designDisabled}
+          error={error ? describeError(t, error) : undefined}
+          onClose={designModal.close}
+          onEdit={editDesign}
+          onSubmit={(d) =>
+            void send(
+              designMessage(d, CONVERSATION_SEND_BYTES),
+              undefined,
+              true,
+            )
+          }
+        />
+      )}
     </section>
   );
 }
