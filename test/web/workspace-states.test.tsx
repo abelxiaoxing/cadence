@@ -100,14 +100,15 @@ afterEach(() => {
 });
 
 it.each(["en", "zh"] as const)(
-  "%s: the mode toggle is a one-click off/on switch, unknown stays disabled",
+  "%s: the mode toggle shows two-state off/on styling with next-Send tooltips, unknown stays disabled",
   (locale) => {
     const click = vi.fn();
-    const render = (active: boolean, known = true) =>
+    const render = (active: boolean, armed: boolean, known = true) =>
       renderToStaticMarkup(
         <LocaleProvider initial={locale}>
           <CadenceModeButton
             active={active}
+            armed={armed}
             known={known}
             disabled={false}
             onClick={click}
@@ -115,26 +116,46 @@ it.each(["en", "zh"] as const)(
         </LocaleProvider>,
       );
     const chinese = locale === "zh";
-    for (const [active, state, text, title] of [
+    for (const [active, armed, cls, text, title] of [
       [
+        false,
         false,
         "off",
         chinese ? "开启 Cadence" : "Turn on Cadence",
         chinese
-          ? "开启 Cadence 模式：先商定计划，再开始实施。"
-          : "Turn on Cadence mode: agree on a plan before implementation.",
+          ? "在发送下一条消息时开启 Cadence 模式：先商定计划，再开始实施。"
+          : "Turn on Cadence mode on your next message: agree on a plan before implementation.",
       ],
       [
+        false,
+        true,
+        "on armed",
+        chinese ? "关闭 Cadence" : "Turn off Cadence",
+        chinese
+          ? "发送下一条消息时将开启 Cadence 模式，点击取消。"
+          : "Your next message turns on Cadence mode. Click to cancel.",
+      ],
+      [
+        true,
         true,
         "on",
         chinese ? "关闭 Cadence" : "Turn off Cadence",
         chinese
-          ? "Cadence 模式已开启，点击退出。"
-          : "Cadence mode is on. Click to exit it.",
+          ? "Cadence 模式已开启，点击后将在发送下一条消息时退出。"
+          : "Cadence mode is on. Click to exit on your next message.",
+      ],
+      [
+        true,
+        false,
+        "off leaving",
+        chinese ? "开启 Cadence" : "Turn on Cadence",
+        chinese
+          ? "发送下一条消息时将退出 Cadence 并按普通对话发送，点击取消。"
+          : "Your next message exits Cadence mode and sends normally. Click to stay in Cadence.",
       ],
     ] as const) {
-      const html = render(active);
-      expect(html).toContain(`class="mode-toggle ${state}"`);
+      const html = render(active, armed);
+      expect(html).toContain(`class="mode-toggle ${cls}"`);
       expect(html).toContain(`aria-label="${text}"`);
       expect(html).toContain(`title="${title}"`);
       expect(html).toContain('class="mode-toggle-icon"');
@@ -145,7 +166,7 @@ it.each(["en", "zh"] as const)(
       ? "Cadence 状态未确认"
       : "Cadence state unavailable";
     for (const active of [false, true]) {
-      const html = render(active, false);
+      const html = render(active, active, false);
       expect(html).toContain('class="mode-toggle unknown"');
       expect(html).toContain('disabled=""');
       expect(html).toContain(`aria-label="${neutral}"`);
@@ -216,7 +237,7 @@ function modeToggle(enabled: boolean) {
 }
 
 it.each([false, true])(
-  "%s: clicking the mode toggle sends the one-shot command and keeps the draft",
+  "%s: clicking the mode toggle only changes next-Send intent without sending or preparing",
   async (enabled) => {
     const draft = "my draft";
     const storage = new Map<string, string>();
@@ -242,11 +263,9 @@ it.each([false, true])(
         workspaceId: "workspace",
         initialCwd: "/fixture",
         enabled: true,
-        actionsReady: true,
+        actionsReady: false,
         modelAvailability: {
-          status: "ready",
-          epoch: "fixture",
-          attachmentVersion: 1,
+          status: "stopped",
         },
         prepareForPlan: prepare,
         prepareForSend: prepare,
@@ -261,27 +280,13 @@ it.each([false, true])(
     renderToStaticMarkup(<Probe />);
     if (!click || !editor) throw Error("missing mode toggle");
     expect(editor.draft).toBe(draft);
+    // Toggle stays usable even before execution starts.
+    expect(editor.cadence.disabled).toBe(false);
     click();
-    await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
-    const cmd = command.mock.calls[0][0] as WorkbenchCommand;
-    if (enabled) {
-      expect(cmd).toMatchObject({
-        kind: "cadence-exit",
-        conversationId: "chat",
-        revision: 1,
-      });
-    } else {
-      expect(cmd).toMatchObject({
-        kind: "cadence-send",
-        intent: "enter",
-        text: "/cadence",
-        conversationId: "chat",
-        revision: 1,
-      });
-    }
-    // The user draft is not consumed: the command carries the command text.
+    await Promise.resolve();
+    expect(command).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
     expect(editor.draft).toBe(draft);
-    // The one-shot command never enters the prompt history.
     expect(storage.get("cadence:prompt-history:workspace")).toBeUndefined();
   },
 );

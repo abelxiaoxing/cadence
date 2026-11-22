@@ -452,3 +452,112 @@ it.each(["steer", "queue"])(
     ]);
   },
 );
+
+it("mode toggle defers entering and exiting Cadence until explicit Send, and /cadence syncs the button", async () => {
+  const w = workspace(
+    transport({
+      workbenchCommand: async (cmd) =>
+        cmd.kind === "image-upload"
+          ? {
+              kind: "ok",
+              value: {
+                kind: cmd.kind,
+                commandId: cmd.commandId,
+                imageId: cmd.imageId,
+                offset: cmd.data.length,
+              },
+            }
+          : {
+              kind: "ok",
+              value: { kind: "accepted", commandId: cmd.commandId },
+            },
+    }),
+  );
+  // 1. Ordinary mode: clicking toggle only arms next Send (no command).
+  const initial = w.draw(true, "zh");
+  expect(initial.html).toContain('class="mode-toggle off"');
+  initial.input.cadence.onClick();
+  const armed = w.draw(true, "zh");
+  expect(w.command).not.toHaveBeenCalled();
+  expect(armed.html).toContain('class="mode-toggle on armed"');
+  expect(armed.html).toContain("发送下一条消息时将开启 Cadence 模式。");
+  // Clicking again cancels cleanly without sending.
+  armed.input.cadence.onClick();
+  expect(w.draw(true, "zh").html).toContain('class="mode-toggle off"');
+  expect(w.command).not.toHaveBeenCalled();
+  // Arm again, type message, and send -> cadence-send (intent: "enter").
+  w.draw(true, "zh").input.cadence.onClick();
+  w.draw(true, "zh").input.onDraft("规划登录重构");
+  w.draw(true, "zh").input.onSend();
+  await vi.waitFor(() => expect(w.command).toHaveBeenCalledTimes(1));
+  expect(w.command.mock.calls[0][0]).toMatchObject({
+    kind: "cadence-send",
+    intent: "enter",
+    text: "规划登录重构",
+    revision: 0,
+  });
+
+  // 2. Manual /cadence prefix updates button to ON, keeps draft intact on click, and enters on Send.
+  w.command.mockClear();
+  f.cadence = false;
+  w.draw(true, "zh").input.onDraft("/cadence 手动进入目标");
+  const prefixed = w.draw(true, "zh");
+  expect(prefixed.html).toContain('class="mode-toggle on armed"');
+  expect(prefixed.html).toContain("发送下一条消息时将开启 Cadence 模式。");
+  prefixed.input.cadence.onClick();
+  expect(w.draw(true, "zh").input.draft).toBe("/cadence 手动进入目标");
+  expect(currentToasts().at(-1)?.text).toContain("/cadence");
+  expect(w.command).not.toHaveBeenCalled();
+  w.draw(true, "zh").input.onSend();
+  await vi.waitFor(() => expect(w.command).toHaveBeenCalledTimes(1));
+  expect(w.command.mock.calls[0][0]).toMatchObject({
+    kind: "cadence-send",
+    intent: "enter",
+    text: "/cadence 手动进入目标",
+  });
+
+  // 3. Cadence active: clicking toggle sets pending exit (no command); Send exits atomically with ordinary message + image.
+  w.command.mockClear();
+  f.cadence = true;
+  const active = w.draw(true, "zh");
+  expect(active.html).toContain('class="mode-toggle on"');
+  active.input.cadence.onClick();
+  const leaving = w.draw(true, "zh");
+  expect(w.command).not.toHaveBeenCalled();
+  expect(leaving.html).toContain('class="mode-toggle off leaving"');
+  expect(leaving.html).toContain(
+    "发送下一条消息时将退出 Cadence 并按普通对话发送。",
+  );
+  // Typing /cadence while pending exit overrides back to ON.
+  leaving.input.onDraft("/cadence 继续保持");
+  expect(w.draw(true, "zh").html).toContain('class="mode-toggle on"');
+  // Replacing with ordinary text + image restores leaving state and sends atomic exitRevision send.
+  const photo = new File([pngBytes()], "note.png", { type: "image/png" });
+  w.draw(true, "zh").input.onDraft("普通消息直接修改");
+  w.draw(true, "zh").input.onAddImages([photo]);
+  expect(w.draw(true, "zh").html).toContain('class="mode-toggle off leaving"');
+  w.draw(true, "zh").input.onSend();
+  await vi.waitFor(() => expect(w.command).toHaveBeenCalledTimes(2));
+  expect(w.command.mock.calls.map(([c]) => c.kind)).toEqual([
+    "image-upload",
+    "send",
+  ]);
+  expect(w.command.mock.calls[1][0]).toMatchObject({
+    kind: "send",
+    text: "普通消息直接修改",
+    exitRevision: 0,
+  });
+
+  // 4. Typing explicit exit cadence while Cadence is on (even with toggle off) sends cadence-exit without calling model.
+  w.command.mockClear();
+  w.draw(true, "zh").input.onDraft("退出 Cadence");
+  const phraseLeaving = w.draw(true, "zh");
+  expect(phraseLeaving.html).toContain('class="mode-toggle off leaving"');
+  expect(phraseLeaving.html).toContain("发送下一条消息时将退出 Cadence 模式。");
+  phraseLeaving.input.onSend();
+  await vi.waitFor(() => expect(w.command).toHaveBeenCalledTimes(1));
+  expect(w.command.mock.calls[0][0]).toMatchObject({
+    kind: "cadence-exit",
+    revision: 0,
+  });
+});

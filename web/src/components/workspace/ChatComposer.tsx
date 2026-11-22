@@ -95,7 +95,7 @@ export interface ChatComposerProps {
   anchor?: ReactNode;
   /** Why Send, steer or queue is unavailable. */
   status?: string;
-  cadence: Parameters<typeof CadenceModeButton>[0] & { armed: boolean };
+  cadence: Parameters<typeof CadenceModeButton>[0];
   model: Parameters<typeof ModelPicker>[0];
   hint: string;
   /** A live reply: Stop takes Send's place. */
@@ -583,16 +583,13 @@ export function ChatComposer({
         </button>
         <ModelPicker {...model} />
         <span className="composer-hint">
-          {running && input?.enabled ? hint : null}
+          {(running && input?.enabled) ||
+          (!running && cadence.known && cadence.armed !== cadence.active)
+            ? hint
+            : null}
         </span>
         <div className="composer-toolbar composer-delivery">
-          <CadenceModeButton
-            known={cadence.known}
-            active={cadence.active}
-            disabled={cadence.disabled}
-            disabledReason={cadence.disabledReason}
-            onClick={cadence.onClick}
-          />
+          <CadenceModeButton {...cadence} />
           {running && input?.enabled && (
             <span className="composer-split">
               <button

@@ -7022,7 +7022,8 @@ function decodeWorkbenchCommand(v) {
       "head",
       "text",
       ...Object.hasOwn(v ?? {}, "images") ? ["images"] : [],
-      "model"
+      "model",
+      ...Object.hasOwn(v ?? {}, "exitRevision") ? ["exitRevision"] : []
     ]);
     return {
       kind,
@@ -7031,7 +7032,8 @@ function decodeWorkbenchCommand(v) {
       head: nullable(o2.head, decodeEntryId),
       text: text(o2.text, CONVERSATION_SEND_BYTES),
       ...o2.images === undefined ? {} : { images: list(o2.images, Number.MAX_SAFE_INTEGER, decodeId) },
-      model: decodeChoiceVersion(o2.model)
+      model: decodeChoiceVersion(o2.model),
+      ...o2.exitRevision === undefined ? {} : { exitRevision: integer(o2.exitRevision, 0) }
     };
   }
   if (kind === "interrupt" || kind === "conversation-input" || kind === "conversation-input-cancel") {
@@ -18041,7 +18043,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "0e8ed4db34c45cea56174df9ae6ebc6b4d830d7f8311c77f32353f4685c2482d",
+    contractHash: "deff8c3062f8e6711e523a853378934d26db74ded470cba88a54956fcbcb60eb",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -32190,7 +32192,7 @@ class Conversations {
       throw new ContractError("conflict");
     return { kind: "accepted", commandId: input.commandId };
   }
-  send(input, control, beforeAccept, claimImages) {
+  send(input, control, beforeAccept, claimImages, afterAccept) {
     this.o.owner.lease.assert();
     const command = this.command(input, !!control?.reply);
     const receipt = this.receipt(input, !!control?.reply);
@@ -32286,6 +32288,7 @@ class Conversations {
         commands: [...index.commands, input.commandId].slice(-INDEXED_COMMANDS)
       }, META_BYTES2, index.file);
       control?.accept();
+      afterAccept?.();
     } catch (error) {
       abort.abort();
       begin();
@@ -34299,6 +34302,28 @@ class ConversationWorkflow {
     } catch {
       return refusal3("unavailable", "No retained result can be read for this step. This is not evidence of completion or permission to repeat work.");
     }
+  }
+  exitAndSend(c, beforeAccept, claimImages) {
+    const receipt = this.o.conversations.receipt(c);
+    if (receipt)
+      return receipt;
+    const { state, file } = this.records.usable(c.conversationId);
+    if (!state.enabled || c.exitRevision !== state.revision)
+      throw new ContractError("stale");
+    if (this.active.has(c.conversationId))
+      throw new ContractError("conflict");
+    const next = {
+      id: state.id,
+      revision: state.revision + 1,
+      enabled: false,
+      head: c.commandId,
+      proposal: null,
+      runs: state.runs
+    };
+    return this.o.conversations.send(c, undefined, beforeAccept, claimImages, () => {
+      this.o.conversations.bindControl(c.conversationId);
+      this.save(next, file);
+    });
   }
   send(c, beforeAccept, claimImages) {
     const enabled = c.intent !== "exit";
@@ -37413,7 +37438,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.2",
-  build: "7ace17c218762317a4d6d333a7c5bac58b12f29c9a7fdb8be50a73634d102894",
+  build: "36c1e3e4360b2fa500a149daedf911a1dac8f887fce3dffb5c3aae39778ed054",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -40696,6 +40721,8 @@ class Workbench {
         mayHaveEffects = true;
       };
       if (request3.kind === "send") {
+        if (request3.exitRevision !== undefined)
+          return this.cadence.exitAndSend(request3, accepting, claimImages);
         const receipt = this.conversations.receipt(request3);
         if (receipt)
           return receipt;
@@ -41006,7 +41033,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "0e8ed4db34c45cea56174df9ae6ebc6b4d830d7f8311c77f32353f4685c2482d";
+  const embedded = "deff8c3062f8e6711e523a853378934d26db74ded470cba88a54956fcbcb60eb";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

@@ -54,11 +54,20 @@ it("startup/model waits keep the exact original message, head, mode revision and
     text: "original goal",
   });
 });
-it("ordinary Send stays ordinary and exit needs neither a model nor an approval grant", () => {
+it("ordinary Send stays ordinary, exit-ordinary binds exitRevision and model, and pure exit needs neither", () => {
   const base = { id: randomUUID(), head: null, text: "hello", revision: 0 };
   expect(
     sendCommand(captureSend({ ...base, intent: "ordinary" }), model),
   ).toMatchObject({ kind: "send", text: "hello" });
+  expect(
+    sendCommand(
+      captureSend({ ...base, revision: 4, intent: "exit-ordinary" }),
+      model,
+    ),
+  ).toMatchObject({ kind: "send", text: "hello", exitRevision: 4, model });
+  expect(() =>
+    sendCommand(captureSend({ ...base, revision: 4, intent: "exit-ordinary" })),
+  ).toThrow();
   expect(
     sendCommand(captureSend({ ...base, text: "exit cadence", intent: "exit" })),
   ).toMatchObject({ kind: "cadence-exit", revision: 0 });
