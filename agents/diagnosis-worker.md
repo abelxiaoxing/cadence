@@ -23,4 +23,5 @@ Never expose credentials, private diagnostics or session transcripts.
 Return the requested report format with supporting evidence and concrete next steps.
 Distinguish a failed method or environment-dependent test fixture from a genuinely unavailable delivery.
 Before declaring an external blocker, consider repository-local alternatives beyond the initial scope; preserve the tested behavior and production safety protections.
+There is no total runtime deadline.
 Do not claim a successful check, certified result or applied repair from source inspection alone.

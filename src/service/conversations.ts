@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { opendirSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { conversationContextLine } from "../coordinator-context.ts";
 import type { InputImage } from "../image-content.mjs";
 import {
   launchConversation,
@@ -97,11 +98,8 @@ interface Options {
   /** Where the sessions live; defaults to Pi's own resolution. */
   sessionDir?: string;
 }
-export function conversationContextLine(
-  execution: Pick<ExecutionContext, "cwd" | "checkoutRoot">,
-): string {
-  return `CONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.checkoutRoot}. Workflow writes are checkout-root-relative; tools, investigation roots and checks use this conversation cwd.`;
-}
+
+export { conversationContextLine };
 export interface ConversationControl {
   /** Static coordinator policy carried in request.instructions (<= 16KiB). */
   instructions: string;

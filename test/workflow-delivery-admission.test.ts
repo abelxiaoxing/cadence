@@ -68,7 +68,6 @@ function fixture() {
     )
     .mockResolvedValue({ status: "settled" });
   const definition = plan();
-  definition.tasks = [definition.tasks[0]];
   const response = workflows.command(randomUUID(), epoch, {
     action: "propose",
     plan: definition,

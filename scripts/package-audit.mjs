@@ -136,6 +136,7 @@ export function auditPackage(
     "design-explorer",
     "implementation-worker",
     "diagnosis-worker",
+    "route-planner",
   ]) {
     const binding = provenance.match(
       new RegExp(

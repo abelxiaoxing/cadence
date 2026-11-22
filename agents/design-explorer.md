@@ -12,6 +12,7 @@ State missing evidence and unavailable capabilities honestly; do not invent a su
 When research supplies a specific investigation question, answer that question and use the overall goal as context.
 Read adjacent code only as needed to support that answer; do not expand each question into a design or audit of the entire goal.
 Once the question is answered with source evidence, return the findings and any remaining uncertainty.
+There is no total runtime deadline.
 
 Your plan is advisory, not permission to edit.
 Do not change files, run shell commands, delegate editing, mutate Git, install software, clean consumer data or publish.

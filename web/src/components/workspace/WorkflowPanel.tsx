@@ -374,7 +374,7 @@ function ApprovalScope({ proposal }: { proposal: WorkflowProposal }) {
         <li>
           {t(
             plan.version === CURRENT_WORKFLOW_PLAN_VERSION
-              ? "Approval confirms the goal, decisions, acceptance and assumptions. The service then finishes on its own: it may adjust the route and repository write scope, record reviewed deviations and update project knowledge."
+              ? "Approval confirms the goal, decisions, acceptance and assumptions. After approval the service plans parallel tasks from the codebase, may adjust the route and repository write scope, records reviewed deviations and updates project knowledge to finish on its own."
               : "This retained agreement is read-only. Its declared paths and commands are fixed.",
           )}
         </li>
@@ -391,8 +391,11 @@ function ApprovalScope({ proposal }: { proposal: WorkflowProposal }) {
             !!plan.links?.length && (
               <>
                 {t(
-                  "Managed dependency links ({count}) are owner-created and unlinked only after identity verification.",
-                  { count: plan.links.length },
+                  "Managed dependency links ({count}): {paths} — owner-created and unlinked only after identity verification.",
+                  {
+                    count: plan.links.length,
+                    paths: plan.links.map((l) => l.path).join(", "),
+                  },
                 )}{" "}
               </>
             )}

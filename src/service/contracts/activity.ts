@@ -19,6 +19,7 @@ export const ACTIVITY_PHASES = [
   "queued",
   "running",
   "research",
+  "planning",
   "implementing",
   "verifying",
   "reviewing",

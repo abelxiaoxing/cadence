@@ -162,6 +162,7 @@ for (const role of [
   "design-explorer",
   "diagnosis-worker",
   "implementation-worker",
+  "route-planner",
 ]) {
   const hash = createHash("sha256")
     .update(readFileSync(join(ROOT, "agents", `${role}.md`)))

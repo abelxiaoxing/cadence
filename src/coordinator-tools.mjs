@@ -62,22 +62,6 @@ const SETUP_LINK = Type.Object({
     }),
   ),
 });
-const READING = Type.Union([
-  Type.Object({
-    path: Type.String({ description: "Project document to read first." }),
-    section: Type.Optional(
-      Type.String({ description: "One heading of that document." }),
-    ),
-    reason: Type.String(),
-  }),
-  Type.Object({
-    research: Type.String({
-      description:
-        'A recorded investigation: the "investigation" value of a completed research step.',
-    }),
-    reason: Type.String(),
-  }),
-]);
 export const RESEARCH_PARAMETERS = Type.Object({
   goal: Type.String(),
   questions: Type.Array(
@@ -232,7 +216,10 @@ export const DESIGN_PARAMETERS = Type.Object({
 });
 export const PLAN_PARAMETERS = Type.Object({
   goal: Type.String(),
-  design: Type.String({ description: "The initial technical route." }),
+  design: Type.String({
+    description:
+      "High-level technical approach, architectural boundaries and key mechanisms (the owner plans file-level tasks automatically after approval).",
+  }),
   decisions: Type.Optional(
     Type.String({ description: "Explicit decisions and non-goals." }),
   ),
@@ -243,17 +230,29 @@ export const PLAN_PARAMETERS = Type.Object({
         "What you decided on the user's behalf without asking; approval confirms it. Leave out when there is none.",
     }),
   ),
-  documents: Type.Optional(
+  investigations: Type.Optional(
     Type.Array(
       Type.String({
-        description: "Existing project Markdown this delivery may update.",
+        description:
+          'A recorded investigation UUID ("investigation" value from a completed cadence_research step) for the post-approval route planner to reuse.',
       }),
     ),
   ),
-  reviewReads: Type.Optional(
-    Type.Array(READING, {
-      description: "What the independent review reads first.",
-    }),
+  areas: Type.Optional(
+    Type.Array(
+      Type.String({
+        description:
+          "Advisory checkout-relative code directories or files to point the post-approval route planner toward (not a hard write fence).",
+      }),
+    ),
+  ),
+  documents: Type.Optional(
+    Type.Array(
+      Type.String({
+        description:
+          "Existing project Markdown (.md) this delivery may update (never list .cadence/ files; the owner maintains project knowledge automatically).",
+      }),
+    ),
   ),
   policy: Type.Optional(
     Type.Object({
@@ -264,29 +263,6 @@ export const PLAN_PARAMETERS = Type.Object({
         }),
       ),
     }),
-  ),
-  tasks: Type.Array(
-    Type.Object({
-      id: Type.String({
-        description:
-          "Lowercase letters, digits and hyphens, starting with a letter.",
-      }),
-      title: Type.String(),
-      instructions: Type.String({ description: "At most 8KiB." }),
-      writes: Type.Array(Type.String()),
-      after: Type.Optional(
-        Type.Array(Type.String(), {
-          description:
-            "Ids of the assignments this one really depends on. Leave out when it depends on none.",
-        }),
-      ),
-      reads: Type.Optional(
-        Type.Array(READING, {
-          description: "The few things this assignment should read first.",
-        }),
-      ),
-    }),
-    { description: "One to 16 assignments." },
   ),
   checks: Type.Array(PLAN_CHECK, {
     description: "The real acceptance commands: at least one, at most 16.",
@@ -300,7 +276,7 @@ export const PLAN_PARAMETERS = Type.Object({
   links: Type.Optional(
     Type.Array(SETUP_LINK, {
       description:
-        "Optional owner-managed dependency symlinks from the original checkout into worktrees (e.g. node_modules), at most eight. Created and identity-verified by the owner so cleanup unlinks only its own links without following into shared dependencies.",
+        "Optional owner-managed dependency symlinks from the original checkout into worktrees (e.g. node_modules), at most eight. Omit for local-merge (when policy.installs is false) to let the owner auto-discover ignored node_modules; pass [] to disable auto-discovery; pass an explicit list to override.",
     }),
   ),
   setup: Type.Optional(
@@ -416,14 +392,20 @@ export function createCoordinatorTools() {
     {
       name: "cadence_plan",
       description:
-        "Publish a complete proposal after decisions are aligned. This never authorizes execution. The user sees an exact plan card. goal, design, decisions, assumptions and acceptance together fit 32KiB, because every worker is given them.",
+        "Publish a complete delivery agreement after decisions are aligned. This never authorizes execution. The user sees an exact plan card; after approval the owner plans file-level parallel tasks automatically. goal, design, decisions, assumptions and acceptance together fit 32KiB, because every worker is given them.",
       parameters: PLAN_PARAMETERS,
     },
     {
       name: "cadence_status",
       description:
-        "Read actual workflow progress and outcomes. With a result's runId and stepId, read its retained JSON result in pages; pass next unchanged to continue. limited describes missing retained evidence, independently of pagination. Read truncated research answers here before investigating again. Never starts work.",
+        "Read actual workflow progress, active design, a paginated retained step result (runId + stepId), or the full current pending proposal (proposal: true). Pass next unchanged for later pages. Never starts work.",
       parameters: Type.Object({
+        proposal: Type.Optional(
+          Type.Boolean({
+            description:
+              "Set true to read the current pending proposal in full (paginated via offset and digest).",
+          }),
+        ),
         runId: Type.Optional(Type.String()),
         stepId: Type.Optional(Type.String()),
         offset: Type.Optional(Type.Integer()),

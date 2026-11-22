@@ -12,13 +12,12 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
 1. Cadence delegates focused readonly repository investigations, reuses existing project documentation, and consolidates questions in the main conversation.
 2. Discuss requirements and decisions until nothing that changes the result is left open.
    This is the last time you are asked: what Cadence decides on your behalf is listed in the agreement as its assumptions.
-3. Cadence presents one readable delivery agreement: expected result, acceptance, decisions, assumptions, the initial route and write scope, setup/check commands, documents to update and delivery policy.
+3. Cadence presents one readable delivery agreement: expected result, high-level technical design, acceptance, decisions, assumptions, setup/check commands, managed dependency links, documents to update and delivery policy.
    In the browser, use **View current plan** beside the conversation title.
    The proposal stays in this conversation; you can keep discussing it and reopen it there, including after refresh.
-   Open **Technical details** for paths, commands, the exact binding and agreement.
+   Open **Technical details** for paths, commands, managed links, the exact binding and agreement.
    Opening or closing the proposal does not validate or approve it.
-   The technical route is an initial suggestion.
-   After approval the service finishes on its own: it repairs and re-plans, may bring further files of the repository into the write scope (never credentials, keys, `.env`, `.git` or anything outside the repository), and installs dependencies only if the agreement says revisions may.
+   After approval the service first runs a readonly route planner against the isolated candidate to split parallel tasks and write scopes, then finishes on its own: it repairs and re-plans, may bring further files of the repository into the write scope (never credentials, keys, `.env`, `.git` or anything outside the repository), and installs dependencies only if the agreement says revisions may.
    If an acceptance item proves impossible it delivers the closest achievable result and records the deviation: what could not be met, why, what was delivered instead and any declared check set aside because of it.
    The automatic review must confirm each deviation, and a run that deviated says so first when it completes; the task branch is kept, so the merge can be undone.
 4. Type `按计划实施` after the plan to authorize those exact bytes.
@@ -205,8 +204,9 @@ Generated workflow notes remain separate.
 After an owner restart, an unfinished run is shown as `unknown` with its retained worktrees; it is never resumed.
 Credential-looking text in plans and research questions is shown and approved redacted.
 
-An isolated worktree does **not** inherit ignored `node_modules`, build output, credentials or profiles.
-Investigate prerequisites during planning.
+An isolated worktree does **not** inherit ignored build output, credentials or profiles.
+For `local-merge` agreements without dependency installation (`policy.installs: false`), omitting `links` lets the owner auto-discover plain untracked Git-ignored `node_modules` directories at proposal time, display and bind them into the approval digest, and unlink them strictly after identity verification during cleanup (passing `links: []` disables auto-discovery).
+Investigate any other prerequisites during planning.
 If dependencies/setup are needed, include the exact commands and their execution placement in the plan for explicit approval: `target` for original-checkout preflight, `candidate` for preparation needed once in the stable candidate, or `worktree` for the candidate and each parallel child.
 Parallel children have detached HEADs; target branch checks must not run there.
 The plan's displayed service runtime policy includes private temporary directories for this delivery: Cadence supplies `TMPDIR`, `TEMP` and `TMP` to checks and workers, including recovery, so the plan can simply name the project commands.

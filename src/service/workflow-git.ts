@@ -67,7 +67,7 @@ export function gitRead(cwd: string, args: string[]): string {
   return r.stdout;
 }
 /** Synchronous read where exit 1 is an answer (check-ignore), not a failure. */
-function gitAnswer(cwd: string, args: string[]): string | null {
+export function gitAnswer(cwd: string, args: string[]): string | null {
   const r = spawnSync("git", gitArguments(args), {
     cwd,
     env: gitEnvironment(),
@@ -655,17 +655,19 @@ export function workflowObservation(
       );
     // An ignored target is never committed: its edit could only be lost with
     // the worktree. Local merge refuses it; working-copy delivery edits in place.
-    const ignored = gitAnswer(cwd, ["check-ignore", "--", ...declared]);
-    if (ignored !== null)
-      throw new WorkflowRefusal(
-        "invalid",
-        `Declared write targets are ignored by Git and cannot be delivered by local merge: ${list(
-          ((names) =>
-            names.length ? names : ignored.split("\n").filter(Boolean))(
-            declared.filter((p) => ignored.split("\n").includes(p)),
-          ).sort(),
-        )}. Use working-copy delivery or change the ignore rules.`,
-      );
+    if (declared.length) {
+      const ignored = gitAnswer(cwd, ["check-ignore", "--", ...declared]);
+      if (ignored !== null)
+        throw new WorkflowRefusal(
+          "invalid",
+          `Declared write targets are ignored by Git and cannot be delivered by local merge: ${list(
+            ((names) =>
+              names.length ? names : ignored.split("\n").filter(Boolean))(
+              declared.filter((p) => ignored.split("\n").includes(p)),
+            ).sort(),
+          )}. Use working-copy delivery or change the ignore rules.`,
+        );
+    }
     gitRead(cwd, ["var", "GIT_AUTHOR_IDENT"]);
     gitRead(cwd, ["var", "GIT_COMMITTER_IDENT"]);
   }

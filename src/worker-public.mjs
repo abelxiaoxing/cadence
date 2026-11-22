@@ -459,6 +459,7 @@ export function role(v) {
   return {
     role: oneOf(o.role, [
       "design-explorer",
+      "route-planner",
       "implementation-worker",
       "diagnosis-worker",
     ]),
@@ -470,7 +471,9 @@ export function roleForPurpose(purpose) {
     ? "implementation-worker"
     : purpose === "diagnosis"
       ? "diagnosis-worker"
-      : "design-explorer";
+      : purpose === "plan"
+        ? "route-planner"
+        : "design-explorer";
 }
 export function decodeContentRef(v) {
   const o = closed(v, ["recordId", "version", "field", "bytes", "sha256"]);
@@ -561,7 +564,13 @@ export function decodeGraph(v) {
       ]);
       return {
         id: assignmentId(a.id),
-        purpose: oneOf(a.purpose, ["research", "diagnosis", "review", "edit"]),
+        purpose: oneOf(a.purpose, [
+          "research",
+          "plan",
+          "diagnosis",
+          "review",
+          "edit",
+        ]),
         instructions: text(a.instructions, LIMITS.instructionsBytes, true),
         expectedOutput: text(
           a.expectedOutput,
@@ -954,7 +963,13 @@ export function decodeWorkerPublicRequest(v) {
     runId: decodeId(o.runId),
     childRunId: decodeId(o.childRunId),
     assignmentId: assignmentId(o.assignmentId),
-    purpose: oneOf(o.purpose, ["research", "diagnosis", "review", "edit"]),
+    purpose: oneOf(o.purpose, [
+      "research",
+      "plan",
+      "diagnosis",
+      "review",
+      "edit",
+    ]),
     model: decodeModelSelection(o.model),
     role: role(o.role),
     context: text(o.context, 32768),

@@ -15,7 +15,7 @@ import {
 import { canonicalJson } from "../src/worker-public.mjs";
 import * as workspace from "../src/workspace.ts";
 import { fixtureRuntime } from "./helpers/worker-runtime.ts";
-import { plan } from "./helpers/workflow-plan.ts";
+import { plan, v4Plan } from "./helpers/workflow-plan.ts";
 
 /** Admission only: the checkout gate never opens, so nothing runs. */
 function owner(scoped = false) {
@@ -307,6 +307,7 @@ it("a refused native execute leaves its grant usable; retained non-conforming pr
   // cannot be prepared under the current rules.
   const old = structuredClone(p);
   old.id = randomUUID();
+  old.plan = v4Plan();
   old.plan.tasks[0].id = `a${"b".repeat(48)}`;
   coordination.files.create(
     join(coordination.directory, "workflows-v1", "proposals", `${old.id}.json`),

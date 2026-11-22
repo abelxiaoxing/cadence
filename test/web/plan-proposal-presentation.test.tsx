@@ -100,7 +100,7 @@ it("leads with actual state, goal, declared changes and decisions; long terms oc
     proposal.plan.assumptions,
     "refs/heads/release/reader",
     "/git/common",
-    "Create a.txt",
+    "Planned automatically inside the isolated candidate",
   ]) {
     expect(summary).not.toContain(term);
     expect(details).toContain(term);
@@ -194,9 +194,7 @@ it("compares only the named prior binding, without duplicating its delivery pros
   expect(view.summary).not.toContain("Previous runtime policy");
   expect(view.details).toContain(prior.delivery.target.branch);
   expect(view.details).toContain("Previous runtime policy");
-  expect(view.html.split("Assignments that can run side by side")).toHaveLength(
-    2,
-  );
+  expect(view.html.split("## Execution route")).toHaveLength(2);
   expect(view.actions).toContain("Confirm implementation");
   const replacement = card(fixture(), { previous: prior });
   expect(replacement.html).not.toContain(prior.id);
@@ -224,4 +222,11 @@ it("keeps recorded prose intact under Chinese controls and the full English deli
   expect(details).toContain("完整交付约定");
   expect(details).toContain("Acceptance: checks and automatic Agent review");
   expect(actions).toContain("按此计划实施");
+  p.plan.links = [{ path: "node_modules", placement: "worktree" }];
+  expect(card(p, {}, "en").summary).toContain(
+    "Managed dependency links (1): node_modules",
+  );
+  expect(card(p, {}, "zh").summary).toContain(
+    "托管依赖链接（1 项：node_modules）",
+  );
 });

@@ -17,6 +17,7 @@ import {
 import { worktreeResidue } from "../src/service/workflow-git.ts";
 import {
   confirmedManagedLinkPaths,
+  discoverManagedLinks,
   type ManagedLinkJournal,
   type ManagedLinkRecord,
   provisionManagedLinks,
@@ -259,4 +260,66 @@ it("sameLinkTarget handles Windows NTFS junction trailing separators and verbati
   expect(
     sameLinkTarget("/repo/node_modules", "/repo/node_modules", "linux"),
   ).toBe(true);
+});
+
+it("discoverManagedLinks finds only plain untracked Git-ignored node_modules up to depth 2 and respects exclusions", () => {
+  const f = deliveryFixture("task-branch-v2");
+  writeFileSync(
+    join(f.root, ".gitignore"),
+    "node_modules/\nweb/node_modules/\npackages/*/node_modules/\n.hidden/node_modules/\n",
+  );
+  // Tracked node_modules must be skipped even if matched by pattern.
+  mkdirSync(join(f.root, "tracked-pkg", "node_modules"), { recursive: true });
+  writeFileSync(
+    join(f.root, "tracked-pkg", "node_modules", "committed.js"),
+    "export const x = 1;\n",
+  );
+  f.git("add", "-f", ".gitignore", "tracked-pkg/node_modules/committed.js");
+  f.git("commit", "-qm", "setup ignore and tracked fixture");
+
+  // Valid ignored plain node_modules at depth 0, 1, 2.
+  mkdirSync(join(f.root, "node_modules", "pkg"), { recursive: true });
+  mkdirSync(join(f.root, "web", "node_modules", "pkg"), { recursive: true });
+  mkdirSync(join(f.root, "packages", "core", "node_modules", "pkg"), {
+    recursive: true,
+  });
+  // Depth 3 node_modules (too deep -> skipped).
+  mkdirSync(join(f.root, "a", "b", "c", "node_modules"), { recursive: true });
+  // Hidden directory (skipped).
+  mkdirSync(join(f.root, ".hidden", "node_modules"), { recursive: true });
+  // Directory containing >600 regular files alphabetically before web/ must not
+  // starve BFS discovery of web/node_modules.
+  mkdirSync(join(f.root, "aaa-files"), { recursive: true });
+  for (let i = 0; i < 600; i++)
+    writeFileSync(join(f.root, "aaa-files", `f-${i}.txt`), "");
+  // Nested Git repository / submodule must not be descended into.
+  mkdirSync(join(f.root, "nested-repo", ".git"), { recursive: true });
+  mkdirSync(join(f.root, "nested-repo", "node_modules", "pkg"), {
+    recursive: true,
+  });
+  // Symlinked node_modules (skipped).
+  mkdirSync(join(f.root, "linked-pkg"), { recursive: true });
+  symlinkSync(
+    join(f.root, "node_modules"),
+    join(f.root, "linked-pkg", "node_modules"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+
+  expect(discoverManagedLinks(f.root)).toEqual([
+    { path: "node_modules", placement: "worktree" },
+    { path: "packages/core/node_modules", placement: "worktree" },
+    { path: "web/node_modules", placement: "worktree" },
+  ]);
+  // Overlapping write paths are excluded.
+  expect(discoverManagedLinks(f.root, ["web"])).toEqual([
+    { path: "node_modules", placement: "worktree" },
+    { path: "packages/core/node_modules", placement: "worktree" },
+  ]);
+
+  // Verify non-ignored node_modules is skipped when .gitignore anchors `/node_modules/`.
+  writeFileSync(join(f.root, ".gitignore"), "/node_modules/\n");
+  expect(discoverManagedLinks(f.root)).toEqual([
+    { path: "node_modules", placement: "worktree" },
+  ]);
+  f.delivery.finish();
 });

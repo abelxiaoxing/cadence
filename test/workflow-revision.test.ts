@@ -9,7 +9,7 @@ import { AttemptFailure } from "../src/service/workflow-controller.ts";
 import { acceptanceRecord } from "../src/service/workflow-delivery.ts";
 import { WorkflowRefusal } from "../src/service/workflow-git.ts";
 import { Workflows } from "../src/service/workflows.ts";
-import { plan } from "./helpers/workflow-plan.ts";
+import { stagedPlan as plan } from "./helpers/workflow-plan.ts";
 
 /** Every file of the controlled tree, so an edit anywhere is observed. */
 const tree = vi.hoisted(() => ({

@@ -8,7 +8,7 @@ Read this before changing a client, its consent rules or what the WebUI shows.
 `src/cadence-mode.ts` owns persistent conversation mode; `/cadence [goal]` enables it until explicit `exit cadence`, `退出 Cadence` or `/cadence exit`.
 The exit phrase is named in the activation message, command description and instructions; it is trimmed before matching, accepted while Pi is busy and from RPC input, and never cancels accepted work.
 A saved mode engages only in a trusted interactive terminal for the same cwd; in print, RPC or untrusted sessions it is inert (ordinary tools, nothing injected), and `/cadence exit` still leaves it.
-Mode instructions go into the per-turn system prompt; a context filter keeps only the newest small Cadence state message.
+Mode instructions and the static route table go into the per-turn system prompt; a context filter keeps only the newest bounded Cadence working-memory message built by `src/coordinator-context.ts` (compact active design and full/bounded pending proposal), and `cadence_status({ proposal: true })` reads the pending proposal in full.
 Tool sets change only in a session that actually applied Cadence tools; `/tree` navigation elsewhere leaves other extensions' tool choices alone.
 A completed goal leaves the conversation in ready mode, not ordinary mode.
 Subsequent messages never require another activation command.
@@ -261,7 +261,8 @@ Toggling the browser mode switch only sets local next-Send intent without sendin
 Prefix-only entry asks for a goal; ordinary subsequent messages, refresh, completion and cancellation retain mode until explicit exit.
 Mode/plan/run links belong to the owner-private versioned conversation-control store; browser storage holds only drafts (with the anchor of a message being rewritten), the prompts this tab sent (sessionStorage, for recall), display preferences and uncertain attempt IDs.
 The coordinator is an isolated SDK child with only bounded research/proposal/status tools; it cannot call write/edit/bash, approve itself, or load arbitrary extensions.
-Its static dialogue policy travels in `request.instructions` (`LIMITS.instructionsBytes`), while per-turn placement, run/plan/design state and the project route table are budgeted together into `request.context` (`COORDINATOR_CONTEXT_BYTES`, 32KiB) and mounted into Pi's `appendSystemPrompt` section so Pi's shared session `.jsonl` records only the user's message.
+Its slimmed static dialogue policy travels in `request.instructions` (`LIMITS.instructionsBytes`), while per-turn placement, the project route table, recent runs, compact active design and full/bounded pending proposal are budgeted static-first into `request.context` (`COORDINATOR_CONTEXT_BYTES`, 32KiB, via `src/coordinator-context.ts`) and mounted into Pi's `appendSystemPrompt` section so Pi's shared session `.jsonl` records only the user's message.
+`cadence_status({ proposal: true })` paginates the full pending proposal with digest binding, and `cadence_plan` reports `redacted` alongside any auto-discovered `links`.
 A research call returns one entry per question in the order asked (`status`, the first 4KiB of its text and, for an answered one, its `investigation`), not the run record; a bridge refusal carries the service's fixed error code.
 It holds no checkout barrier while awaiting research, so the existing worker barrier cannot deadlock its parent and status conversation can proceed during implementation.
 One coordinator turn per conversation is admitted at a time (bounded per owner); separate project owners remain independent.
@@ -283,7 +284,7 @@ Prepare is a fresh confirmation operation, not a background read; a second tab, 
 The browser-specific approval channel retains browser authority and existing CSRF/origin checks; the native general workflow command remains forbidden to browsers.
 Both surfaces display the owner-bound target/ref/base and named stable-worktree policy before approval, then recorded candidate acceptance, actual integration, post-checks and retention.
 The conversation cwd/session stays unchanged; observing a managed worktree never starts another owner.
-Version-3 agreement approval covers the goal, explicit decisions, acceptance and the coordinator's listed assumptions, the declared commands and installation policy, and the owner finishing on its own: revising the route and the write scope inside the repository, recovery, recorded deviations confirmed by the automatic review, and verified project-knowledge maintenance.
+Version-5 agreement approval covers the goal, high-level technical design, explicit decisions, acceptance and the coordinator's listed assumptions, the declared commands, managed links and installation policy, and the owner finishing on its own: post-approval readonly route planning (`route-planner`), revising the route and the write scope inside the repository, recovery, recorded deviations confirmed by the automatic review, and verified project-knowledge maintenance.
 Both surfaces show that statement with the plan before approval.
 It covers declared setup/check commands and local commits/integration, not a generic shell, push, publication, deployment or host recovery capability.
 An accepted plan is consumed at the conversation boundary before dispatch; command loss or an uncertain attempt is observed, never replayed.

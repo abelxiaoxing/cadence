@@ -17,7 +17,7 @@ import { captureShell } from "./worker-tools.mjs";
 export function createWorkerToolkit(options) {
   const { purpose, coordinator = false } = options;
   if (
-    !["edit", "research", "diagnosis", "review"].includes(purpose) ||
+    !["edit", "research", "plan", "diagnosis", "review"].includes(purpose) ||
     (coordinator && purpose !== "research")
   )
     throw new Error("Invalid worker capability selection");

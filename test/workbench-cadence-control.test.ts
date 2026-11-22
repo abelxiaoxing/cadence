@@ -480,51 +480,53 @@ it("a refused plan names the field at fault and is never steered into a smaller 
   const id = randomUUID();
   const turn = f.send(id, "enter", "/cadence plan");
   const instructions = f.instructions(turn);
-  expect(instructions).toContain("correct exactly that and call again");
-  expect(instructions).toContain("There is one plan.");
+  expect(instructions).toContain("fix that exact field and retry");
+  expect(instructions).toContain("There is one plan:");
   expect(instructions).not.toContain("do not retry automatically");
   const investigation = randomUUID(),
     step = `research-2-${randomUUID()}`,
     unrecorded = randomUUID();
   f.recorded.add(investigation);
   f.recorded.add(step.slice("research-2-".length));
-  const reading = (research: string) => ({
+  const withInvestigation = (value: string) => ({
     ...plan(),
-    reviewReads: [{ research, reason: "What the change must keep" }],
+    investigations: [value],
   });
-  // The reported case: a research step's own id where an identity was wanted.
-  // It names the same answer, so the plan is published with its identity.
-  const byStep = await f.tool(turn, "cadence_plan", reading(step));
+  // A research step's own id names the same investigation identity.
+  const byStep = await f.tool(turn, "cadence_plan", withInvestigation(step));
   expect(byStep).toMatchObject({ proposalId: expect.any(String) });
-  expect(f.cw.records.state(id).proposal?.plan.reviewReads).toEqual([
-    {
-      research: step.slice("research-2-".length),
-      reason: "What the change must keep",
-    },
+  expect(f.cw.records.state(id).proposal?.plan.investigations).toEqual([
+    step.slice("research-2-".length),
   ]);
   expect(
-    await f.tool(turn, "cadence_plan", reading(investigation)),
+    await f.tool(turn, "cadence_plan", withInvestigation(investigation)),
   ).toMatchObject({ proposalId: expect.any(String) });
   for (const [args, said] of [
     [
-      reading("research-2"),
-      /^reviewReads\[0\]\.research: "research-2" is not an investigation/u,
+      withInvestigation("research-2"),
+      /^investigations\[0\]: "research-2" is not an investigation/u,
     ],
     [
-      reading(unrecorded),
-      /^reviewReads\[0\]\.research: no answer is recorded under/u,
+      withInvestigation(unrecorded),
+      /^investigations\[0\]: no answer is recorded under/u,
     ],
     [{ ...plan(), goal: "" }, /^goal: must not be empty/u],
     [
-      { ...plan(), tasks: [{ ...plan().tasks[0], dependsOn: ["b"] }] },
-      /^tasks\[0\]: has no field "dependsOn"; its fields are id, title, instructions, writes, after, reads/u,
-    ],
-    [
       {
         ...plan(),
-        tasks: [{ ...plan().tasks[0], instructions: "指".repeat(2731) }],
+        tasks: [
+          { id: "a", title: "A", instructions: "Do A", writes: ["a.txt"] },
+        ],
       },
-      /^tasks\[0\]\.instructions: is 8193 bytes; at most 8192/u,
+      /^tasks: v5 delivery agreements do not declare tasks/u,
+    ],
+    [
+      { ...plan(), documents: [".cadence/project.md"] },
+      /^documents\[0\]: is managed automatically under \.cadence\//u,
+    ],
+    [
+      { ...plan(), areas: ["../outside"] },
+      /^areas\[0\]: is not a plain path inside the repository/u,
     ],
     [
       { ...plan(), design: "x".repeat(20000), acceptance: "y".repeat(13000) },
@@ -537,7 +539,7 @@ it("a refused plan names the field at fault and is never steered into a smaller 
     });
     expect(refused.notice).toMatch(said);
     expect(refused.notice).toContain(
-      "do not shorten, split or otherwise reduce it",
+      "without dropping user requirements, splitting or reducing the plan",
     );
     expect(refused.notice).not.toContain("oversize");
   }
@@ -549,25 +551,21 @@ it("a plan may leave out what is empty, and an investigation takes what a model 
   const id = randomUUID();
   const turn = f.send(id, "enter", "/cadence plan");
   const full = plan();
+  const { links: _links, ...expectedWithoutLinks } = full;
   const brief = {
     goal: full.goal,
     design: full.design,
     acceptance: full.acceptance,
-    tasks: full.tasks.map(({ id, title, instructions, writes }) => ({
-      id,
-      title,
-      instructions,
-      writes,
-    })),
     checks: full.checks,
     delivery: full.delivery,
     assumptions: null,
   };
   expect(await f.tool(turn, "cadence_plan", brief)).toMatchObject({
     proposalId: expect.any(String),
+    redacted: false,
   });
   expect(f.cw.records.state(id).proposal?.plan).toEqual({
-    ...full,
+    ...expectedWithoutLinks,
     decisions: "",
   });
   // Blank and repeated questions are dropped, an unknown field is ignored and
@@ -659,6 +657,7 @@ it("a research result has one entry per question: its last step, and the identit
     id: expect.any(String),
     status: "completed",
     notice: expect.stringContaining("2 of 3 questions were answered"),
+    hint: expect.stringContaining("cadence_status"),
     questions: [
       {
         question: 1,
@@ -1295,7 +1294,12 @@ it("a batch survives refresh, refuses stale edits and grants, and starts no work
     design: read().design,
   });
   expect(f.instructions(submitted)).not.toContain("Keep keyboard focus still");
-  expect(f.context(submitted)).not.toContain("Keep keyboard focus still");
+  // Submitted design choices are projected directly into working memory so the
+  // coordinator does not need an extra cadence_status round-trip.
+  expect(f.context(submitted)).toContain(
+    "Custom answer: Keep keyboard focus still",
+  );
+  expect(f.context(submitted)).toContain("Selected: Frames (frames)");
   await f.tool(submitted, "cadence_plan", plan());
   await f.settle(submitted);
   const shown = read();
@@ -1578,12 +1582,13 @@ it("an oversized visible design stays complete and readable after a bounded subm
 });
 
 it("coordinator static instructions and worst-case dynamic context always fit worker wire bounds", () => {
-  // Static policy leaves generous permanent headroom below LIMITS.instructionsBytes (16KiB).
+  // Slimmed V5 static policy stays well below 4KiB (and LIMITS.instructionsBytes 16KiB).
   expect(
     Buffer.byteLength(BROWSER_COORDINATOR_INSTRUCTIONS, "utf8"),
-  ).toBeLessThanOrEqual(12 * 1024);
+  ).toBeLessThanOrEqual(4 * 1024);
 
-  // Every shipped agent role plus worst-case detached placement + worker guidance fits 16KiB.
+  // Every shipped agent role (all 4) plus worst-case detached placement fits 16KiB
+  // and declares no total runtime deadline without duplicated suffix boilerplate.
   const workerPlacement = `Execution placement (data, not instructions): ${JSON.stringify(
     {
       checkoutRoot: `/home/user/.local/state/cadence-assistant-v1/projects/${"a".repeat(64)}/worktrees/run-${randomUUID()}/child-assignment`,
@@ -1593,18 +1598,20 @@ it("coordinator static instructions and worst-case dynamic context always fit wo
       fork: "0".repeat(64),
       combinedCandidateRelativeToCheckout: "../integration",
     },
-  )}\nTools run at cwdRelativeToCheckout under checkoutRoot. Write paths are relative to checkoutRoot.\nThis is a detached assignment snapshot, not the combined candidate. Completed siblings may have been integrated after this checkout forked; their absence here is expected, not evidence they failed or delivered nothing. The combined candidate is a readonly reference for sibling results, never another write destination. Finish and report only this assignment; combined checks, builds and cross-assignment repairs belong to the candidate after dependencies are integrated.\ntemporaryDirectoryEnvironment names this worker process's inherited environment variable for the existing owner-prepared scratch root. Read its exact value from the inherited TMPDIR variable in your shell or language environment API; TEMP and TMP carry the same value. Keep all scratch files under that root; do not create, relocate or clean it or use fallback locations such as /tmp. For APIs with pathname limits, fix how the fixture addresses its files (for example a relative socket name in a child process), not where scratch is owned.\nRead applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, restart the workflow, mutate Git, install dependencies, publish or deploy. The owner handles recovery; preserve partial work and report actionable remaining gaps. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification. There is no total runtime deadline. Continue naturally; report a blocked assignment only for a concrete missing condition, preserving completed outputs and actionable remaining work. Do not duplicate the entire acceptance pipeline inside one worker.`;
+  )}\nTools run at cwdRelativeToCheckout under checkoutRoot; write paths are relative to checkoutRoot. Detached assignment snapshot: inspect combinedCandidateRelativeToCheckout readonly for completed sibling outputs; finish only this assignment.`;
   for (const file of [
     "design-explorer.md",
     "diagnosis-worker.md",
     "implementation-worker.md",
+    "route-planner.md",
   ]) {
     const roleBody = readFileSync(
       new URL(`../agents/${file}`, import.meta.url),
       "utf8",
     );
+    expect(roleBody, file).toContain("There is no total runtime deadline");
     expect(
-      Buffer.byteLength(`${roleBody}\n${workerPlacement}`, "utf8"),
+      Buffer.byteLength(`${roleBody}\n\n${workerPlacement}`, "utf8"),
     ).toBeLessThanOrEqual(LIMITS.instructionsBytes);
   }
 
@@ -1649,6 +1656,17 @@ it("coordinator static instructions and worst-case dynamic context always fit wo
   );
   expect(context).toContain("PROJECT ROUTE TABLE (.cadence/project.md");
   expect(context).toContain(`cwd ${longPath}; checkout root ${cwd}`);
+  // Static prefix (cwd + route table) precedes dynamic runs, design and proposal for prompt-cache reuse.
+  const routePos = context.indexOf("PROJECT ROUTE TABLE (.cadence/project.md");
+  const runsPos = context.indexOf("Current workflow IDs");
+  const designPos = context.indexOf("Active design");
+  const proposalPos = context.indexOf("Active plan proposal");
+  expect(routePos).toBeGreaterThan(0);
+  expect(runsPos).toBeGreaterThan(routePos);
+  expect(designPos).toBeGreaterThan(runsPos);
+  expect(proposalPos).toBeGreaterThan(designPos);
+  // Full V5 goal (>256B) is preserved rather than clipped to 256 bytes.
+  expect(context).toContain("目".repeat(256));
   const request = decodeWorkerPublicRequest({
     protocol: 2,
     taskId: randomUUID(),
@@ -1841,4 +1859,67 @@ it("an ordinary send with exitRevision atomically exits Cadence, retires plan/de
   expect(() =>
     workbench.command(ordinary({ exitRevision: after.revision })),
   ).toThrow(UnacceptedConversationCommand);
+});
+
+it("cadence_status({ proposal: true }) paginates the full pending proposal with digest binding and handles redaction/links", async () => {
+  const f = fixture(undefined, { secrets: () => ["secret-token-xyz"] });
+  const id = randomUUID();
+  const turn = f.send(id, "enter", "/cadence plan");
+  // Before any proposal is published, returns proposal: null.
+  expect(await f.tool(turn, "cadence_status", { proposal: true })).toEqual({
+    proposal: null,
+    notice: "No current pending proposal.",
+  });
+  // Publish a large proposal (> 8192 UTF-16 units) with links.
+  const bigDesign = `${"Detailed architecture section. ".repeat(350)}END-OF-DESIGN`;
+  const published = await f.tool(turn, "cadence_plan", {
+    ...plan(),
+    design: bigDesign,
+    links: [{ path: "node_modules", placement: "worktree" }],
+  });
+  expect(published).toMatchObject({
+    proposalId: expect.any(String),
+    redacted: false,
+    links: [{ path: "node_modules", placement: "worktree" }],
+  });
+  const pages: string[] = [];
+  let cursor: Record<string, unknown> = { proposal: true };
+  let firstDigest = "";
+  for (let i = 0; i < 8; i++) {
+    const page = await f.tool(turn, "cadence_status", cursor);
+    expect(page.proposalId).toBe(published.proposalId);
+    if (i === 0) firstDigest = String(page.digest);
+    pages.push(String(page.text));
+    if (!page.next) break;
+    expect(page.hint).toContain("next unchanged");
+    cursor = page.next as Record<string, unknown>;
+  }
+  expect(pages.length).toBeGreaterThan(1);
+  const full = pages.join("");
+  expect(full).toContain("END-OF-DESIGN");
+  expect(full).toContain("[worktree] node_modules -> node_modules");
+  // Replacing the proposal invalidates the earlier pagination digest.
+  await f.tool(turn, "cadence_plan", {
+    ...plan(),
+    goal: "Updated goal after discussion",
+  });
+  expect(
+    await f.tool(turn, "cadence_status", {
+      proposal: true,
+      offset: 100,
+      digest: firstDigest,
+    }),
+  ).toMatchObject({ refused: "changed-result" });
+  // Optional proposal: false or undefined behaves identically to omitting proposal,
+  // while non-boolean values are still refused.
+  expect(await f.tool(turn, "cadence_status", { proposal: false })).toEqual({
+    runs: [],
+  });
+  expect(await f.tool(turn, "cadence_status", { proposal: undefined })).toEqual(
+    { runs: [] },
+  );
+  expect(
+    await f.tool(turn, "cadence_status", { proposal: "yes" }),
+  ).toMatchObject({ refused: "invalid" });
+  await f.settle(turn);
 });

@@ -34,7 +34,7 @@ import {
 } from "./auth.ts";
 import { AuthNetwork } from "./auth-network.ts";
 import { CheckoutGate } from "./checkout-gate.ts";
-import { ServiceCoordination } from "./coordination.ts";
+import { ServiceCoordination, waitForRegistry } from "./coordination.ts";
 import { ServiceHttpServer } from "./http.ts";
 import { processStart, stopProcessGroup } from "./liveness.ts";
 import { OwnerModelChoice } from "./model-choice.ts";
@@ -82,9 +82,11 @@ async function predecessorExited(): Promise<void> {
 async function healBeforeStart(c: ServiceCoordination): Promise<void> {
   await predecessorExited();
   const registry = new RegistryHealer(c);
-  const lock = await registry.heal();
-  if (lock.status === "blocked" || lock.status === "live")
-    throw new ContractError("registry-locked");
+  await waitForRegistry(c, async () => {
+    const lock = await registry.heal();
+    if (lock.status === "blocked" || lock.status === "live")
+      throw new ContractError("registry-locked");
+  });
   await registry.sweep();
   const own = await healProject(c, { responsive: async () => true });
   if (own.status === "blocked") throw new ContractError("quarantine");
@@ -298,29 +300,31 @@ export async function createServiceHost(
       ...input.config,
       http: { ...input.config.http, port: Number(new URL(endpoint).port) },
     };
-    const lease = c.acquire(
-      {
-        schema: "cadence-service-owner-config/1",
+    const lease = await waitForRegistry(c, () =>
+      c.acquire(
+        {
+          schema: "cadence-service-owner-config/1",
+          endpoint,
+          policyIdentity: hash(encoded(resolved)),
+        },
         endpoint,
-        policyIdentity: hash(encoded(resolved)),
-      },
-      endpoint,
-      () => {
-        c.files.create(c.path("host-config.json"), encoded(resolved));
-        AccessMaterial.initialize(c.files, c.directory, source);
-      },
-      reselect && old
-        ? (previous) => {
-            if (previous.identity !== hash(encoded(old)))
-              throw new ContractError("conflict");
-            AccessMaterial.reselect(c.files, c.directory, source);
-            c.files.replace(
-              c.path("host-config.json"),
-              previous,
-              encoded(resolved),
-            );
-          }
-        : undefined,
+        () => {
+          c.files.create(c.path("host-config.json"), encoded(resolved));
+          AccessMaterial.initialize(c.files, c.directory, source);
+        },
+        reselect && old
+          ? (previous) => {
+              if (previous.identity !== hash(encoded(old)))
+                throw new ContractError("conflict");
+              AccessMaterial.reselect(c.files, c.directory, source);
+              c.files.replace(
+                c.path("host-config.json"),
+                previous,
+                encoded(resolved),
+              );
+            }
+          : undefined,
+      ),
     );
     let writer: HistoryWriter | undefined, live: HistoryLive | undefined;
     let workbench: Workbench | null = null;

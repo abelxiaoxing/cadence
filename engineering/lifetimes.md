@@ -39,7 +39,7 @@ The peer merges that verified frontier into its isolated candidate and repeats c
 External HEAD/branch drift, overlapping writes or changed `AGENTS.md` refuse integration and retain the candidate.
 Failed or unknown deliveries advance no peer.
 The terminal is never an embedded executor.
-One fresh 120s grant binds the exact displayed version-3 delivery agreement, model source, project observation and owner epoch.
+One fresh 120s grant binds the exact displayed version-5 delivery agreement, model source, project observation and owner epoch.
 The agreement explicitly allows service-owned diagnosis, remaining-work splitting and alternative implementations under its approved goal, decisions, acceptance and exact commands; route and repository write-scope revisions follow [checks and review](checks-review.md#automatic-conversation-workflow), never expand external authority.
 There is no total delivery deadline or fixed repair-round quota.
 Agents have no total runtime deadline; setup/check commands are unlimited unless their exact approved definition specifies a timeout.
@@ -102,6 +102,7 @@ The remaining historical writer and transport coupling is documented in [archite
   System services require uid0, bypass user managers/logind entirely and require confirmed native Stop before manager stop or definition replacement; changed state-home inputs, old user units and detached running owners refuse implicit adoption.
   Registry reservation atomically rejects canonical ancestor/descendant overlaps, including nested Git roots and aliases; a different state-home does not coordinate arbitrary other owners.
 - The short global registry lock never expires by age; see [self-healing](#self-healing) for when its holder is proven dead.
+  Async startup paths (`host.ts`, `cli.ts`, `self-heal.ts`) use `waitForRegistry` (`src/service/coordination.ts`) to back off briefly while a provably live holder finishes, without ever breaking a live lock or altering synchronous `ServiceCoordination.acquire()`.
   Missing retained project directories do not invalidate the global registry: canonical existing ancestors, aliases and overlaps are still checked, and a dead owner's reservation is released by the next start or `cadence doctor`.
 - Generated Linux units exclude deterministic foreground refusal exit78 from restart; manager acceptance without authenticated readiness is not reported as successful startup.
 - Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
@@ -146,6 +147,8 @@ An associated owner that is not running (stopped, crashed, restarted under a new
 The gateway follows an associated project's restarted owner (same canonical path, new epoch) instead of refusing its page as stale.
 Selected-only directories have a null epoch and are not Stop associations; browsing their existing owner never changes that.
 An execution preparation registers its original before launching, so departure cannot abandon startup and Stop joins any owner it creates.
+Preparations serialize per canonical project root before command-receipt admission (at most 4 waiting callers; client abort or gateway Stop before admission refuses with `effect: "none"`), re-check warm reuse after dequeue so concurrent tabs for the same project coalesce without extra `commands/*.json`, and run up to `MAX_CONCURRENT_PREPARATIONS` (4) distinct projects concurrently.
+Settled preparation failures leave `inFlightPreparations` and retain bounded FIFO failure history (`settledPrepFailures`, cap 64) so transient cold-start failures never poison gateway capacity while same-`commandId` retries stay fail-closed.
 Its closed purpose (`send` or `plan-validation`) is part of the original command identity; neither purpose grants implementation consent.
 Warm already-associated reuse writes no preparation receipt; a lost preparation response never submits a message.
 Service restart never resumes the old queue.

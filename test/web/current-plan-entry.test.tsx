@@ -38,7 +38,7 @@ import {
 import { MessageAction } from "../../web/src/components/workspace/MessageActions";
 import { WaitingMessages } from "../../web/src/components/workspace/WaitingMessages";
 import { currentToasts } from "../../web/src/layout/toasts";
-import { plan } from "../helpers/workflow-plan";
+import { plan, v4Plan } from "../helpers/workflow-plan";
 import { transport } from "./fixtures";
 
 const f = vi.hoisted(() => ({
@@ -276,34 +276,38 @@ it("opens and closes the current plan at the title, not the stream tail; later d
   expect(read).not.toHaveBeenCalled();
 });
 
-function recordedProposal(version: 2 | 3 | 4 | undefined) {
+function recordedProposal(version: 2 | 3 | 4 | 5 | undefined) {
   const p = proposal("Recorded material");
-  if (version !== 4) {
-    const {
-      version: _version,
-      assumptions,
-      documents,
-      reviewReads,
-      policy,
-      build: _build,
-      links: _links,
-      tasks,
-      ...retained
-    } = p.plan;
-    p.plan = decodeWorkflowPlan({
-      ...retained,
-      tasks: version === 3 ? tasks : tasks.map(({ reads, ...task }) => task),
-      ...(version === 3
-        ? { version, assumptions, documents, reviewReads, policy }
-        : version === 2
-          ? { version, knowledge: [] }
-          : { projectContext: "Older context", repairAttempts: 2 }),
-    });
+  if (version === 5) return p;
+  const legacy = { ...v4Plan(), goal: "Recorded material" };
+  if (version === 4) {
+    p.plan = decodeWorkflowPlan(legacy);
+    return p;
   }
+  const {
+    version: _version,
+    assumptions,
+    documents,
+    reviewReads,
+    policy,
+    build: _build,
+    links: _links,
+    tasks,
+    ...retained
+  } = legacy;
+  p.plan = decodeWorkflowPlan({
+    ...retained,
+    tasks: version === 3 ? tasks : tasks.map(({ reads, ...task }) => task),
+    ...(version === 3
+      ? { version, assumptions, documents, reviewReads, policy }
+      : version === 2
+        ? { version, knowledge: [] }
+        : { projectContext: "Older context", repairAttempts: 2 }),
+  });
   return p;
 }
 
-it.each([2, 3, undefined, 4] as const)(
+it.each([2, 3, 4, undefined, 5] as const)(
   "version %s: real title disclosure and workspace eligibility under matched and stale bindings",
   (version) => {
     const p = recordedProposal(version);
@@ -355,7 +359,7 @@ it.each([2, 3, undefined, 4] as const)(
       expect(card).toContain(
         renderToStaticMarkup(<pre>{readableWorkflowPlan(p.plan)}</pre>),
       );
-      if (version !== 4) {
+      if (version !== 5) {
         expect(card).toMatch(
           /class="plan-status" role="status">This plan is read-only. A new proposal is required for implementation.<\/p>/,
         );

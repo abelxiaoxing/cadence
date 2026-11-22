@@ -75,7 +75,7 @@ import {
   PROJECT_ASSOCIATION_HEADER,
 } from "./contracts/workbench.ts";
 import { ConversationContextRecords } from "./conversation-contexts.ts";
-import { ServiceCoordination } from "./coordination.ts";
+import { ServiceCoordination, waitForRegistry } from "./coordination.ts";
 import {
   GatewayConversations,
   unpreparedDirectory,
@@ -186,11 +186,28 @@ export async function createGateway(
   if (healed.status === "blocked" || healed.status === "live")
     throw new ContractError("quarantine");
   const assets = new Map(web.assets.map((asset) => [asset.path, asset]));
+  const MAX_CONCURRENT_PREPARATIONS = 4;
+  const MAX_PROJECT_PREP_WAITERS = 4;
+  const MAX_SETTLED_PREP_FAILURES = 64;
   const connections = new Set<Socket>(),
     relays = new Set<() => void>();
-  const preparations = new Map<
+  const inFlightPreparations = new Map<
     string,
-    { identity: string; result: Promise<GatewayProject> }
+    { identity: string; projectPath: string; result: Promise<GatewayProject> }
+  >();
+  const settledPrepFailures = new Map<
+    string,
+    { identity: string; error: unknown }
+  >();
+  const projectPrepQueues = new Map<
+    string,
+    {
+      running: boolean;
+      waiters: {
+        resolve: () => void;
+        reject: (error: unknown) => void;
+      }[];
+    }
   >();
   const retirements = new Set<Promise<void>>();
   const attachments = new Map<string, Binding>();
@@ -213,7 +230,6 @@ export async function createGateway(
     stopping: Promise<void> | undefined;
   let auth: HttpAuthentication;
   let pending = 0;
-  let preparing = false;
   const server = createServer(
     {
       maxHeaderSize: LIMITS.headerBytes,
@@ -359,7 +375,8 @@ export async function createGateway(
   /** Read the actual owners Stop will join. Discovery's cached sidebar can
    * also include standalone Pi turns and omit owners; it cannot confirm Stop. */
   async function associatedWork(): Promise<MaintenanceWork> {
-    if (preparing) throw new ContractError("unavailable");
+    if (inFlightPreparations.size > 0 || projectPrepQueues.size > 0)
+      throw new ContractError("unavailable");
     const targets = () =>
       [
         ...new Map(
@@ -406,7 +423,8 @@ export async function createGateway(
       }),
     ).then((lists) => lists.flat());
     if (
-      preparing ||
+      inFlightPreparations.size > 0 ||
+      projectPrepQueues.size > 0 ||
       canonicalJson(targets().map(([key]) => key)) !==
         canonicalJson(selected.map(([key]) => key)) ||
       work.length > MAINTENANCE_WORK_LIMIT
@@ -514,6 +532,62 @@ export async function createGateway(
     store.saveProject(project);
     return project;
   }
+  function cleanupProjectQueue(projectPath: string): void {
+    const queue = projectPrepQueues.get(projectPath);
+    if (queue && !queue.running && queue.waiters.length === 0)
+      projectPrepQueues.delete(projectPath);
+  }
+  async function acquireProjectSlot(
+    projectPath: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (signal?.aborted) throw new ContractError("unavailable");
+    let queue = projectPrepQueues.get(projectPath);
+    if (!queue) {
+      queue = { running: false, waiters: [] };
+      projectPrepQueues.set(projectPath, queue);
+    }
+    const active = queue;
+    if (!active.running) {
+      active.running = true;
+      return false;
+    }
+    if (active.waiters.length >= MAX_PROJECT_PREP_WAITERS)
+      throw new ContractError("capacity");
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        const index = active.waiters.indexOf(waiter);
+        if (index !== -1) {
+          active.waiters.splice(index, 1);
+          cleanupProjectQueue(projectPath);
+          reject(new ContractError("unavailable"));
+        }
+      };
+      const waiter = {
+        resolve: () => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        },
+        reject: (error: unknown) => {
+          signal?.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      active.waiters.push(waiter);
+    });
+    return true;
+  }
+  function releaseProjectSlot(projectPath: string): void {
+    const queue = projectPrepQueues.get(projectPath);
+    if (!queue) return;
+    const next = queue.waiters.shift();
+    if (next) next.resolve();
+    else {
+      queue.running = false;
+      projectPrepQueues.delete(projectPath);
+    }
+  }
   /** Explicit Send or plan validation may prepare the selected owner. This
    * boundary cannot send, choose a model, grant approval or execute a plan. */
   async function prepareExecution(
@@ -522,6 +596,8 @@ export async function createGateway(
     id: string,
     epoch: string,
     current: () => void,
+    markAdmitted: () => void,
+    signal?: AbortSignal,
     location?: ConversationLocation,
   ): Promise<GatewayProject> {
     assert();
@@ -549,10 +625,17 @@ export async function createGateway(
     });
     const intentPath = store.path(`commands/${id}.json`);
     const previous = (): Promise<GatewayProject> | undefined => {
-      const pending = preparations.get(id);
+      const pending = inFlightPreparations.get(id);
       if (pending) {
         if (pending.identity !== identity) throw new ContractError("conflict");
+        markAdmitted();
         return pending.result;
+      }
+      const failed = settledPrepFailures.get(id);
+      if (failed) {
+        if (failed.identity !== identity) throw new ContractError("conflict");
+        markAdmitted();
+        return Promise.reject(failed.error);
       }
       const kept = store.files.read(intentPath);
       if (!kept) return undefined;
@@ -561,19 +644,28 @@ export async function createGateway(
       const settled = store.files.read(
         store.path(`commands/${id}.result.json`),
       );
-      if (!settled) throw new ContractError("receipt-inconclusive");
+      if (!settled) {
+        markAdmitted();
+        throw new ContractError("receipt-inconclusive");
+      }
       return Promise.resolve(decodeProjectEntry(json(settled)));
     };
-    const prior = previous();
-    if (prior) return prior;
-    const running = (await serviceStatus(observed)) as { status?: string };
-    current();
-    assert();
-    const concurrent = previous();
-    if (concurrent) return concurrent;
-    if (running.status === "alive") {
+    const statusOf = () =>
+      waitForRegistry(observed, async () => {
+        const status = (await serviceStatus(observed)) as {
+          status?: string;
+          reason?: string;
+          owner?: string;
+        };
+        if (status.reason === "registry-locked" && status.owner === "live")
+          throw new ContractError("registry-locked");
+        return status;
+      });
+    const warmMatch = (running: {
+      status?: string;
+    }): GatewayProject | undefined => {
+      if (running.status !== "alive") return undefined;
       const access = observed.localAccess();
-
       const project = { ...selected, epoch: access.epoch };
       if (
         store
@@ -583,62 +675,106 @@ export async function createGateway(
         bindings.delete(project.id);
         return project;
       }
-    }
-    if (running.status !== "alive" && process.env.CADENCE_AUTOSTART === "0")
-      throw new ContractError("unsupported-context");
-    if (preparing) throw new ContractError("capacity");
-    if (preparations.size >= 128) throw new ContractError("capacity");
-    const commands = store.path("commands");
-    if (store.files.directory(commands)) {
-      const dir = opendirSync(commands);
-      let count = 0;
-      try {
-        while (dir.readSync())
-          if (++count >= 2048) throw new ContractError("capacity");
-      } finally {
-        dir.closeSync();
-      }
-    }
+      return undefined;
+    };
+    const prior = previous();
+    if (prior) return prior;
+    const initialRunning = await statusOf();
     current();
     assert();
-    store.files.create(intentPath, identity);
-    // Register the original before the launch microtask; browser departure never
-    // cancels this accepted operation, and Stop waits its safety publications.
-    preparing = true;
-    const result = Promise.resolve().then(async () => {
-      const opened = await openProjectDirectory(
-        directory,
-        input.stateHome,
-        input.agentDir,
-        hostUrl,
+    const concurrent = previous();
+    if (concurrent) return concurrent;
+    const initialWarm = warmMatch(initialRunning);
+    if (initialWarm) return initialWarm;
+    if (
+      initialRunning.status !== "alive" &&
+      process.env.CADENCE_AUTOSTART === "0"
+    )
+      throw new ContractError("unsupported-context");
+    const waited = await acquireProjectSlot(selected.path, signal);
+    let ownsSlot = true;
+    try {
+      current();
+      assert();
+      const afterQueue = previous();
+      if (afterQueue) return afterQueue;
+      const running = waited ? await statusOf() : initialRunning;
+      if (waited) {
+        current();
+        assert();
+        const warm = warmMatch(running);
+        if (warm) return warm;
+        if (running.status !== "alive" && process.env.CADENCE_AUTOSTART === "0")
+          throw new ContractError("unsupported-context");
+      }
+      if (inFlightPreparations.size >= MAX_CONCURRENT_PREPARATIONS)
+        throw new ContractError("capacity");
+      const commands = store.path("commands");
+      if (store.files.directory(commands)) {
+        const dir = opendirSync(commands);
+        let count = 0;
+        try {
+          while (dir.readSync())
+            if (++count >= 2048) throw new ContractError("capacity");
+        } finally {
+          dir.closeSync();
+        }
+      }
+      current();
+      assert();
+      markAdmitted();
+      store.files.create(intentPath, identity);
+      // Register the original before the launch microtask; browser departure never
+      // cancels this accepted operation, and Stop waits its safety publications.
+      const result = Promise.resolve().then(async () => {
+        const opened = await openProjectDirectory(
+          directory,
+          input.stateHome,
+          input.agentDir,
+          hostUrl,
+        );
+        const c = new ServiceCoordination(opened.path, input.stateHome),
+          access = c.localAccess();
+        const project = {
+          id: selected.id,
+          path: c.store.root,
+          cwd: selected.cwd,
+          epoch: access.epoch,
+        };
+        store.saveProject(project);
+        bindings.delete(project.id);
+        store.files.create(
+          store.path(`commands/${id}.result.json`),
+          encoded(project),
+        );
+        return project;
+      });
+      inFlightPreparations.set(id, {
+        identity,
+        projectPath: selected.path,
+        result,
+      });
+      ownsSlot = false;
+      void result.then(
+        () => {
+          inFlightPreparations.delete(id);
+          releaseProjectSlot(selected.path);
+        },
+        (error) => {
+          inFlightPreparations.delete(id);
+          settledPrepFailures.set(id, { identity, error });
+          while (settledPrepFailures.size > MAX_SETTLED_PREP_FAILURES) {
+            const oldest = settledPrepFailures.keys().next().value;
+            if (oldest !== undefined) settledPrepFailures.delete(oldest);
+            else break;
+          }
+          releaseProjectSlot(selected.path);
+        },
       );
-      const c = new ServiceCoordination(opened.path, input.stateHome),
-        access = c.localAccess();
-      const project = {
-        id: selected.id,
-        path: c.store.root,
-        cwd: selected.cwd,
-        epoch: access.epoch,
-      };
-      store.saveProject(project);
-      bindings.delete(project.id);
-      store.files.create(
-        store.path(`commands/${id}.result.json`),
-        encoded(project),
-      );
-      return project;
-    });
-    preparations.set(id, { identity, result });
-    void result.then(
-      () => {
-        preparations.delete(id);
-        preparing = false;
-      },
-      () => {
-        preparing = false;
-      },
-    );
-    return result;
+      return result;
+    } finally {
+      if (ownsSlot) releaseProjectSlot(selected.path);
+    }
   }
   function isAssociated(id: string): boolean {
     return store.associatedProjects().some((project) => project.id === id);
@@ -724,10 +860,18 @@ export async function createGateway(
     const previewsClosed = modelPreviews.close();
     void previewsClosed.catch(() => {});
     store.phase("stopping");
+    for (const [projectPath, queue] of [...projectPrepQueues]) {
+      const waiters = queue.waiters.splice(0);
+      for (const waiter of waiters)
+        waiter.reject(new ContractError("quarantine"));
+      cleanupProjectQueue(projectPath);
+    }
     stopping = (async () => {
       // An accepted Send preparation settles first; its owner (if any) is stopped
       // below like every other associated owner.
-      await Promise.allSettled([...preparations.values()].map((o) => o.result));
+      await Promise.allSettled(
+        [...inFlightPreparations.values()].map((o) => o.result),
+      );
       await Promise.allSettled([...retirements]);
       const targets = store.associatedProjects();
       // Owners share the short registry writer. Do not race their final release
@@ -1428,15 +1572,28 @@ export async function createGateway(
         if (preparationPurpose === "plan-validation" && !location)
           throw new ContractError("invalid");
         auth.current(caller);
-        effect = true;
-        const project = await prepareExecution(
-          preparationPurpose,
-          projectId,
-          id,
-          epoch,
-          () => auth.current(caller),
-          location,
-        );
+        const abort = new AbortController();
+        const onClose = () => {
+          if (!res.writableEnded) abort.abort();
+        };
+        res.once("close", onClose);
+        let project: GatewayProject;
+        try {
+          project = await prepareExecution(
+            preparationPurpose,
+            projectId,
+            id,
+            epoch,
+            () => auth.current(caller),
+            () => {
+              effect = true;
+            },
+            abort.signal,
+            location,
+          );
+        } finally {
+          res.off("close", onClose);
+        }
         auth.current(caller);
         reply(res, 200, { kind: "project", project });
         return;

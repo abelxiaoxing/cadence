@@ -3,8 +3,10 @@
  * re-verifies that identity before unlinkSync and never removes target directories
  * or modified/replaced paths. */
 import {
+  type Dirent,
   existsSync,
   lstatSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   rmdirSync,
@@ -12,15 +14,17 @@ import {
   symlinkSync,
   unlinkSync,
 } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { safeDirectory, withinWorkspace } from "../workspace.ts";
 import { ContractError } from "./contracts/core.ts";
 import {
+  WORKFLOW_LIMITS,
   type WorkflowSetupLink,
+  workflowBoundary,
   workflowCovers,
   workflowPath,
 } from "./contracts/workflow.ts";
-import { gitRead, WorkflowRefusal } from "./workflow-git.ts";
+import { gitAnswer, gitRead, WorkflowRefusal } from "./workflow-git.ts";
 
 export interface ManagedLinkRecord {
   worktree: string;
@@ -64,6 +68,92 @@ export function sameLinkTarget(
     normalizeWindowsLinkTarget(observed) ===
     normalizeWindowsLinkTarget(expected)
   );
+}
+
+/** Shallow readonly proposal-time discovery of plain, untracked, Git-ignored
+ * `node_modules` directories (depth <= 2) for local-merge worktrees. Never
+ * follows symlinks, never copies files, never descends into `node_modules` or
+ * hidden directories, and excludes any path overlapping declared writes. */
+export function discoverManagedLinks(
+  checkoutRoot: string,
+  writes: readonly string[] = [],
+): WorkflowSetupLink[] {
+  const realRoot = realpathSync(checkoutRoot);
+  try {
+    if (
+      gitRead(realRoot, ["rev-parse", "--is-inside-work-tree"]).trim() !==
+      "true"
+    )
+      return [];
+  } catch {
+    return [];
+  }
+  const MAX_DEPTH = 2;
+  const MAX_DIRS = 64;
+  const MAX_DIR_ENTRIES = 8192;
+  const queue: { dir: string; prefix: string; depth: number }[] = [
+    { dir: realRoot, prefix: "", depth: 0 },
+  ];
+  const found: WorkflowSetupLink[] = [];
+  let dirs = 0;
+  while (queue.length && found.length < WORKFLOW_LIMITS.links) {
+    const current = queue.shift() as {
+      dir: string;
+      prefix: string;
+      depth: number;
+    };
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(current.dir, { withFileTypes: true }).sort(
+        (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+      );
+    } catch {
+      continue;
+    }
+    let dirEntries = 0;
+    for (const entry of entries) {
+      if (++dirEntries > MAX_DIR_ENTRIES) break;
+      const name = entry.name;
+      if (name.startsWith(".")) continue;
+      if (!entry.isDirectory()) continue;
+      const full = join(current.dir, name);
+      const rel = current.prefix ? `${current.prefix}/${name}` : name;
+      let st: ReturnType<typeof lstatSync>;
+      try {
+        st = lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isSymbolicLink() || !st.isDirectory()) continue;
+      if (name === "node_modules") {
+        try {
+          workflowPath(rel, true);
+          if (!workflowBoundary(rel)) continue;
+          if (
+            workflowCovers(writes, rel) ||
+            writes.some((w) => workflowCovers([rel], w))
+          )
+            continue;
+          if (gitRead(realRoot, ["ls-files", "--", rel]).trim().length > 0)
+            continue;
+          if (gitAnswer(realRoot, ["check-ignore", "--", rel]) === null)
+            continue;
+          found.push({ path: rel, placement: "worktree" });
+          if (found.length >= WORKFLOW_LIMITS.links) break;
+        } catch {
+          /* Skip unreadable or disallowed candidate without mutating anything. */
+        }
+        continue;
+      }
+      if (current.depth < MAX_DEPTH && dirs < MAX_DIRS) {
+        // Never descend into nested Git repositories or submodules.
+        if (existsSync(join(full, ".git"))) continue;
+        dirs++;
+        queue.push({ dir: full, prefix: rel, depth: current.depth + 1 });
+      }
+    }
+  }
+  return found.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 /** Validate declared managed links at proposal/admission against the real checkout.

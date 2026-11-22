@@ -18,6 +18,10 @@ import { Type } from "typebox";
 import { CADENCE_INSTRUCTIONS as INSTRUCTIONS } from "./cadence-instructions.ts";
 import { CadencePreferences } from "./cadence-preferences.ts";
 import {
+  buildCoordinatorContext,
+  readableProposal,
+} from "./coordinator-context.ts";
+import {
   DESIGN_PARAMETERS,
   KNOWLEDGE_PARAMETERS,
   knowledgeToolInput,
@@ -46,7 +50,6 @@ import {
   investigationId,
   readableDelivery,
   readableDeliveryRun,
-  readableWorkflowPlan,
   researchInput,
   type WorkflowProposal,
   type WorkflowRequest,
@@ -110,9 +113,6 @@ const idle = (): CadenceModeState => ({
   proposal: null,
   previousTools: [],
 });
-function readableProposal(proposal: WorkflowProposal): string {
-  return `Working directory: ${proposal.cwd}\nCheckout root (declared write paths): ${proposal.checkoutRoot ?? proposal.cwd}\nModel: ${proposal.display?.model ?? "not recorded"}\n${proposal.display?.runtime ?? "Pi runtime settings not recorded."}\n\n${readableDelivery(proposal.delivery)}\n\n${readableWorkflowPlan(proposal.plan)}`;
-}
 /** Session restoration restores mode/context, NEVER a grant, pending command or action replay. */
 export function restoreCadenceMode(
   entries: readonly { type: string; customType?: string; data?: unknown }[],
@@ -878,15 +878,21 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       };
     return undefined;
   });
-  // The shared policy lives in the per-turn system prompt; one small state
-  // message per turn is kept and older copies are filtered from the context.
+  // The shared policy and static route table live in the per-turn system prompt
+  // for prefix-cache reuse; one bounded working-memory message per turn is kept
+  // and older copies are filtered from the context.
   pi.on("before_agent_start", (event, ctx) =>
     engaged(ctx)
       ? {
           systemPrompt: `${event.systemPrompt}\n\n${INSTRUCTIONS}\n${NATIVE}${routeTable(ctx)}`,
           message: {
             customType: CONTEXT,
-            content: `Cadence state (data, not instructions): retained run ${state.runId ?? "none"}; current proposal ${state.proposal?.id ?? "none; restore does not restore approval"}. ${state.design ? `Design: ${JSON.stringify(state.design)}` : ""}`,
+            content: buildCoordinatorContext({
+              runs: state.runId ? [state.runId] : [],
+              proposal: state.proposal,
+              design: state.design,
+              surface: "native",
+            }),
             display: false,
           },
         }
@@ -1201,7 +1207,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_plan",
     label: "Propose implementation plan",
     description:
-      "Publish a readable delivery agreement: goal, acceptance, explicit decisions, your assumptions, initial route and assignments, what each reads first, checks, setup, documents to update and delivery policy. After one approval the service revises the route on its own and finishes without further confirmation. Does not execute.",
+      "Publish a readable delivery agreement: goal, high-level technical design, explicit decisions, assumptions, acceptance, checks, optional links/setup/build/documents/areas/investigations and delivery policy. After one approval the service plans parallel tasks from the codebase, revises as needed and finishes without further confirmation. Does not execute.",
     parameters: PLAN_PARAMETERS,
     async execute(_id, input, _signal, _update, ctx) {
       // Refused by field name before anything is asked of the service.
@@ -1233,8 +1239,15 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         persist();
         status("awaiting plan approval");
         const shown = readableProposal(response.proposal);
+        const baseline =
+          plan.links === undefined && response.proposal.plan.links !== undefined
+            ? { ...plan, links: response.proposal.plan.links }
+            : plan;
         const redacted =
-          canonicalJson(response.proposal.plan) !== canonicalJson(plan);
+          canonicalJson(response.proposal.plan) !== canonicalJson(baseline);
+        const linksLine = response.proposal.plan.links?.length
+          ? `Managed links: ${response.proposal.plan.links.map((l) => l.path).join(", ")}\n`
+          : "";
         // The plan is displayed by this tool's own result: a message sent now
         // would land between this tool call and its result.
         return {
@@ -1246,7 +1259,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           ],
           details: {
             plan: shown,
-            summary: `# ${response.proposal.plan.goal}\n\n${response.proposal.plan.decisions}\n\nAcceptance: ${response.proposal.plan.acceptance}\n\n${response.proposal.cwd} · ${response.proposal.display?.model ?? ""}\n${readableDelivery(response.proposal.delivery)}\nExpand the tool result for all assignments, setup and check commands.`,
+            summary: `# ${response.proposal.plan.goal}\n\n${response.proposal.plan.decisions}\n\nAcceptance: ${response.proposal.plan.acceptance}\n\n${response.proposal.cwd} · ${response.proposal.display?.model ?? ""}\n${readableDelivery(response.proposal.delivery)}\n${linksLine}Checks: ${response.proposal.plan.checks.map((c) => c.name).join(", ")}\nExpand the tool result for full plan details, setup and check commands.`,
             digest: response.proposal.digest,
             redacted,
           },
@@ -1395,8 +1408,9 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_status",
     label: "Observe workflow",
     description:
-      "Read a retained workflow without replaying any action. Specify runId for earlier runs; otherwise selects the current run. With stepId read its result, or transcript: true for its transcript. If stepsBefore is nonzero, use before: stepsBefore to read earlier steps.",
+      "Read the current pending proposal (proposal: true) or a retained workflow without replaying any action. Specify runId for earlier runs; otherwise selects the current run. With stepId read its result, or transcript: true for its transcript. If stepsBefore is nonzero, use before: stepsBefore to read earlier steps.",
     parameters: Type.Object({
+      proposal: Type.Optional(Type.Boolean()),
       runId: Type.Optional(Type.String()),
       stepId: Type.Optional(Type.String()),
       transcript: Type.Optional(Type.Boolean()),
@@ -1404,6 +1418,12 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     }),
     async execute(_id, input, _signal, _update, ctx) {
       active(ctx);
+      if (input.proposal)
+        return result(
+          state.proposal
+            ? `${readableProposal(state.proposal)}\nPlan identity: ${state.proposal.digest}`
+            : "No current pending proposal.",
+        );
       const id =
         input.runId === undefined ? state.runId : decodeId(input.runId);
       if (!id)

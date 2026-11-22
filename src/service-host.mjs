@@ -748,6 +748,7 @@ function role(v) {
   return {
     role: oneOf(o.role, [
       "design-explorer",
+      "route-planner",
       "implementation-worker",
       "diagnosis-worker"
     ]),
@@ -755,7 +756,7 @@ function role(v) {
   };
 }
 function roleForPurpose(purpose) {
-  return purpose === "edit" ? "implementation-worker" : purpose === "diagnosis" ? "diagnosis-worker" : "design-explorer";
+  return purpose === "edit" ? "implementation-worker" : purpose === "diagnosis" ? "diagnosis-worker" : purpose === "plan" ? "route-planner" : "design-explorer";
 }
 function decodeContentRef(v) {
   const o = closed(v, ["recordId", "version", "field", "bytes", "sha256"]);
@@ -845,7 +846,13 @@ function decodeGraph(v) {
       ]);
       return {
         id: assignmentId(a.id),
-        purpose: oneOf(a.purpose, ["research", "diagnosis", "review", "edit"]),
+        purpose: oneOf(a.purpose, [
+          "research",
+          "plan",
+          "diagnosis",
+          "review",
+          "edit"
+        ]),
         instructions: text(a.instructions, LIMITS.instructionsBytes, true),
         expectedOutput: text(a.expectedOutput, LIMITS.expectedOutputBytes, true),
         role: role(a.role),
@@ -1203,7 +1210,13 @@ function decodeWorkerPublicRequest(v) {
     runId: decodeId(o.runId),
     childRunId: decodeId(o.childRunId),
     assignmentId: assignmentId(o.assignmentId),
-    purpose: oneOf(o.purpose, ["research", "diagnosis", "review", "edit"]),
+    purpose: oneOf(o.purpose, [
+      "research",
+      "plan",
+      "diagnosis",
+      "review",
+      "edit"
+    ]),
     model: decodeModelSelection(o.model),
     role: role(o.role),
     context: text(o.context, 32768),
@@ -5347,7 +5360,7 @@ function validateImageBytes(bytes, mimeType) {
 }
 
 // src/service/contracts/workflow.ts
-var CURRENT_WORKFLOW_PLAN_VERSION = 4;
+var CURRENT_WORKFLOW_PLAN_VERSION = 5;
 var WORKFLOW_LIMITS = {
   tasks: 16,
   route: 48,
@@ -5559,38 +5572,54 @@ function decodeWorkflowPlan(v, options = {}) {
     issue("plan", error instanceof ContractError && error.code === "oversize" ? `is larger than ${WORKFLOW_LIMITS.bytes} bytes as a whole` : "is not plain JSON data");
   }
   const version = modern ? v.version : undefined;
-  if (modern && version !== 2 && version !== 3 && version !== 4)
+  if (modern && version !== 2 && version !== 3 && version !== 4 && version !== 5)
     throw new Error("Unsupported delivery agreement version");
-  const v3OrNewer = version === 3 || version === 4;
-  const v4 = version === 4;
-  if (strict && !v4)
+  const v3OrNewer = version === 3 || version === 4 || version === 5;
+  const v4OrNewer = version === 4 || version === 5;
+  const v5 = version === 5;
+  if (strict && !v5)
     throw new Error("Publish a new delivery agreement; earlier agreements are readonly");
   const o = fields2("plan", v, [
     "goal",
     "design",
     "decisions",
     "acceptance",
-    ...v3OrNewer ? [
+    ...v5 ? [
+      "version",
+      "assumptions",
+      "investigations",
+      "areas",
+      "documents",
+      "policy",
+      "build"
+    ] : v3OrNewer ? [
       "version",
       "assumptions",
       "documents",
       "reviewReads",
       "policy",
-      ...v4 ? ["build", "links"] : []
-    ] : modern ? ["version", "knowledge"] : ["projectContext", "repairAttempts"],
-    "tasks",
+      ...v4OrNewer ? ["build", "links"] : [],
+      "tasks"
+    ] : modern ? ["version", "knowledge", "tasks"] : ["projectContext", "repairAttempts", "tasks"],
     "checks",
     "setup",
     "baselineChecks",
     "delivery"
-  ]);
+  ], v5 ? ["links", "tasks"] : []);
   const documentation = (value, name) => entries(name, value, 16, (entry, path) => at(path, () => {
     const document = workflowPath(entry, strict);
     if (!document.endsWith(".md"))
       throw new Error("must be a Markdown file (.md)");
+    if (v5 && (document === ".cadence" || document.startsWith(".cadence/")))
+      throw new Error("is managed automatically under .cadence/ and must not be listed in documents");
     return document;
   }));
-  const tasks = entries("tasks", o.tasks, WORKFLOW_LIMITS.tasks, (value, path) => {
+  const tasks = v5 ? o.tasks === undefined ? [] : (() => {
+    const list2 = entries("tasks", o.tasks, 0, () => {
+      throw new Error("must not be specified in v5 agreements");
+    });
+    return list2;
+  })() : entries("tasks", o.tasks, WORKFLOW_LIMITS.tasks, (value, path) => {
     const t = fields2(path, value, [
       "id",
       "title",
@@ -5605,10 +5634,12 @@ function decodeWorkflowPlan(v, options = {}) {
       instructions: words(`${path}.instructions`, t.instructions, 8192, true),
       writes: entries(`${path}.writes`, t.writes, 128, (p, entry) => at(entry, () => workflowPath(p, strict))),
       after: entries(`${path}.after`, t.after, WORKFLOW_LIMITS.tasks, (id, entry) => at(entry, () => taskId(id, strict))),
-      ...v3OrNewer ? { reads: decodeWorkflowReadings(t.reads, strict, `${path}.reads`) } : {}
+      ...v3OrNewer ? {
+        reads: decodeWorkflowReadings(t.reads, strict, `${path}.reads`)
+      } : {}
     };
   });
-  if (!tasks.length)
+  if (!v5 && !tasks.length)
     issue("tasks", "needs at least one assignment");
   const ids = tasks.map((t) => t.id);
   for (const [i, t] of tasks.entries()) {
@@ -5625,7 +5656,8 @@ function decodeWorkflowPlan(v, options = {}) {
     if (unknown !== undefined)
       issue(`${path}.after`, `names ${quoted(unknown)}, which is not the id of an assignment in tasks`);
   }
-  at("tasks", () => workflowOrder(tasks));
+  if (tasks.length)
+    at("tasks", () => workflowOrder(tasks));
   for (const a of modern ? [] : tasks)
     for (const b of tasks) {
       if (a.id >= b.id || workflowAncestors(tasks, a.id).some((t) => t.id === b.id) || workflowAncestors(tasks, b.id).some((t) => t.id === a.id))
@@ -5634,11 +5666,11 @@ function decodeWorkflowPlan(v, options = {}) {
         throw new Error("Independent tasks share write paths; assign an owner and dependency");
     }
   const commands = (value, name, maximum, v4Check = false) => entries(name, value, maximum, (entry, path) => decodeWorkflowCheck(entry, path, { v4Check }));
-  const checks = commands(o.checks, "checks", WORKFLOW_LIMITS.checks, v4);
+  const checks = commands(o.checks, "checks", WORKFLOW_LIMITS.checks, v4OrNewer);
   if (!checks.length)
     issue("checks", "needs at least one real verification command");
-  const build2 = v4 ? entries("build", o.build, WORKFLOW_LIMITS.builds, (entry, path) => decodeWorkflowBuild(entry, path, strict)) : undefined;
-  const links = v4 ? entries("links", o.links, WORKFLOW_LIMITS.links, (entry, path) => decodeWorkflowSetupLink(entry, path, strict)) : undefined;
+  const build2 = v4OrNewer ? entries("build", o.build, WORKFLOW_LIMITS.builds, (entry, path) => decodeWorkflowBuild(entry, path, strict)) : undefined;
+  const links = v4OrNewer && o.links !== undefined ? entries("links", o.links, WORKFLOW_LIMITS.links, (entry, path) => decodeWorkflowSetupLink(entry, path, strict)) : undefined;
   if (links) {
     const linkPaths = links.map((l) => l.path);
     for (const [i, l] of links.entries()) {
@@ -5646,13 +5678,48 @@ function decodeWorkflowPlan(v, options = {}) {
         issue(`links[${i}].path`, `${quoted(l.path)} is already declared by links[${linkPaths.indexOf(l.path)}]`);
     }
   }
+  const investigations = v5 ? entries("investigations", o.investigations, WORKFLOW_LIMITS.questions, (entry, path) => {
+    const id = typeof entry === "string" ? investigationId(entry) : null;
+    if (id === null)
+      issue(path, `${typeof entry === "string" ? `${quoted(entry)} ` : ""}is not an investigation; give the "investigation" value of a completed research step`);
+    return id;
+  }) : undefined;
+  if (investigations && new Set(investigations).size !== investigations.length)
+    issue("investigations", "lists an investigation twice");
+  const areas = v5 ? entries("areas", o.areas, 32, (entry, path) => at(path, () => {
+    const p = workflowPath(entry, strict);
+    if (!workflowBoundary(p))
+      throw new Error("cannot name credentials, keys, .env, .git or paths outside the repository");
+    return p;
+  })) : undefined;
+  if (areas && new Set(areas).size !== areas.length)
+    issue("areas", "lists an area twice");
   const result = {
     goal: words("goal", o.goal, 8192, true),
     design: words("design", o.design, 32768, true),
     decisions: words("decisions", o.decisions, 16384),
     acceptance: words("acceptance", o.acceptance, 16384, true),
-    ...v3OrNewer ? {
-      version: v4 ? 4 : 3,
+    ...v5 ? {
+      version: 5,
+      assumptions: words("assumptions", o.assumptions, 16384),
+      investigations: investigations ?? [],
+      areas: areas ?? [],
+      documents: documentation(o.documents, "documents"),
+      policy: {
+        installs: at("policy.installs", () => {
+          try {
+            return bool(fields2("policy", o.policy, ["installs"]).installs);
+          } catch (error) {
+            if (error instanceof WorkflowInputError)
+              throw error;
+            throw new Error("must be true or false");
+          }
+        })
+      },
+      build: build2 ?? [],
+      ...links !== undefined ? { links } : {}
+    } : v3OrNewer ? {
+      version: version === 4 ? 4 : 3,
       assumptions: words("assumptions", o.assumptions, 16384),
       documents: documentation(o.documents, "documents"),
       reviewReads: decodeWorkflowReadings(o.reviewReads, strict, "reviewReads"),
@@ -5667,7 +5734,7 @@ function decodeWorkflowPlan(v, options = {}) {
           }
         })
       },
-      ...v4 ? { build: build2 ?? [], links: links ?? [] } : {}
+      ...v4OrNewer ? { build: build2 ?? [], links: links ?? [] } : {}
     } : modern ? {
       version: 2,
       knowledge: documentation(o.knowledge, "knowledge")
@@ -5747,18 +5814,49 @@ function workflowPlanInput(v) {
     version: CURRENT_WORKFLOW_PLAN_VERSION,
     decisions: "",
     assumptions: "",
+    investigations: [],
+    areas: [],
     documents: [],
-    reviewReads: [],
     policy: {},
     build: [],
-    links: [],
     setup: [],
     baselineChecks: []
   });
+  if (Object.hasOwn(v, "tasks")) {
+    const rawTasks = v.tasks;
+    if (rawTasks !== undefined && rawTasks !== null && !(Array.isArray(rawTasks) && rawTasks.length === 0))
+      issue("tasks", "v5 delivery agreements do not declare tasks; the service plans the execution route automatically after approval");
+    delete plan.tasks;
+  }
   if (plan.policy && typeof plan.policy === "object")
     plan.policy = completed(plan.policy, { installs: false });
-  if (Array.isArray(plan.tasks))
-    plan.tasks = plan.tasks.map((task) => task && typeof task === "object" && !Array.isArray(task) ? completed(task, { after: [], reads: [] }) : task);
+  if (Array.isArray(plan.investigations)) {
+    const seen = new Set;
+    const deduped = [];
+    for (const entry of plan.investigations) {
+      const key = typeof entry === "string" ? investigationId(entry) ?? entry : null;
+      if (key !== null) {
+        if (seen.has(key))
+          continue;
+        seen.add(key);
+      }
+      deduped.push(entry);
+    }
+    plan.investigations = deduped;
+  }
+  if (Array.isArray(plan.areas)) {
+    const seen = new Set;
+    const deduped = [];
+    for (const entry of plan.areas) {
+      if (typeof entry === "string") {
+        if (seen.has(entry))
+          continue;
+        seen.add(entry);
+      }
+      deduped.push(entry);
+    }
+    plan.areas = deduped;
+  }
   if (Array.isArray(plan.checks))
     plan.checks = plan.checks.map((check) => check && typeof check === "object" && !Array.isArray(check) ? completed(check, {}) : check);
   if (Array.isArray(plan.build))
@@ -5831,7 +5929,7 @@ function decodeWorkflowReadings(value, strict, name) {
 }
 var agreementText = (p) => `# ${p.goal}
 
-Initial route (${p.version === 3 || p.version === 4 ? "the owner may revise it" : "adapt within the approved boundary"}): ${p.design}
+Initial route (${p.version === 3 || p.version === 4 || p.version === 5 ? "the owner may revise it" : "adapt within the approved boundary"}): ${p.design}
 
 Explicit decisions and non-goals: ${p.decisions}${p.assumptions ? `
 
@@ -5999,6 +6097,22 @@ function decodeDeliveryObservation(value) {
       reason: text(c.reason, 2048)
     }
   };
+}
+function readableDelivery(binding) {
+  if (!binding)
+    return "";
+  const t = binding.target;
+  if (binding.policy === "task-branch-v2")
+    return `Target: ${t.branch} @ ${t.head}
+Target checkout: ${t.checkoutRoot}
+Execution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.
+Acceptance: seal a single-parent delivery commit on top of the verified target frontier, run declared checks and independent Agent review on that exact OID. A verified, non-overlapping sibling delivery may be incorporated before sealing, followed by fresh checks and review.
+Delivery: advance the task branch and fast-forward only into the bound target with that exact signed-off OID. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
+  return `Target: ${t.branch} @ ${t.head}
+Target checkout: ${t.checkoutRoot}
+Execution: new cadence/<goal>-<run-id> branch and one stable isolated worktree after approval. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.
+Acceptance: checks and automatic Agent review of the exact candidate. A verified, non-overlapping sibling delivery may be merged into the isolated candidate, followed by fresh checks and review.
+Delivery: serialized fast-forward only into the bound target at its approved, verified-sibling or own last confirmed baseline. Keep the task branch; remove only owned worktrees without any residue, including ignored files. No source/profile/dependency copying, push or deployment.`;
 }
 function decodeWorkflowProposal(v) {
   const modern = v !== null && typeof v === "object" && Object.hasOwn(v, "display");
@@ -6177,6 +6291,7 @@ function decodeWorkflowRun(v) {
     status: o.status === "queued" ? "queued" : status(o.status),
     phase: oneOf(o.phase, [
       "research",
+      "planning",
       "implementing",
       "verifying",
       "reviewing",
@@ -6216,6 +6331,7 @@ function decodeWorkflowRun(v) {
         ...linked ? { childRunId: decodeId(s.childRunId) } : {},
         kind: oneOf(s.kind, [
           "research",
+          "planning",
           "implementation",
           "diagnosis",
           "knowledge",
@@ -6223,7 +6339,7 @@ function decodeWorkflowRun(v) {
           "check",
           "git"
         ]),
-        status: s.kind === "review" && s.status === "rejected" ? "rejected" : s.kind === "check" && s.status === "not-run" ? "not-run" : ["implementation", "knowledge"].includes(s.kind) && ["partial", "blocked"].includes(s.status) ? oneOf(s.status, ["partial", "blocked"]) : status(s.status),
+        status: s.kind === "review" && s.status === "rejected" ? "rejected" : s.kind === "check" && s.status === "not-run" ? "not-run" : s.kind === "planning" && s.status === "blocked" ? "blocked" : ["implementation", "knowledge"].includes(s.kind) && ["partial", "blocked"].includes(s.status) ? oneOf(s.status, ["partial", "blocked"]) : status(s.status),
         text: text(s.text, 65536),
         exitCode: nullable(s.exitCode, (n) => integer(n, -2147483648, 2147483647)),
         truncated: bool(s.truncated)
@@ -6254,6 +6370,8 @@ var readableBuild = (b) => `${b.name}: ${b.command} (${b.timeoutMs === undefined
 var readableLink = (l) => `[${l.placement ?? "worktree"}] ${l.path} -> ${l.source ?? l.path}`;
 var readableReading = (r) => ("research" in r) ? `investigation ${r.research} — ${r.reason}` : `${r.path}${r.section ? ` § ${r.section}` : ""} — ${r.reason}`;
 function readableAutomation(p) {
+  if (p.version === 5)
+    return `After approval the service works to completion without further confirmation. First, a readonly route planner inspects the isolated candidate and splits this agreement into parallelizable assignments, write scopes and review reads (validated against repository boundaries, Git-ignore rules, managed links and target cleanliness before any edit). It then advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. It stops for cancellation, uncertain settlement, external target drift, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 4)
     return `After approval the service works to completion without further confirmation. It advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. It stops for cancellation, uncertain settlement, external target drift, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 3)
@@ -6264,7 +6382,29 @@ function readableAutomation(p) {
 }
 function readableWorkflowPlan(p) {
   const documents = workflowDocuments(p);
-  const v4 = p.version === 4;
+  const v5 = p.version === 5;
+  const v4OrNewer = p.version === 4 || v5;
+  const routeSection = v5 && !p.tasks.length ? `${p.areas?.length ? `
+
+## Focus areas (advisory for route planning)
+${p.areas.join(`
+`)}` : ""}${p.investigations?.length ? `
+
+## Investigations passed to route planning
+${p.investigations.join(`
+`)}` : ""}
+
+## Execution route
+Planned automatically inside the isolated candidate after approval (readonly route-planner), validated against write boundaries, Git-ignore rules, managed links and target cleanliness before editing.` : `
+
+## Tasks
+${workflowOrder(p.tasks).map((t) => `### ${t.id}: ${t.title}
+Depends on: ${t.after.join(", ") || "none"}
+Writes: ${t.writes.join(", ")}${t.reads?.length ? `
+Reads first: ${t.reads.map(readableReading).join("; ")}` : ""}
+${t.instructions}`).join(`
+
+`)}`;
   return `# ${p.goal}
 
 ## Initial route (the service may revise it)
@@ -6274,28 +6414,19 @@ ${p.design}
 ${p.decisions}
 
 ## Acceptance
-${p.acceptance}${p.version === 3 || v4 ? `
+${p.acceptance}${p.version === 3 || v4OrNewer ? `
 
 ## Assumptions (confirmed by approval)
-${p.assumptions || "None beyond the decisions above."}` : ""}
-
-## Tasks
-${workflowOrder(p.tasks).map((t) => `### ${t.id}: ${t.title}
-Depends on: ${t.after.join(", ") || "none"}
-Writes: ${t.writes.join(", ")}${t.reads?.length ? `
-Reads first: ${t.reads.map(readableReading).join("; ")}` : ""}
-${t.instructions}`).join(`
-
-`)}
+${p.assumptions || "None beyond the decisions above."}` : ""}${routeSection}
 
 ## Setup (explicitly authorized commands)
 Execution order: target once before worktree creation, candidate once, then worktree in the candidate and every detached child; listed order within each stage. Each command is a separate process; exports do not persist.
 ${p.setup.map((c) => `[${c.placement ?? "worktree"}] ${readableCheck(c)}`).join(`
-`) || "None; no dependency installation or copying."}${v4 && p.links?.length ? `
+`) || "None; no dependency installation or copying."}${v4OrNewer && p.links?.length ? `
 
 ## Managed dependency links (owner-created, identity-verified unlink on cleanup)
 ${p.links.map(readableLink).join(`
-`)}` : ""}${v4 && p.build?.length ? `
+`)}` : ""}${v4OrNewer && p.build?.length ? `
 
 ## Build (owner-synced derived outputs)
 ${p.build.map(readableBuild).join(`
@@ -6306,7 +6437,7 @@ ${p.baselineChecks.map((c) => readableCheck(c)).join(`
 `) || "No separate baseline checks declared."}
 
 ## Verification
-${p.checks.map((c) => readableCheck(c, v4)).join(`
+${p.checks.map((c) => readableCheck(c, v4OrNewer)).join(`
 `)}${p.reviewReads?.length ? `
 
 ## Review reads first
@@ -6314,7 +6445,7 @@ ${p.reviewReads.map(readableReading).join(`
 `)}` : ""}
 
 ## Automation boundary
-${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? v4 ? "Authorize one named task branch and detached development checkpoints in a stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, a single clean final delivery commit sealed onto the verified target frontier, and serialized fast-forward delivery of that exact checked and Agent-reviewed OID into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be incorporated before sealing the final candidate. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; unlink only owner-created managed dependency links after identity verification, then remove owned worktrees only when completely free of any remaining residue, including ignored files." : "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and serialized fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be merged into this candidate and checked/reviewed again. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. ${v4 ? "Related project knowledge is included; workflow process reports stay in private service records." : "Related project knowledge and workflow Markdown are included."} Worktrees/tools are not a sandbox.
+${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? v4OrNewer ? "Authorize one named task branch and detached development checkpoints in a stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, a single clean final delivery commit sealed onto the verified target frontier, and serialized fast-forward delivery of that exact checked and Agent-reviewed OID into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be incorporated before sealing the final candidate. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; unlink only owner-created managed dependency links after identity verification, then remove owned worktrees only when completely free of any remaining residue, including ignored files." : "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and serialized fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be merged into this candidate and checked/reviewed again. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. ${v4OrNewer ? "Related project knowledge is included; workflow process reports stay in private service records." : "Related project knowledge and workflow Markdown are included."} Worktrees/tools are not a sandbox.
 
 ## Project documents
 ${p.version === undefined ? p.projectContext : documents.join(`
@@ -8755,6 +8886,7 @@ var ACTIVITY_PHASES = [
   "queued",
   "running",
   "research",
+  "planning",
   "implementing",
   "verifying",
   "reviewing",
@@ -9331,6 +9463,26 @@ class ServiceCoordination {
       };
     } catch {
       return { reason: "registry-locked", owner: "unreadable" };
+    }
+  }
+}
+async function waitForRegistry(c, action, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 2000;
+  const intervalMs = Math.max(1, options.intervalMs ?? 30);
+  const deadline = performance.now() + timeoutMs;
+  for (;; ) {
+    try {
+      return await action();
+    } catch (error) {
+      if (!(error instanceof ContractError) || error.code !== "registry-locked")
+        throw error;
+      const diag = c.registryLockDiagnostic();
+      if (diag && diag.owner !== "live")
+        throw error;
+      const remaining = deadline - performance.now();
+      if (remaining <= 0)
+        throw error;
+      await new Promise((resolve3) => setTimeout(resolve3, Math.min(intervalMs, remaining)));
     }
   }
 }
@@ -14389,7 +14541,7 @@ async function healProjectAt(c, root, options = {}) {
   }))
     actions.add("released-locks");
   if (active(s)) {
-    reclaim(c, p, s, archive);
+    await waitForRegistry(c, () => reclaim(c, p, s, archive));
     actions.add("released-locks");
   }
   for (const path of snapshotProject(c, p).temporaries) {
@@ -15197,20 +15349,31 @@ async function startService(options, foreground, hostUrl) {
   const network = networkSnapshot(process.env);
   const env = hostEnvironment(process.env);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
-  const blocked = await healProjectForStart(c, () => ownerResponsive(c));
+  let blocked = null;
+  try {
+    await waitForRegistry(c, async () => {
+      blocked = await healProjectForStart(c, () => ownerResponsive(c));
+      if (blocked)
+        return;
+      if (c.registryLockDiagnostic())
+        throw new ContractError("registry-locked");
+    });
+  } catch (error) {
+    if (error instanceof ContractError && error.code === "registry-locked") {
+      process.stderr.write(registryGuidance(c.store.root, c.stateHome));
+      return {
+        status: "refused",
+        error: "registry-locked",
+        stage: "service"
+      };
+    }
+    throw error;
+  }
   if (blocked) {
     process.stderr.write(blocked);
     return {
       status: "refused",
       error: "quarantine",
-      stage: "service"
-    };
-  }
-  if (c.registryLockDiagnostic()) {
-    process.stderr.write(registryGuidance(c.store.root, c.stateHome));
-    return {
-      status: "refused",
-      error: "registry-locked",
       stage: "service"
     };
   }
@@ -15370,9 +15533,17 @@ async function openProjectDirectory(workspace, stateHome, agentDir, hostUrl) {
     throw new ContractError("forbidden");
   effectiveWorkspace(workspace, stateHome);
   const c = new ServiceCoordination(workspace, stateHome);
-  await healAccount(new ServiceCoordination(null, stateHome));
-  if (c.registryLockDiagnostic())
-    throw new ProjectOpenRefusal(true, "registry-locked");
+  try {
+    await waitForRegistry(c, async () => {
+      await healAccount(new ServiceCoordination(null, stateHome));
+      if (c.registryLockDiagnostic())
+        throw new ContractError("registry-locked");
+    });
+  } catch (error) {
+    if (error instanceof ContractError && error.code === "registry-locked")
+      throw new ProjectOpenRefusal(true, "registry-locked");
+    throw error;
+  }
   const kept = readHostConfig(c);
   const options = {
     workspace,
@@ -18061,7 +18232,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "357ec2a35ad5176d65a389498be689f7d453e9b48c3e998e5a0d171bc49e4feb",
+    contractHash: "ccf4728f55f59f55de234c1ff1a5f3e19cc86f0053579142b02d72e3d45b9667",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -18078,8 +18249,13 @@ async function createGateway(value, hostUrl, source) {
   if (healed.status === "blocked" || healed.status === "live")
     throw new ContractError("quarantine");
   const assets = new Map(web.assets.map((asset) => [asset.path, asset]));
+  const MAX_CONCURRENT_PREPARATIONS = 4;
+  const MAX_PROJECT_PREP_WAITERS = 4;
+  const MAX_SETTLED_PREP_FAILURES = 64;
   const connections = new Set, relays = new Set;
-  const preparations = new Map;
+  const inFlightPreparations = new Map;
+  const settledPrepFailures = new Map;
+  const projectPrepQueues = new Map;
   const retirements = new Set;
   const attachments = new Map;
   const bindings = new Map;
@@ -18093,7 +18269,6 @@ async function createGateway(value, hostUrl, source) {
   let accepting = false, stopping;
   let auth;
   let pending = 0;
-  let preparing = false;
   const server = createServer2({
     maxHeaderSize: LIMITS.headerBytes,
     headersTimeout: 1e4,
@@ -18210,7 +18385,7 @@ Content-Length: 0\r
   const commands = packageCommands(packageSystem);
   let route, requesting = false;
   async function associatedWork() {
-    if (preparing)
+    if (inFlightPreparations.size > 0 || projectPrepQueues.size > 0)
       throw new ContractError("unavailable");
     const targets = () => [
       ...new Map(store.associatedProjects().map((p) => [canonicalJson([p.path, p.epoch]), p])).entries()
@@ -18245,7 +18420,7 @@ Content-Length: 0\r
         };
       });
     })).then((lists) => lists.flat());
-    if (preparing || canonicalJson(targets().map(([key2]) => key2)) !== canonicalJson(selected2.map(([key2]) => key2)) || work.length > MAINTENANCE_WORK_LIMIT)
+    if (inFlightPreparations.size > 0 || projectPrepQueues.size > 0 || canonicalJson(targets().map(([key2]) => key2)) !== canonicalJson(selected2.map(([key2]) => key2)) || work.length > MAINTENANCE_WORK_LIMIT)
       throw new ContractError("unavailable");
     const confirmed = {
       digest: maintenanceWorkDigest(auth.epoch, work.map(({ key: key2 }) => key2)),
@@ -18331,7 +18506,63 @@ Content-Length: 0\r
     store.saveProject(project);
     return project;
   }
-  async function prepareExecution(purpose, projectId, id, epoch, current, location) {
+  function cleanupProjectQueue(projectPath) {
+    const queue = projectPrepQueues.get(projectPath);
+    if (queue && !queue.running && queue.waiters.length === 0)
+      projectPrepQueues.delete(projectPath);
+  }
+  async function acquireProjectSlot(projectPath, signal) {
+    if (signal?.aborted)
+      throw new ContractError("unavailable");
+    let queue = projectPrepQueues.get(projectPath);
+    if (!queue) {
+      queue = { running: false, waiters: [] };
+      projectPrepQueues.set(projectPath, queue);
+    }
+    const active2 = queue;
+    if (!active2.running) {
+      active2.running = true;
+      return false;
+    }
+    if (active2.waiters.length >= MAX_PROJECT_PREP_WAITERS)
+      throw new ContractError("capacity");
+    await new Promise((resolve12, reject) => {
+      const onAbort = () => {
+        const index = active2.waiters.indexOf(waiter);
+        if (index !== -1) {
+          active2.waiters.splice(index, 1);
+          cleanupProjectQueue(projectPath);
+          reject(new ContractError("unavailable"));
+        }
+      };
+      const waiter = {
+        resolve: () => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve12();
+        },
+        reject: (error) => {
+          signal?.removeEventListener("abort", onAbort);
+          reject(error);
+        }
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      active2.waiters.push(waiter);
+    });
+    return true;
+  }
+  function releaseProjectSlot(projectPath) {
+    const queue = projectPrepQueues.get(projectPath);
+    if (!queue)
+      return;
+    const next = queue.waiters.shift();
+    if (next)
+      next.resolve();
+    else {
+      queue.running = false;
+      projectPrepQueues.delete(projectPath);
+    }
+  }
+  async function prepareExecution(purpose, projectId, id, epoch, current, markAdmitted, signal, location) {
     assert();
     if (epoch !== auth.epoch)
       throw new ContractError("stale");
@@ -18354,11 +18585,19 @@ Content-Length: 0\r
     });
     const intentPath = store.path(`commands/${id}.json`);
     const previous = () => {
-      const pending2 = preparations.get(id);
+      const pending2 = inFlightPreparations.get(id);
       if (pending2) {
         if (pending2.identity !== identity)
           throw new ContractError("conflict");
+        markAdmitted();
         return pending2.result;
+      }
+      const failed = settledPrepFailures.get(id);
+      if (failed) {
+        if (failed.identity !== identity)
+          throw new ContractError("conflict");
+        markAdmitted();
+        return Promise.reject(failed.error);
       }
       const kept = store.files.read(intentPath);
       if (!kept)
@@ -18366,71 +18605,119 @@ Content-Length: 0\r
       if (kept.bytes.toString("utf8") !== identity)
         throw new ContractError("conflict");
       const settled = store.files.read(store.path(`commands/${id}.result.json`));
-      if (!settled)
+      if (!settled) {
+        markAdmitted();
         throw new ContractError("receipt-inconclusive");
+      }
       return Promise.resolve(decodeProjectEntry(json(settled)));
     };
-    const prior = previous();
-    if (prior)
-      return prior;
-    const running = await serviceStatus(observed);
-    current();
-    assert();
-    const concurrent = previous();
-    if (concurrent)
-      return concurrent;
-    if (running.status === "alive") {
+    const statusOf = () => waitForRegistry(observed, async () => {
+      const status = await serviceStatus(observed);
+      if (status.reason === "registry-locked" && status.owner === "live")
+        throw new ContractError("registry-locked");
+      return status;
+    });
+    const warmMatch = (running) => {
+      if (running.status !== "alive")
+        return;
       const access = observed.localAccess();
       const project = { ...selected2, epoch: access.epoch };
       if (store.associatedProjects().some((p) => p.id === project.id && p.epoch === project.epoch)) {
         bindings.delete(project.id);
         return project;
       }
-    }
-    if (running.status !== "alive" && process.env.CADENCE_AUTOSTART === "0")
-      throw new ContractError("unsupported-context");
-    if (preparing)
-      throw new ContractError("capacity");
-    if (preparations.size >= 128)
-      throw new ContractError("capacity");
-    const commands2 = store.path("commands");
-    if (store.files.directory(commands2)) {
-      const dir = opendirSync10(commands2);
-      let count = 0;
-      try {
-        while (dir.readSync())
-          if (++count >= 2048)
-            throw new ContractError("capacity");
-      } finally {
-        dir.closeSync();
-      }
-    }
+      return;
+    };
+    const prior = previous();
+    if (prior)
+      return prior;
+    const initialRunning = await statusOf();
     current();
     assert();
-    store.files.create(intentPath, identity);
-    preparing = true;
-    const result = Promise.resolve().then(async () => {
-      const opened = await openProjectDirectory(directory2, input.stateHome, input.agentDir, hostUrl);
-      const c = new ServiceCoordination(opened.path, input.stateHome), access = c.localAccess();
-      const project = {
-        id: selected2.id,
-        path: c.store.root,
-        cwd: selected2.cwd,
-        epoch: access.epoch
-      };
-      store.saveProject(project);
-      bindings.delete(project.id);
-      store.files.create(store.path(`commands/${id}.result.json`), encoded(project));
-      return project;
-    });
-    preparations.set(id, { identity, result });
-    result.then(() => {
-      preparations.delete(id);
-      preparing = false;
-    }, () => {
-      preparing = false;
-    });
-    return result;
+    const concurrent = previous();
+    if (concurrent)
+      return concurrent;
+    const initialWarm = warmMatch(initialRunning);
+    if (initialWarm)
+      return initialWarm;
+    if (initialRunning.status !== "alive" && process.env.CADENCE_AUTOSTART === "0")
+      throw new ContractError("unsupported-context");
+    const waited = await acquireProjectSlot(selected2.path, signal);
+    let ownsSlot = true;
+    try {
+      current();
+      assert();
+      const afterQueue = previous();
+      if (afterQueue)
+        return afterQueue;
+      const running = waited ? await statusOf() : initialRunning;
+      if (waited) {
+        current();
+        assert();
+        const warm = warmMatch(running);
+        if (warm)
+          return warm;
+        if (running.status !== "alive" && process.env.CADENCE_AUTOSTART === "0")
+          throw new ContractError("unsupported-context");
+      }
+      if (inFlightPreparations.size >= MAX_CONCURRENT_PREPARATIONS)
+        throw new ContractError("capacity");
+      const commands2 = store.path("commands");
+      if (store.files.directory(commands2)) {
+        const dir = opendirSync10(commands2);
+        let count = 0;
+        try {
+          while (dir.readSync())
+            if (++count >= 2048)
+              throw new ContractError("capacity");
+        } finally {
+          dir.closeSync();
+        }
+      }
+      current();
+      assert();
+      markAdmitted();
+      store.files.create(intentPath, identity);
+      const result = Promise.resolve().then(async () => {
+        const opened = await openProjectDirectory(directory2, input.stateHome, input.agentDir, hostUrl);
+        const c = new ServiceCoordination(opened.path, input.stateHome), access = c.localAccess();
+        const project = {
+          id: selected2.id,
+          path: c.store.root,
+          cwd: selected2.cwd,
+          epoch: access.epoch
+        };
+        store.saveProject(project);
+        bindings.delete(project.id);
+        store.files.create(store.path(`commands/${id}.result.json`), encoded(project));
+        return project;
+      });
+      inFlightPreparations.set(id, {
+        identity,
+        projectPath: selected2.path,
+        result
+      });
+      ownsSlot = false;
+      result.then(() => {
+        inFlightPreparations.delete(id);
+        releaseProjectSlot(selected2.path);
+      }, (error) => {
+        inFlightPreparations.delete(id);
+        settledPrepFailures.set(id, { identity, error });
+        while (settledPrepFailures.size > MAX_SETTLED_PREP_FAILURES) {
+          const oldest = settledPrepFailures.keys().next().value;
+          if (oldest !== undefined)
+            settledPrepFailures.delete(oldest);
+          else
+            break;
+        }
+        releaseProjectSlot(selected2.path);
+      });
+      return result;
+    } finally {
+      if (ownsSlot)
+        releaseProjectSlot(selected2.path);
+    }
   }
   function isAssociated(id) {
     return store.associatedProjects().some((project) => project.id === id);
@@ -18504,8 +18791,14 @@ Content-Length: 0\r
     const previewsClosed = modelPreviews.close();
     previewsClosed.catch(() => {});
     store.phase("stopping");
+    for (const [projectPath, queue] of [...projectPrepQueues]) {
+      const waiters = queue.waiters.splice(0);
+      for (const waiter of waiters)
+        waiter.reject(new ContractError("quarantine"));
+      cleanupProjectQueue(projectPath);
+    }
     stopping = (async () => {
-      await Promise.allSettled([...preparations.values()].map((o) => o.result));
+      await Promise.allSettled([...inFlightPreparations.values()].map((o) => o.result));
       await Promise.allSettled([...retirements]);
       const targets = store.associatedProjects();
       await joinProjectStops(targets, async (p) => {
@@ -19022,8 +19315,20 @@ Content-Length: 0\r
         if (preparationPurpose === "plan-validation" && !location)
           throw new ContractError("invalid");
         auth.current(caller);
-        effect = true;
-        const project2 = await prepareExecution(preparationPurpose, projectId, id, epoch, () => auth.current(caller), location);
+        const abort = new AbortController;
+        const onClose = () => {
+          if (!res.writableEnded)
+            abort.abort();
+        };
+        res.once("close", onClose);
+        let project2;
+        try {
+          project2 = await prepareExecution(preparationPurpose, projectId, id, epoch, () => auth.current(caller), () => {
+            effect = true;
+          }, abort.signal, location);
+        } finally {
+          res.off("close", onClose);
+        }
         auth.current(caller);
         reply(res, 200, { kind: "project", project: project2 });
         return;
@@ -19136,7 +19441,7 @@ Content-Length: 0\r
 // src/service/host.ts
 import { spawn as spawn7 } from "node:child_process";
 import { lstatSync as lstatSync29, opendirSync as opendirSync18 } from "node:fs";
-import { join as join45 } from "node:path";
+import { join as join46 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
 // src/agent-registry.ts
@@ -19144,6 +19449,7 @@ import { createHash as createHash15 } from "node:crypto";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 var AGENT_FILES = [
   "design-explorer.md",
+  "route-planner.md",
   "implementation-worker.md",
   "diagnosis-worker.md"
 ];
@@ -31542,7 +31848,7 @@ class ServiceOwner {
 
 // src/service/workbench.ts
 import { opendirSync as opendirSync17 } from "node:fs";
-import { join as join44 } from "node:path";
+import { join as join45 } from "node:path";
 
 // src/service/conversation-images.ts
 var binding = (send2) => {
@@ -31628,1123 +31934,18 @@ class ConversationImages {
 }
 
 // src/service/conversation-workflow.ts
-import { randomUUID as randomUUID26 } from "node:crypto";
-import { join as join40 } from "node:path";
+import { randomUUID as randomUUID25 } from "node:crypto";
+import { join as join39 } from "node:path";
 
 // src/cadence-instructions.ts
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
-You are the sole user-facing coordinator. Understand the desired result, not a task-management form. Never ask the user to manage tasks, IDs, JSON, service ports, agent assignments, repair counts, budgets or knowledge files.
-Start with existing evidence. Use cadence_knowledge to read a named project document/heading (guided by the route table, AGENTS.md and project index), inspect a literal in a source file with path and match, check local dependency directories/Git placement with checkout, or reuse a recorded investigation by ID (which rechecks its cited files; older conclusions are leads until rechecked). Read returned results before broadening an investigation. Surface material user choices once tradeoffs are understood; exact implementation values, selectors and file inventories usually belong to implementation workers. Zero research runs is appropriate when evidence suffices. Use cadence_research only for unresolved questions whose answers could change design or acceptance, asking focused independent questions together and reusing answered results by investigation ID.
-For material choices about experience, scope or expensive tradeoffs, call cadence_design with one batch of real alternatives in the user's language before publishing a plan: state each option's cost, recommendation, reason and affected acceptance, give stable lowercase IDs, and omit when (or use null) unless dependent on an earlier option. Publish choices through the tool, never a Markdown questionnaire. Keep routine implementation decisions yourself and do not invent questions for a settled task. A submitted design or "按你推荐的来" calls for the final plan card in the same conversation (never execution approval); respect all submitted decisions, including custom answers.
-Once the result is clear, call cadence_plan with goal, explicit decisions/non-goals, acceptance, assumptions, initial route and parallel assignments with write paths, reads/reviewReads, exact setup/baselineChecks/checks, delivery policy, policy.installs (false unless the user agreed revisions may install dependencies), and optional V4 fields (build, links, checks[].tier, checks[].target) per the tool schema. Cut parallel assignments as independently verifiable slices: establish thin shared entrypoints/contracts first, place browser/end-to-end specs after the slice whose interface they exercise, state only real dependencies in after and keep independent writes apart so as much work as possible runs side by side. Name the few readings each assignment and the review need first ({path, section, reason} or {research, reason} using a completed step's investigation ID), because workers start without this conversation. Goal, decisions, acceptance and assumptions stay as approved; after approval the owner may revise the route, assignments and repository write scope, or record a minimal necessary deviation confirmed by independent review when an item proves impossible.
-Focus plans on the project, its implementation and real checks. The owner supplies workspace-specific TMPDIR/TEMP/TMP to every delivery command and worker: never add temp-dir setup, environment discovery, path handoff or marker checks to the plan. Use cadence_knowledge with checkout to observe local dependency dirs and Git placement rather than sending researchers into Git internals, ignored dependencies or private records. Worktrees do not inherit ignored dependencies; share existing checkout dependencies via links (not setup symlinks) only with user authorization, and never rely on implicit downloads or source/profile/credential copying. Setup commands run in target, candidate, then worktree order (keep target branch checks out of worktree setup because parallel children stay detached); command environments do not persist across processes.
-For Git delivery, prefer local-merge; working-copy requires explicit direct-edit approval, never a silent fallback. local-merge creates a named task branch and isolated worktree only AFTER approval (never on mode entry or research), runs parallel slices in detached worktrees, checks and independently Agent-reviews the exact final single-parent candidate before fast-forwarding the target, keeps private process reports out of repository commits, keeps the task branch, and leaves the original conversation cwd unchanged; working-copy edits directly without Git mutation.
-The owner maintains .cadence/project.md and .cadence/knowledge/ automatically at the end of delivery within its fixed budget, so never list those in documents; list in documents only existing project Markdown owning a fact this delivery changes. Avoid duplicate documentation systems.
-When a tool refuses your own call it names the field at fault: correct exactly that and call again in the same turn. There is one plan. Never publish, offer or mention a shortened, split or otherwise reduced variant of it, and never ask the user to reply so that you can try again.
-Present a concise delivery expectation with the complete returned agreement, assumptions and what the service may change on its own, then invite one clear approval (the user may type 按计划实施). Approval covers self-revising execution to completion, checks, automatic Agent review, verified knowledge updates and declared local delivery; it never covers push, publication, deployment, arbitrary writes outside the repository or unauthorized installs. You cannot approve yourself; vague acknowledgement is not consent.
-During accepted work the service owns progress, recovery and revision and finishes without the user. Report actual cadence_status observations; child failure is not delivery failure, do not ask to continue or start replacement runs, report plan revisions as progress and lead with any recorded deviation. Agents have no total runtime deadline; runs stop only for cancellation, uncertain settlement, external target drift or conditions outside the repository. On follow-up to a settled or interrupted run, inspect retained outcomes first and never blindly replay unknown results; a new delivery needs fresh approval. cadence_cancel is explicit cancellation, never navigation or exit. Worker prose is not passing checks; automatic review is never human review. Completion leaves Cadence ON. Tools operate on the host; this is not a sandbox.`;
-
-// src/coordinator-tools.mjs
-import { Type } from "typebox";
-var CHECK = Type.Object({
-  name: Type.String(),
-  command: Type.String(),
-  timeoutMs: Type.Optional(Type.Integer({
-    description: "Milliseconds, from 100. Leave out for no timeout."
-  }))
-});
-var PLAN_CHECK = Type.Object({
-  ...CHECK.properties,
-  tier: Type.Optional(Type.Union([Type.Literal("fast"), Type.Literal("heavy")], {
-    description: "Cost tier only: fast (default) runs before heavy and stops early on failure; heavy marks slow browser/integration suites. Does not decide target post-merge execution."
-  })),
-  target: Type.Optional(Type.Union([Type.Literal("run"), Type.Literal("skip")], {
-    description: "Whether this check reruns in the target checkout after fast-forward merge: run (default) or skip. Target ref, HEAD and delivered source-byte verification never skip."
-  }))
-});
-var BUILD = Type.Object({
-  ...CHECK.properties,
-  outputs: Type.Array(Type.String(), {
-    description: "Declared repository-relative derived output paths this build may write (never tests, licenses or upstream provenance)."
-  })
-});
-var SETUP_LINK = Type.Object({
-  path: Type.String({
-    description: "Checkout-relative path inside the worktree where the owner creates a managed symlink (e.g. node_modules or web/node_modules)."
-  }),
-  source: Type.Optional(Type.String({
-    description: "Checkout-relative dependency path in the original checkout to link to. Defaults to path."
-  })),
-  placement: Type.Optional(Type.Union([Type.Literal("candidate"), Type.Literal("worktree")], {
-    description: "candidate: link only in the stable candidate; worktree (default): link in the candidate and every detached child."
-  }))
-});
-var READING = Type.Union([
-  Type.Object({
-    path: Type.String({ description: "Project document to read first." }),
-    section: Type.Optional(Type.String({ description: "One heading of that document." })),
-    reason: Type.String()
-  }),
-  Type.Object({
-    research: Type.String({
-      description: 'A recorded investigation: the "investigation" value of a completed research step.'
-    }),
-    reason: Type.String()
-  })
-]);
-var RESEARCH_PARAMETERS = Type.Object({
-  goal: Type.String(),
-  questions: Type.Array(Type.String({
-    description: "One focused, independent question."
-  }), {
-    description: "Split independent questions freely; the service runs as many at once as this machine is configured for and queues the rest."
-  }),
-  roots: Type.Optional(Type.Array(Type.String({
-    description: "Specific investigation directories, relative to this conversation's cwd by default. Avoid filesystem roots and broad parent trees."
-  })))
-});
-var lookupExample = 'Use {checkout:["node_modules"]}, {checkout:[]}, {path:"docs.md"} with optional section or match, or {investigation:"<retained UUID>"}.';
-function knowledgeToolInput(input) {
-  const bad12 = (field, why) => {
-    throw new Error(`${field}: ${why}. ${lookupExample}`);
-  };
-  const keys2 = Object.keys(input ?? {});
-  let raw;
-  try {
-    raw = closed(input, keys2);
-  } catch {
-    bad12("cadence_knowledge", "expected an object with named lookup fields");
-  }
-  const fields3 = Object.create(null);
-  for (const key3 of keys2) {
-    if (!Object.hasOwn(knowledgeFields, key3))
-      bad12(JSON.stringify(key3.slice(0, 80)), "unknown field; omit it");
-    if (key3 !== "checkout" && raw[key3] === "")
-      continue;
-    try {
-      fields3[key3] = knowledgeFields[key3](raw[key3]);
-    } catch {
-      bad12(key3, key3 === "checkout" ? "give an array of up to eight nonempty dependency paths (each at most 1024 bytes)" : key3 === "investigation" ? "give a retained investigation UUID" : "give a nonblank string within the field limit");
-    }
-  }
-  const { checkout, path, section, match, investigation } = fields3;
-  if ((section || match) && !path)
-    bad12(section ? "section/path" : "match/path", "name the source file in path");
-  if (section && match)
-    bad12("section/match", "choose one selector");
-  if (checkout?.length && (path || investigation))
-    bad12("checkout", "cannot combine dependencies with path or investigation");
-  if (investigation && path)
-    bad12("investigation/path", "choose one source");
-  const relative9 = (name) => !/[\\:\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name) && name.split("/").every((part) => part && part !== "." && part !== ".." && part.toLowerCase() !== ".git");
-  if (path && !relative9(path))
-    bad12("path", "give a plain checkout-relative file path");
-  if (checkout?.some((name) => !relative9(name) || name.split("/").some((part) => part.startsWith("."))))
-    bad12("checkout", "give plain checkout-relative dependency names");
-  if (investigation)
-    return { investigation };
-  if (path)
-    return match ? { path, match } : section ? { path, section } : { path };
-  if (checkout)
-    return { checkout };
-  bad12("path/checkout/investigation", "no lookup selected");
-}
-var KNOWLEDGE_PARAMETERS = Type.Object({
-  checkout: Type.Optional(Type.Array(Type.String(), {
-    description: "Instead of other fields, give up to eight checkout-relative dependency directory names (e.g. node_modules and web/node_modules), or [] for Git placement only. Observe the original checkout, Git branch and HEAD, and whether each named entry is a directory, symlink or absent. Never follows a dependency link."
-  })),
-  path: Type.Optional(Type.String({
-    description: "One checkout-relative document, or the exact project source file containing a known fact."
-  })),
-  section: Type.Optional(Type.String({
-    description: "Exact Markdown heading. Use either section or match."
-  })),
-  match: Type.Optional(Type.String({
-    description: "A literal on a line of this source file (such as a token, assertion or build script). Return matching line numbers with short previews and context at the first occurrence, without a research worker."
-  })),
-  investigation: Type.Optional(Type.String({
-    description: "Instead of path/section, supply a retained investigation ID to recheck its sources and reuse the answer."
-  }))
-});
-var DESIGN_PARAMETERS = Type.Object({
-  questions: Type.Array(Type.Object({
-    id: Type.String(),
-    question: Type.String(),
-    options: Type.Array(Type.Object({
-      id: Type.String(),
-      label: Type.String(),
-      cost: Type.String()
-    })),
-    recommended: Type.String({ description: "Recommended option ID" }),
-    reason: Type.String(),
-    acceptance: Type.String({
-      description: "Acceptance item this decision affects"
-    }),
-    when: Type.Optional(Type.Union([
-      Type.Null(),
-      Type.Object({ question: Type.String(), option: Type.String() })
-    ], {
-      description: "Omit or use null for an independent question. For a conditional question give an earlier question ID and one of its option IDs."
-    }))
-  }))
-});
-var PLAN_PARAMETERS = Type.Object({
-  goal: Type.String(),
-  design: Type.String({ description: "The initial technical route." }),
-  decisions: Type.Optional(Type.String({ description: "Explicit decisions and non-goals." })),
-  acceptance: Type.String(),
-  assumptions: Type.Optional(Type.String({
-    description: "What you decided on the user's behalf without asking; approval confirms it. Leave out when there is none."
-  })),
-  documents: Type.Optional(Type.Array(Type.String({
-    description: "Existing project Markdown this delivery may update."
-  }))),
-  reviewReads: Type.Optional(Type.Array(READING, {
-    description: "What the independent review reads first."
-  })),
-  policy: Type.Optional(Type.Object({
-    installs: Type.Optional(Type.Boolean({
-      description: "Whether a later revision may add dependency-installation commands. False unless the user agreed."
-    }))
-  })),
-  tasks: Type.Array(Type.Object({
-    id: Type.String({
-      description: "Lowercase letters, digits and hyphens, starting with a letter."
-    }),
-    title: Type.String(),
-    instructions: Type.String({ description: "At most 8KiB." }),
-    writes: Type.Array(Type.String()),
-    after: Type.Optional(Type.Array(Type.String(), {
-      description: "Ids of the assignments this one really depends on. Leave out when it depends on none."
-    })),
-    reads: Type.Optional(Type.Array(READING, {
-      description: "The few things this assignment should read first."
-    }))
-  }), { description: "One to 16 assignments." }),
-  checks: Type.Array(PLAN_CHECK, {
-    description: "The real acceptance commands: at least one, at most 16."
-  }),
-  build: Type.Optional(Type.Array(BUILD, {
-    description: "Optional owner-synced build commands run after edits before combined verification, at most eight. Each names the exact repository-relative derived outputs it may touch."
-  })),
-  links: Type.Optional(Type.Array(SETUP_LINK, {
-    description: "Optional owner-managed dependency symlinks from the original checkout into worktrees (e.g. node_modules), at most eight. Created and identity-verified by the owner so cleanup unlinks only its own links without following into shared dependencies."
-  })),
-  setup: Type.Optional(Type.Array(Type.Object({
-    ...CHECK.properties,
-    placement: Type.Union([
-      Type.Literal("target"),
-      Type.Literal("candidate"),
-      Type.Literal("worktree")
-    ], {
-      description: "target: preflight once in the original checkout before creating worktrees; candidate: once in the stable candidate; worktree: prepare the candidate and every detached child. Target branch checks belong to target, never worktree. Commands do not export environment into later processes."
-    })
-  }), {
-    description: "Explicit preparation commands with their execution placement, at most four. Run in target, candidate, then worktree stages, preserving order within each stage."
-  })),
-  baselineChecks: Type.Optional(Type.Array(CHECK)),
-  delivery: Type.Union([
-    Type.Literal("local-merge"),
-    Type.Literal("working-copy")
-  ])
-});
-
-// src/service/conversations.ts
-import { randomUUID as randomUUID25 } from "node:crypto";
-import { opendirSync as opendirSync12, statfsSync as statfsSync3 } from "node:fs";
-import { dirname as dirname21, join as join38 } from "node:path";
-var META_BYTES2 = 64 * 1024;
-var PREVIEW_BYTES = 64 * 1024;
-var RECENT_PREVIEWS = 8;
-var PREVIEW_MARK = `
-[Preview truncated; the rest appears once it is written.]`;
-var OMITTED_FLAG = {
-  "hidden-thinking": "thinking",
-  binary: "media",
-  unsupported: "other"
-};
-var RENAMES = 4;
-var RENAME_RECEIPTS = 64;
-function conversationContextLine(execution) {
-  return `CONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.checkoutRoot}. Workflow writes are checkout-root-relative; tools, investigation roots and checks use this conversation cwd.`;
-}
-
-class LiveCapture {
-  secrets;
-  inputImages;
-  retry;
-  notice = "";
-  activity = { kind: "waiting", sequence: 0 };
-  unkept = [{ thinking: false, media: false, other: false }];
-  users = 0;
-  messages = new Map;
-  order = [];
-  tools = new Map;
-  details = new Map;
-  imageUser;
-  constructor(secrets, inputImages = false) {
-    this.secrets = secrets;
-    this.inputImages = inputImages;
-  }
-  get omitted() {
-    return this.unkept[this.unkept.length - 1];
-  }
-  omittedFor(index) {
-    return this.unkept[index] ?? { thinking: false, media: false, other: false };
-  }
-  bounded(value) {
-    return Buffer.byteLength(value) <= PREVIEW_BYTES ? value : `${Buffer.from(value).subarray(0, PREVIEW_BYTES).toString("utf8").replace(/�$/u, "")}${PREVIEW_MARK}`;
-  }
-  block(messageId, index, role3) {
-    const message2 = this.messages.get(messageId);
-    if (!message2)
-      return;
-    let item = message2.blocks.get(index);
-    if (!item) {
-      item = {
-        id: `${messageId}:${index}`,
-        renderId: `capture:${messageId}:${index}`,
-        role: role3,
-        text: "",
-        name: "",
-        args: "",
-        error: false,
-        state: role3 === "tool" ? "pending" : "streaming"
-      };
-      message2.blocks.set(index, item);
-    }
-    return item;
-  }
-  tool(callId) {
-    let tool = this.tools.get(callId);
-    if (!tool) {
-      tool = {
-        item: {
-          id: callId,
-          renderId: `call:${callId}`,
-          role: "tool",
-          name: "",
-          args: "",
-          text: "",
-          error: false,
-          state: "pending"
-        }
-      };
-      this.tools.set(callId, tool);
-      const stale = [...this.tools.values()].at(-1 - RECENT_PREVIEWS);
-      if (stale)
-        stale.item.args = stale.item.text = "";
-    }
-    return tool;
-  }
-  accept(frame) {
-    const e = frame.event;
-    const activity2 = (kind, name) => {
-      this.activity = {
-        kind,
-        sequence: frame.workerSeq,
-        ...name === undefined ? {} : { name }
-      };
-    };
-    if (e.kind === "message-start" && e.role === "user") {
-      if (this.users++)
-        this.unkept.push({ thinking: false, media: false, other: false });
-      else if (this.inputImages)
-        this.imageUser = e.messageId;
-    } else if (e.kind === "message-start" && e.role === "assistant") {
-      if (!this.messages.has(e.messageId)) {
-        this.messages.set(e.messageId, { blocks: new Map, ended: false });
-        this.order.push({ messageId: e.messageId });
-        const stale = [...this.messages.values()].at(-1 - RECENT_PREVIEWS);
-        if (stale)
-          for (const item of stale.blocks.values())
-            item.text = item.args = "";
-      }
-    } else if (e.kind === "message-start" && e.role === "tool-result") {
-      const tool = e.resultCallId ? this.tools.get(e.resultCallId) : undefined;
-      if (tool)
-        tool.resultMessageId = e.messageId;
-    } else if (e.kind === "thinking-activity") {
-      const item = this.block(e.messageId, e.index, "thinking");
-      if (item)
-        item.state = e.phase === "active" ? "streaming" : e.phase === "complete" ? "completed" : "unavailable";
-      activity2(e.phase === "active" ? "thinking" : "waiting");
-    } else if (e.kind === "call-declaration") {
-      const tool = this.tool(e.callId);
-      const item = this.block(e.declaration.messageId, e.index, "tool");
-      if (item && item !== tool.item) {
-        const { id, renderId } = item;
-        Object.assign(item, tool.item, { id, renderId });
-        tool.item = item;
-      }
-      tool.item.name = clipText(sanitizeText(e.name, this.secrets()), 128);
-    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
-      const tool = this.tool(e.callId);
-      tool.item.name = clipText(sanitizeText(e.name, this.secrets()), 128);
-      if (!e.declaration && !this.order.some((row) => ("callId" in row) && row.callId === e.callId))
-        this.order.push({ callId: e.callId });
-      tool.item.state = e.kind === "tool-start" ? "running" : e.isError ? "failed" : "completed";
-      if (e.kind === "tool-end")
-        tool.item.error = e.isError;
-      activity2(e.kind === "tool-start" ? "tool" : "waiting", e.kind === "tool-start" ? tool.item.name : undefined);
-    } else if (e.kind === "tool-update") {
-      activity2("tool", this.tool(e.callId).item.name);
-    } else if (e.kind === "detail-begin") {
-      const o = e.descriptor.owner;
-      if (o.kind === "context" || o.kind === "handoff" || o.kind === "message-final")
-        return;
-      if (this.details.size >= 64)
-        return;
-      this.details.set(e.detailId, {
-        descriptor: e.descriptor,
-        sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
-        text: ""
-      });
-      if (o.kind === "message")
-        this.block(o.messageId, o.index, "assistant");
-    } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
-      const d = this.details.get(e.detailId);
-      if (!d)
-        return;
-      const added = e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
-      if (Buffer.byteLength(d.text) <= PREVIEW_BYTES)
-        d.text += added;
-      const o = d.descriptor.owner;
-      if (o.kind === "message" && (o.stage === "stream" || e.kind === "detail-end")) {
-        const item = this.block(o.messageId, o.index, "assistant");
-        if (item) {
-          item.text = this.bounded(d.text);
-          activity2("text");
-        }
-      } else if (o.kind === "tool" && e.kind === "detail-end") {
-        const tool = this.tool(o.callId).item;
-        if (o.stage === "execution-arguments" || o.stage === "arguments-final")
-          tool.args = this.bounded(d.text);
-        if (o.stage === "result" || o.stage === "update-snapshot") {
-          let text2 = d.text;
-          if (d.descriptor.encoding === "canonical-json") {
-            try {
-              const value = JSON.parse(d.text);
-              text2 = Array.isArray(value.content) ? value.content.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text).join(`
-
-`) : "";
-            } catch {}
-          }
-          tool.text = this.bounded(text2);
-        }
-      }
-      if (e.kind === "detail-end")
-        this.details.delete(e.detailId);
-    } else if (e.kind === "message-end") {
-      const message2 = this.messages.get(e.messageId);
-      if (message2) {
-        message2.ended = true;
-        for (const [index, item] of message2.blocks) {
-          if (index >= e.finalBlockCount && item.role !== "thinking") {
-            message2.blocks.delete(index);
-            continue;
-          }
-          if (item.role === "assistant") {
-            item.error = ["error", "aborted", "length"].includes(e.stopReason);
-            item.state = e.stopReason === "aborted" ? "canceled" : item.error ? "failed" : "completed";
-          } else if (item.role === "thinking" && (item.state === "streaming" || ["error", "aborted"].includes(e.stopReason)))
-            item.state = "unavailable";
-          else if (item.role === "tool" && item.state === "pending" && ["error", "aborted", "length"].includes(e.stopReason))
-            item.state = e.stopReason === "aborted" ? "canceled" : "unavailable";
-        }
-        activity2("waiting");
-      }
-    } else if (e.kind === "model-retry") {
-      this.retry = e.progress ?? undefined;
-      activity2("waiting");
-    } else if (e.kind === "worker-failure") {
-      this.retry = undefined;
-      this.notice = `worker-failure: ${e.code}`;
-      for (const message2 of this.messages.values())
-        for (const item of message2.blocks.values())
-          if (["streaming", "running", "pending"].includes(item.state ?? ""))
-            item.state = "unavailable";
-      for (const { item } of this.tools.values())
-        if (["running", "pending"].includes(item.state ?? ""))
-          item.state = "unavailable";
-      activity2("waiting");
-    } else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff" && !(this.inputImages && e.block.sourceType === "image" && e.block.owner.kind === "message" && e.block.owner.messageId === this.imageUser)) {
-      this.omitted[OMITTED_FLAG[e.block.reason]] = true;
-    }
-  }
-  extend(items, earlier = [], writtenMessages = []) {
-    const out = items.map((item) => ({ ...item }));
-    const written = new Set(writtenMessages);
-    const previous = new Set(earlier.map((item) => item.renderId));
-    const changing = out.findIndex((item) => ["pending", "running", "streaming"].includes(item.state ?? ""));
-    let stable = changing < 0 ? out.length : changing;
-    for (const tool of this.tools.values()) {
-      const matches = out.filter((item2) => item2.role === "tool" && item2.renderId === tool.item.renderId);
-      if (matches.length !== 1)
-        continue;
-      const item = matches[0];
-      if (item.state !== "pending" && item.state !== "running")
-        continue;
-      item.text = tool.item.text;
-      item.args = tool.item.args || item.args;
-      item.state = tool.item.state;
-      item.error = tool.item.error;
-      stable = Math.min(stable, out.indexOf(item));
-    }
-    for (const row of this.order) {
-      if ("messageId" in row && written.has(row.messageId))
-        continue;
-      if ("callId" in row) {
-        const result = this.tools.get(row.callId)?.resultMessageId;
-        if (result && written.has(result))
-          continue;
-      }
-      const blocks = "messageId" in row ? [...this.messages.get(row.messageId)?.blocks.entries() ?? []].sort(([a], [b]) => a - b).map(([, item]) => item) : [this.tool(row.callId).item];
-      for (const item of blocks) {
-        if (previous.has(item.renderId) || out.some((existing) => existing.renderId === item.renderId))
-          continue;
-        stable = Math.min(stable, out.length);
-        out.push({ ...item });
-      }
-    }
-    return { items: out, stable };
-  }
-}
-
-class Conversations {
-  o;
-  records;
-  contexts;
-  active = new Map;
-  inputs = new Map;
-  renaming = new Set;
-  renames = new Map;
-  maySignal = () => {
-    try {
-      this.o.owner.lease.assert();
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  activity() {
-    return [...this.active.values()].map((live2) => managedActivity({
-      id: live2.commandId,
-      source: "turn",
-      execution: live2.execution,
-      root: this.o.coordination.store.root,
-      epoch: live2.epoch,
-      now: Date.now(),
-      leaf: live2.accepted.parent,
-      phase: live2.abort.signal.aborted ? "stopping" : isLiveChatStatus(live2.state.status) ? live2.state.status : "settling"
-    }));
-  }
-  constructor(o) {
-    this.o = o;
-    this.records = new ConversationRecords({
-      ...o,
-      assertCurrent: () => o.owner.lease.assert(),
-      active: this.active,
-      inputs: this.inputs
-    });
-    this.contexts = o.contexts ?? new ConversationContexts({ ...o, sessions: this.records.sessions });
-  }
-  currentDirectory(cwd) {
-    const current2 = resolveWorkspace(cwd);
-    return current2.root === this.o.coordination.store.root && current2.cwd === cwd;
-  }
-  get files() {
-    return this.o.coordination.files;
-  }
-  write(path, value, max = META_BYTES2, expected) {
-    this.o.owner.lease.assert();
-    const source = canonicalJson(value, max);
-    try {
-      return expected ? this.files.replace(path, expected, source, max) : this.files.create(path, source, max);
-    } catch (error) {
-      this.o.owner.quarantine();
-      throw error;
-    }
-  }
-  bindControl(id) {
-    if (!this.records.controlBound(id))
-      this.write(this.records.controlPath(id), {
-        schema: "cadence-conversation-control/1",
-        conversationId: id
-      });
-  }
-  assertSettled() {
-    this.o.owner.lease.assert();
-    const sessions = join38(this.records.root, "sessions");
-    if (!this.files.directory(sessions))
-      return;
-    const dir = opendirSync12(sessions);
-    try {
-      for (let e = dir.readSync();e; e = dir.readSync()) {
-        if (!e.isFile() || !e.name.endsWith(".json"))
-          throw new ContractError("corrupt-selected");
-        const latest = this.records.index(decodeSessionId(e.name.slice(0, -5))).commands.at(-1);
-        if (latest && this.records.closureUnknown(latest))
-          throw new ContractError("quarantine");
-      }
-    } finally {
-      dir.closeSync();
-    }
-  }
-  attempted(conversationId, commandId) {
-    this.o.owner.lease.assert();
-    return this.active.has(commandId) || this.files.directory(dirname21(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
-  }
-  command(input, reply = false) {
-    return {
-      ...input,
-      text: reply ? "exit cadence" : sanitizeText(input.text, this.o.secrets())
-    };
-  }
-  receipt(input, reply = false) {
-    this.o.owner.lease.assert();
-    const prior = this.records.accepted(input.commandId);
-    if (!prior)
-      return;
-    if (canonicalJson(prior.command) !== canonicalJson(this.command(input, reply)))
-      throw new ContractError("conflict");
-    return { kind: "accepted", commandId: input.commandId };
-  }
-  send(input, control, beforeAccept, claimImages, afterAccept) {
-    this.o.owner.lease.assert();
-    const command = this.command(input, !!control?.reply);
-    const receipt = this.receipt(input, !!control?.reply);
-    if (receipt)
-      return receipt;
-    if (this.files.directory(dirname21(this.records.path(input.commandId, "state.json"))))
-      throw new ContractError("corrupt-selected");
-    if (this.o.owner.state !== "idle")
-      throw new ContractError("quarantine");
-    if (input.model.conversation && input.model.conversation.id !== input.conversationId)
-      throw new ContractError("stale");
-    if (this.renaming.has(input.conversationId))
-      throw new ContractError("conflict");
-    const execution = this.contexts.capture(input.model, !!control?.reply);
-    const context = this.contexts.records.read({
-      id: input.conversationId,
-      cwd: execution.cwd
-    }).context;
-    if (context.cwd !== execution.cwd || !input.model.conversation && context.model)
-      throw new ContractError("stale");
-    this.records.sessions.directoryFor(execution.cwd);
-    if (this.records.liveFor(input.conversationId))
-      throw new ContractError("conflict");
-    const index = this.records.index(input.conversationId);
-    const session = this.records.sessions.session(input.conversationId);
-    if (input.head !== null && !session?.byId.has(input.head))
-      throw new ContractError("stale");
-    if (this.active.size >= 8)
-      throw new ContractError("capacity");
-    if (!input.text.trim() && !input.images?.length)
-      throw new ContractError("invalid");
-    if (input.images?.length && (!claimImages || control?.reply))
-      throw new ContractError("invalid");
-    if (input.images?.length && !this.o.models.catalog().entries.some((m) => m.provider === execution.model?.provider && m.model === execution.model?.model && m.images))
-      throw new ContractError("unsupported-context");
-    const space = statfsSync3(this.o.coordination.directory);
-    if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
-      throw new ContractError("capacity");
-    const listed = session ? this.records.sessions.find(input.conversationId) : undefined;
-    const accepted2 = {
-      execution,
-      directory: this.records.sessions.directoryFor(execution.cwd),
-      file: listed?.path ?? null,
-      command,
-      at: Date.now(),
-      session: input.conversationId,
-      parent: input.head,
-      offset: session?.read?.size ?? 0
-    };
-    const runtime = control?.reply || !execution.model ? undefined : this.o.models.workerSettings(execution.cwd, execution.model);
-    const abort = new AbortController;
-    let begin;
-    const ready2 = new Promise((resolve13) => {
-      begin = resolve13;
-    });
-    const live2 = {
-      coordinator: !!control,
-      inputs: [],
-      worker: null,
-      ready: false,
-      ended: !!control?.reply,
-      runtime,
-      images: claimImages?.() ?? [],
-      execution,
-      accepted: accepted2,
-      commandId: input.commandId,
-      epoch: input.model.epoch,
-      title: listed ? summaryTitle(listed.summary) : [...command.text.trim()].slice(0, 100).join("") || "Conversation",
-      state: {
-        status: control ? "queued" : "starting",
-        notice: "",
-        omitted: { thinking: false, media: false, other: false },
-        user: null
-      },
-      stateFile: null,
-      capture: null,
-      abort,
-      original: ready2.then(() => this.run(live2, control))
-    };
-    beforeAccept?.();
-    this.active.set(input.commandId, live2);
-    this.o.owner.trackConversation(live2.original, () => abort.abort({
-      source: "service",
-      reason: "stop",
-      target: input.commandId
-    }));
-    try {
-      this.write(this.records.path(input.commandId, "accepted.json"), accepted2);
-      live2.stateFile = this.write(this.records.path(input.commandId, "state.json"), live2.state);
-      this.write(this.records.indexPath(input.conversationId), {
-        schema: "cadence-session-commands/1",
-        id: input.conversationId,
-        commands: [...index.commands, input.commandId].slice(-INDEXED_COMMANDS)
-      }, META_BYTES2, index.file);
-      control?.accept();
-      afterAccept?.();
-    } catch (error) {
-      abort.abort();
-      begin();
-      throw error;
-    }
-    begin();
-    return { kind: "accepted", commandId: input.commandId };
-  }
-  running(request3) {
-    const live2 = this.active.get(request3.turnId);
-    if (!live2)
-      throw new ContractError(this.records.hasCommand(request3.conversationId, request3.turnId) ? "stale" : "invalid");
-    if (live2.accepted.session !== request3.conversationId || live2.epoch !== request3.epoch)
-      throw new ContractError("stale");
-    return live2;
-  }
-  dispatch(live2) {
-    if (!live2.ready || !live2.worker)
-      return;
-    for (const input of live2.inputs)
-      if (!input.sent && !input.withdrawn)
-        input.sent = live2.worker({
-          kind: "input",
-          id: input.commandId,
-          mode: input.accepted.command.mode,
-          text: input.accepted.command.text
-        });
-  }
-  input(request3, coordinator, beforeAccept) {
-    this.o.owner.lease.assert();
-    const command = this.command(request3);
-    const receipt = this.receipt(request3);
-    if (receipt)
-      return receipt;
-    if (this.files.directory(dirname21(this.records.path(request3.commandId, "state.json"))))
-      throw new ContractError("corrupt-selected");
-    if (this.o.owner.state !== "idle")
-      throw new ContractError("quarantine");
-    const live2 = this.running(request3);
-    if (live2.abort.signal.aborted || live2.ended)
-      throw new ContractError("stale");
-    if (live2.coordinator !== coordinator)
-      throw new ContractError("conflict");
-    if (!command.text.trim())
-      throw new ContractError("invalid");
-    const session = this.records.sessions.session(request3.conversationId);
-    if (live2.inputs.length >= RUN_INPUTS || live2.inputs.filter((input2) => !input2.withdrawn && !session?.delivered(input2.commandId)).length >= WAITING_INPUTS)
-      throw new ContractError("capacity");
-    const space = statfsSync3(this.o.coordination.directory);
-    if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
-      throw new ContractError("capacity");
-    const index = this.records.index(request3.conversationId);
-    const accepted2 = {
-      execution: live2.accepted.execution,
-      directory: live2.accepted.directory,
-      file: live2.accepted.file,
-      command,
-      at: Date.now(),
-      session: request3.conversationId,
-      parent: null,
-      offset: session?.read?.size ?? 0
-    };
-    const state = {
-      status: "queued",
-      notice: "",
-      omitted: { thinking: false, media: false, other: false },
-      user: null
-    };
-    beforeAccept?.();
-    this.write(this.records.path(request3.commandId, "accepted.json"), accepted2);
-    const input = {
-      commandId: request3.commandId,
-      accepted: accepted2,
-      state,
-      stateFile: this.write(this.records.path(request3.commandId, "state.json"), state),
-      sent: false,
-      withdrawn: false
-    };
-    this.write(this.records.indexPath(request3.conversationId), {
-      schema: "cadence-session-commands/1",
-      id: request3.conversationId,
-      commands: [...index.commands, request3.commandId].slice(-INDEXED_COMMANDS)
-    }, META_BYTES2, index.file);
-    live2.inputs.push(input);
-    this.inputs.set(input.commandId, input);
-    this.dispatch(live2);
-    return { kind: "accepted", commandId: request3.commandId };
-  }
-  withdraw(input) {
-    const state = {
-      ...input.state,
-      status: "canceled",
-      notice: WITHDRAWN
-    };
-    input.stateFile = this.write(this.records.path(input.commandId, "state.json"), state, META_BYTES2, input.stateFile);
-    input.state = state;
-    input.withdrawn = true;
-  }
-  cancelInput(request3) {
-    this.o.owner.lease.assert();
-    if (this.o.owner.state !== "idle")
-      throw new ContractError("quarantine");
-    const live2 = this.running(request3);
-    const input = live2.inputs.find((i) => i.commandId === request3.inputId);
-    if (!input)
-      throw new ContractError("invalid");
-    const accepted2 = {
-      kind: "accepted",
-      commandId: request3.commandId
-    };
-    if (input.withdrawn)
-      return accepted2;
-    if (!input.sent) {
-      this.withdraw(input);
-      return accepted2;
-    }
-    let waiting = input.withdrawal;
-    if (!waiting) {
-      let answer;
-      const result = new Promise((resolve13, reject) => {
-        answer = (removed) => {
-          input.withdrawal = undefined;
-          try {
-            if (!removed)
-              throw new ContractError("conflict");
-            this.withdraw(input);
-            resolve13();
-          } catch (error) {
-            reject(error);
-          }
-        };
-      });
-      result.catch(() => {});
-      waiting = input.withdrawal = { result, answer };
-      if (live2.ended || !live2.worker?.({ kind: "input-cancel", id: input.commandId }))
-        answer(false);
-    }
-    return waiting.result.then(() => accepted2);
-  }
-  rename(request3) {
-    this.o.owner.lease.assert();
-    const identity2 = canonicalJson(request3), id = request3.conversationId;
-    const prior = this.renames.get(request3.commandId);
-    if (prior) {
-      if (prior.identity !== identity2)
-        throw new ContractError("conflict");
-      return prior.result;
-    }
-    if (this.o.owner.state !== "idle")
-      throw new ContractError("quarantine");
-    this.records.assertSupported(id);
-    if (sanitizeText(request3.name, this.o.secrets()) !== request3.name)
-      throw new ContractError("forbidden");
-    const listed = this.records.sessions.find(id);
-    if (!listed)
-      throw new ContractError("stale");
-    if (this.records.liveFor(id) || this.renaming.has(id))
-      throw new ContractError("conflict");
-    if (this.renaming.size >= RENAMES)
-      throw new ContractError("capacity");
-    const abort = new AbortController;
-    const closed2 = Promise.resolve().then(() => renameSession({
-      id,
-      dir: dirname21(listed.path),
-      file: listed.path,
-      cwd: listed.summary.cwd,
-      name: request3.name
-    }, abort.signal, this.maySignal)).catch(() => {
-      return;
-    });
-    const receipt = {
-      identity: identity2,
-      pending: true,
-      result: closed2.then((run) => {
-        this.renaming.delete(id);
-        receipt.pending = false;
-        if (run?.outcome !== "completed")
-          throw new ContractError("unavailable");
-        if (this.records.sessions.find(id)?.summary.name !== (request3.name || null))
-          throw new ContractError("receipt-inconclusive");
-        return { kind: "accepted", commandId: request3.commandId };
-      })
-    };
-    receipt.result.catch(() => {});
-    try {
-      this.o.owner.trackConversation(closed2.then((run) => ({
-        status: run && !run.closed ? "uncertain" : "settled"
-      })), () => abort.abort({
-        source: "service",
-        reason: "stop",
-        target: request3.commandId
-      }));
-    } catch (error) {
-      abort.abort();
-      throw error;
-    }
-    this.renaming.add(id);
-    this.renames.set(request3.commandId, receipt);
-    for (const [commandId, kept] of this.renames) {
-      if (this.renames.size <= RENAME_RECEIPTS)
-        break;
-      if (!kept.pending)
-        this.renames.delete(commandId);
-    }
-    return receipt.result;
-  }
-  archive(request3) {
-    this.o.owner.lease.assert();
-    if (this.o.owner.state !== "idle")
-      throw new ContractError("quarantine");
-    const id = request3.conversationId, path = this.records.archivePath(id);
-    const current2 = this.files.read(path);
-    if (request3.archived && !current2) {
-      if (!this.records.sessions.find(id))
-        throw new ContractError("stale");
-      this.write(path, {
-        schema: "cadence-conversation-archive/1",
-        id,
-        at: Date.now()
-      });
-    } else if (!request3.archived && current2) {
-      try {
-        this.files.remove(path, current2);
-      } catch (error) {
-        this.o.owner.quarantine();
-        throw error;
-      }
-    }
-    return { kind: "accepted", commandId: request3.commandId };
-  }
-  interrupt(id, turnId, epoch) {
-    this.o.owner.lease.assert();
-    const live2 = this.active.get(turnId);
-    if (live2) {
-      if (live2.accepted.session !== id || live2.epoch !== epoch)
-        throw new ContractError("stale");
-      live2.abort.abort({ source: "user", reason: "cancel", target: turnId });
-      return;
-    }
-    if (!this.records.hasCommand(id, turnId))
-      throw new ContractError("invalid");
-  }
-  async run(live2, control) {
-    const { accepted: accepted2, abort, state } = live2;
-    const commandId = live2.commandId;
-    let authSettled;
-    let uncertain = false;
-    let native = {
-      outcome: "failed",
-      closure: "not-launched",
-      exitCode: null,
-      signal: null,
-      durationMs: 0,
-      stdin: "not-required",
-      final: "missing",
-      cleanup: "settled",
-      capture: {
-        observed: "incomplete",
-        source: "unavailable",
-        redacted: false,
-        omissions: ["gap"]
-      }
-    };
-    const current2 = () => !abort.signal.aborted && this.o.owner.state === "idle" && this.currentDirectory(live2.execution.cwd);
-    try {
-      this.o.owner.lease.assert();
-      if (!current2())
-        throw new ContractError("stale");
-      if (control?.reply) {
-        state.status = "completed";
-        state.notice = control.reply;
-        return { status: "settled" };
-      }
-      const selected2 = live2.execution.model;
-      if (!selected2)
-        throw new ContractError("stale");
-      this.o.models.assertCurrent(selected2);
-      const instructions = control ? control.instructions : "Ordinary conversation.";
-      const context = control ? control.context ? control.context(live2.execution) : conversationContextLine(live2.execution) : "";
-      const request3 = decodeWorkerPublicRequest({
-        protocol: 2,
-        taskId: randomUUID25(),
-        taskKind: control ? "research" : "code",
-        runId: commandId,
-        childRunId: randomUUID25(),
-        assignmentId: "conversation",
-        purpose: control ? "research" : "edit",
-        model: selected2,
-        role: {
-          role: control ? "design-explorer" : "implementation-worker",
-          sha256: hash(instructions)
-        },
-        context,
-        instructions,
-        prompt: accepted2.command.text,
-        ...live2.images?.length ? { imageCount: live2.images.length } : {},
-        handoff: { graphRevision: 1, inputs: [] }
-      });
-      const auth = this.o.models.prepareTracked({
-        runtime: live2.runtime,
-        request: request3,
-        cwd: live2.execution.cwd,
-        operationId: randomUUID25(),
-        epoch: live2.epoch,
-        signal: abort.signal,
-        current: current2,
-        journal: {
-          preparation: (value) => this.write(this.records.path(commandId, `auth/${value.operationId}-intent.json`), value),
-          settlement: (value) => this.write(this.records.path(commandId, `auth/${value.operationId}-settled.json`), value)
-        }
-      });
-      authSettled = auth.settled;
-      const prepared = await auth.result;
-      if (prepared.status !== "prepared" || !current2())
-        throw new ContractError("auth-unavailable");
-      state.status = "running";
-      this.save(live2);
-      this.write(this.records.path(commandId, "launch.json"), {
-        epoch: live2.epoch,
-        childRunId: request3.childRunId,
-        runtime: live2.runtime ? describeWorkerRuntime(live2.runtime) : null
-      });
-      let credentials = [];
-      const capture = new LiveCapture(() => [...this.records.readSecrets(), ...credentials], !!live2.images?.length);
-      live2.capture = capture;
-      const existing = this.records.sessions.find(accepted2.session);
-      if ((existing?.path ?? null) !== accepted2.file)
-        throw new ContractError("stale");
-      const running = Promise.resolve().then(() => launchConversation(prepared.prepared, {
-        session: {
-          id: accepted2.session,
-          dir: accepted2.directory,
-          file: existing?.path ?? null,
-          head: accepted2.parent
-        },
-        agentDir: this.o.agentDir,
-        ...control ? { coordinator: true } : {}
-      }, abort.signal, {
-        images: live2.images,
-        ownerSecrets: this.o.secrets,
-        onCoordinator: control?.onTool,
-        inputs: {
-          open: (send2) => {
-            live2.worker = send2;
-          },
-          withdrawn: (id, removed) => live2.inputs.find((input) => input.commandId === id)?.withdrawal?.answer(removed)
-        },
-        maySignal: this.maySignal,
-        onNative: (value) => {
-          native = value;
-        },
-        onFrame: (frame, secrets) => {
-          credentials = secrets;
-          capture.accept(frame);
-          if (frame.event.kind === "ready") {
-            live2.ready = true;
-            this.dispatch(live2);
-          } else if (frame.event.kind === "final")
-            live2.ended = true;
-        }
-      }));
-      const tracked = running.then(() => native);
-      this.o.owner.trackConversationProcess(tracked, () => abort.abort({ source: "service", reason: "stop", target: commandId }));
-      const result = await running;
-      live2.ended = true;
-      capture.retry = undefined;
-      uncertain = !result.closed;
-      state.status = result.outcome;
-      if (result.stop)
-        state.notice = `${result.stop.source}: ${result.stop.reason} (${result.stop.target})`;
-    } catch (error) {
-      uncertain ||= this.o.owner.state === "quarantined";
-      state.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
-      state.notice ||= error instanceof ContractError ? error.code : "Conversation failed.";
-    } finally {
-      live2.ended = true;
-      live2.worker = null;
-      for (const input of live2.inputs)
-        input.withdrawal?.answer(false);
-      await control?.settle();
-      await authSettled;
-      uncertain ||= this.o.owner.state === "quarantined";
-      if (uncertain)
-        state.status = "unknown";
-      if (abort.signal.aborted && abort.signal.reason?.source)
-        state.notice = `${abort.signal.reason.source}: ${abort.signal.reason.reason} (${commandId})${state.notice ? `; ${state.notice}` : ""}`;
-      try {
-        this.write(this.records.path(commandId, "native.json"), native);
-        if (live2.capture) {
-          live2.capture.retry = undefined;
-          if (state.status !== "completed")
-            state.notice ||= live2.capture.notice;
-        }
-        this.settle(live2, uncertain);
-      } catch {
-        uncertain = true;
-      }
-      if (uncertain)
-        this.o.owner.quarantine();
-      for (const input of live2.inputs)
-        this.inputs.delete(input.commandId);
-      this.active.delete(commandId);
-    }
-    return { status: uncertain ? "uncertain" : "settled" };
-  }
-  save(live2) {
-    if (!live2.stateFile)
-      throw new ContractError("corrupt-selected");
-    live2.stateFile = this.write(this.records.path(live2.commandId, "state.json"), live2.state, META_BYTES2, live2.stateFile);
-  }
-  settle(live2, uncertain) {
-    const { accepted: accepted2, commandId } = live2;
-    const inputs = live2.inputs.filter((input) => !input.withdrawn);
-    let parts;
-    try {
-      parts = this.records.sessions.session(accepted2.session)?.runEntries({ commandId, parent: accepted2.parent, offset: accepted2.offset }, inputs.map((input) => ({
-        commandId: input.commandId,
-        offset: input.accepted.offset
-      }))) ?? [];
-    } catch {}
-    const outcome = { status: live2.state.status, notice: live2.state.notice };
-    const newest = parts?.at(-1)?.commandId ?? commandId;
-    for (const message2 of [live2, ...inputs]) {
-      const at2 = parts?.findIndex((part2) => part2.commandId === message2.commandId) ?? -1;
-      const part = parts?.[at2];
-      const ended = uncertain ? { status: "unknown", notice: outcome.notice } : message2.commandId === newest ? outcome : part ? { status: replyStatus(part.entries), notice: "" } : parts ? { status: "canceled", notice: NOT_DELIVERED } : { status: "failed", notice: UNOBSERVED };
-      Object.assign(message2.state, ended, {
-        user: part?.entries[0]?.id ?? null
-      });
-      const given = message2 === live2 ? 0 : at2;
-      if (live2.capture && given >= 0)
-        message2.state.omitted = { ...live2.capture.omittedFor(given) };
-    }
-    for (const input of inputs)
-      input.stateFile = this.write(this.records.path(input.commandId, "state.json"), input.state, META_BYTES2, input.stateFile);
-    this.save(live2);
-  }
-}
+You are the sole user-facing coordinator. Focus on desired outcomes and acceptance, not internal plumbing: never ask the user to manage tasks, IDs, JSON, ports, agent assignments, repair counts or knowledge files.
+Evidence first. Use cadence_knowledge to read a project heading, match a literal in a source file, inspect Git/dependency placement, or reuse a retained investigation by ID. Use cadence_research only for unresolved questions that could change design or acceptance; zero research runs is fine when evidence suffices.
+Surface material product/scope tradeoffs with one cadence_design batch in the user's language (option costs, recommendation, reason, affected acceptance; omit or null when independent) instead of a Markdown questionnaire. Keep routine choices yourself. A submitted design or "按你推荐的来" calls for the final plan (never execution consent); honor every selected and custom answer.
+Once clear, call cadence_plan with goal, high-level technical design, decisions/non-goals, acceptance, assumptions, real checks, delivery policy (prefer local-merge for Git; working-copy needs explicit direct-edit approval), and optional fields per the tool schema. Omit links for local-merge to let the owner auto-discover ignored node_modules (pass [] to disable). After one user approval, the service autonomously plans the parallel execution route from the codebase, implements, verifies, runs automatic Agent review, maintains .cadence/ project knowledge, recovers settled failures, and finishes agreed local delivery without further confirmation (never push, deploy or install dependencies without agreement).
+When a tool refuses your own call with a named field, fix that exact field and retry in this same turn. There is one plan: never publish, offer or mention a shortened, split or otherwise reduced variant, and never ask the user to reply so that you can try again.
+Present a clear summary of the returned agreement and invite one explicit approval (the user may type 按计划实施). You cannot approve, cancel or exit; vague agreement is not consent.
+During accepted work, report actual cadence_status observations: child failure or route revision is progress, lead with any recorded deviation, and never ask to continue or replay unknown outcomes. Automatic review is not human review; worker prose is not passing checks; completion leaves Cadence ON. Tools operate on the host; this is not a sandbox.`;
 
 // src/service/project-knowledge.ts
 import { isUtf8 } from "node:buffer";
@@ -32754,15 +31955,15 @@ import {
   constants as constants11,
   fstatSync as fstatSync8,
   lstatSync as lstatSync24,
-  opendirSync as opendirSync14,
+  opendirSync as opendirSync13,
   openSync as openSync11,
   readSync as readSync7
 } from "node:fs";
-import { dirname as dirname24, posix as posix2 } from "node:path";
+import { dirname as dirname23, posix as posix2 } from "node:path";
 
 // src/service/knowledge-store.ts
-import { lstatSync as lstatSync23, opendirSync as opendirSync13, readFileSync as readFileSync6 } from "node:fs";
-import { dirname as dirname23, posix } from "node:path";
+import { lstatSync as lstatSync23, opendirSync as opendirSync12, readFileSync as readFileSync6 } from "node:fs";
+import { dirname as dirname22, posix } from "node:path";
 
 // src/service/workflow-git.ts
 import { spawn as spawn6, spawnSync as spawnSync6 } from "node:child_process";
@@ -32780,7 +31981,7 @@ import {
   realpathSync as realpathSync13
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname22, isAbsolute as isAbsolute15, join as join39, relative as relative9, resolve as resolve13, sep as sep8 } from "node:path";
+import { dirname as dirname21, isAbsolute as isAbsolute15, join as join38, relative as relative9, resolve as resolve13, sep as sep8 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -32875,7 +32076,7 @@ function safeWorkflowFile(cwd, name) {
   const p = resolve13(cwd, name);
   if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname22(p));
+  safeDirectory(dirname21(p));
   try {
     const st = lstatSync22(p);
     if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1)
@@ -32891,7 +32092,7 @@ function declaredTarget(cwd, name) {
   const p = resolve13(cwd, name);
   if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname22(p));
+  safeDirectory(dirname21(p));
   try {
     const st = lstatSync22(p);
     if (st.isSymbolicLink() || !st.isFile() && !st.isDirectory() || st.isFile() && st.nlink !== 1)
@@ -32983,7 +32184,7 @@ function directoryIdentity(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join39(directory2, entry), relative10 = `${prefix}${entry}`;
+      const full = join38(directory2, entry), relative10 = `${prefix}${entry}`;
       const st = lstatSync22(full);
       if (st.isDirectory()) {
         rows.push(`${relative10}/`);
@@ -33007,7 +32208,7 @@ async function directoryIdentityAsync(root, name, contentOnly = false, signal) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join39(directory2, entry), relative10 = `${prefix}${entry}`;
+      const full = join38(directory2, entry), relative10 = `${prefix}${entry}`;
       const st = await lstat(full);
       if (st.isDirectory()) {
         rows.push(`${relative10}/`);
@@ -33172,7 +32373,7 @@ function deliveryTarget(cwd, source) {
     "index.lock",
     "HEAD.lock"
   ]) {
-    if (existsSync4(join39(gitDir, name)))
+    if (existsSync4(join38(gitDir, name)))
       throw new WorkflowRefusal("conflict", "Finish the existing Git operation before planning isolated delivery.");
   }
   return {
@@ -33232,11 +32433,13 @@ function workflowObservation(cwd, plan) {
     const dirty = overlapping(declared, workflowChanged(cwd));
     if (dirty.length)
       throw new WorkflowRefusal("conflict", `Declared write targets have uncommitted changes: ${list3(dirty)}. Commit, stash or leave them out of the plan; Cadence never adopts dirty inputs.`);
-    const ignored = gitAnswer(cwd, ["check-ignore", "--", ...declared]);
-    if (ignored !== null)
-      throw new WorkflowRefusal("invalid", `Declared write targets are ignored by Git and cannot be delivered by local merge: ${list3(((names3) => names3.length ? names3 : ignored.split(`
+    if (declared.length) {
+      const ignored = gitAnswer(cwd, ["check-ignore", "--", ...declared]);
+      if (ignored !== null)
+        throw new WorkflowRefusal("invalid", `Declared write targets are ignored by Git and cannot be delivered by local merge: ${list3(((names3) => names3.length ? names3 : ignored.split(`
 `).filter(Boolean))(declared.filter((p) => ignored.split(`
 `).includes(p))).sort())}. Use working-copy delivery or change the ignore rules.`);
+    }
     gitRead(cwd, ["var", "GIT_AUTHOR_IDENT"]);
     gitRead(cwd, ["var", "GIT_COMMITTER_IDENT"]);
   }
@@ -33421,9 +32624,9 @@ function readKnowledgeStore(root) {
   let limited = false;
   let names3 = [];
   try {
-    const directory2 = dirname23(safeWorkflowFile(root, `${KNOWLEDGE_STORE.topics}/index.md`));
+    const directory2 = dirname22(safeWorkflowFile(root, `${KNOWLEDGE_STORE.topics}/index.md`));
     if (lstatSync23(directory2).isDirectory()) {
-      const dir = opendirSync13(directory2);
+      const dir = opendirSync12(directory2);
       try {
         for (let e = dir.readSync();e; e = dir.readSync()) {
           if (!e.isFile() || !/\.md$/iu.test(e.name))
@@ -33799,7 +33002,7 @@ function projectKnowledge(root, query, paths, secrets, maximum = KNOWLEDGE_LIMIT
       let directory2;
       try {
         const probe2 = safeWorkflowFile(root, `${path}/index.md`);
-        directory2 = opendirSync14(dirname24(probe2));
+        directory2 = opendirSync13(dirname23(probe2));
         while (entries3 < KNOWLEDGE_LIMITS.entries && candidates.size < KNOWLEDGE_LIMITS.candidates) {
           const entry = directory2.readSync();
           if (!entry)
@@ -34075,13 +33278,365 @@ ${brief.lessons}
 ` : ""}Do not publish guesses, credentials, raw logs, personal history, temporary paths or anything that is not true of the committed code. Do not modify implementation code, tests or anything outside the paths named here.`;
 }
 
+// src/coordinator-context.ts
+var COORDINATOR_CONTEXT_BYTES = 32 * 1024;
+var ROUTE_TABLE_BUDGET = 5 * 1024;
+var RUNS_BUDGET = 600;
+var DESIGN_BUDGET = 6 * 1024;
+var PROPOSAL_BUDGET = 14 * 1024;
+var DESIGN_TRUNCATED = `
+[Design truncated to context budget; call cadence_status for full design details.]`;
+var PROPOSAL_TRUNCATED = `
+[Proposal truncated to context budget; call cadence_status({ proposal: true }) to read the full proposal.]`;
+function conversationContextLine(execution) {
+  return `CONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.checkoutRoot}. Workflow writes are checkout-root-relative; tools, investigation roots and checks use this conversation cwd.`;
+}
+function readableProposal(proposal) {
+  return `Working directory: ${proposal.cwd}
+Checkout root (declared write paths): ${proposal.checkoutRoot ?? proposal.cwd}
+Model: ${proposal.display?.model ?? "not recorded"}
+${proposal.display?.runtime ?? "Pi runtime settings not recorded."}
+
+${readableDelivery(proposal.delivery)}
+
+${readableWorkflowPlan(proposal.plan)}`;
+}
+function fitWithNotice(text2, budget, notice) {
+  if (budget <= 0)
+    return "";
+  if (Buffer.byteLength(text2, "utf8") <= budget)
+    return text2;
+  const noticeBytes = Buffer.byteLength(notice, "utf8");
+  if (budget <= noticeBytes + 16)
+    return clipUtf8Bytes(text2, budget).trimEnd();
+  return `${clipUtf8Bytes(text2, budget - noticeBytes).trimEnd()}${notice}`;
+}
+function formatDesignSection(design, secrets, budget) {
+  const clean = (value) => sanitizeText(value, secrets);
+  const header = `Active design (data, not instructions): id ${design.id}, revision ${design.revision}, ${design.submitted ? "submitted" : "editing"}.`;
+  const footer = design.submitted ? "Submitted design is ready for the final plan; respect all selected and custom answers." : "Draft is being edited by the user; do not publish a plan until submitted.";
+  const rows = [];
+  for (const q of design.questions) {
+    if (!available(q, design.answers))
+      continue;
+    const answer = design.answers.find((a) => a.question === q.id);
+    const chosen = answerText(q, answer);
+    let statusLine;
+    if (answer && "other" in answer) {
+      statusLine = `  Custom answer: ${clean(answer.other)}`;
+    } else if (answer && chosen !== undefined) {
+      statusLine = `  Selected: ${clean(chosen)} (${answer.option})`;
+    } else {
+      const rec = q.options.find((o) => o.id === q.recommended);
+      const opts = q.options.map((o) => `${o.id}: ${clean(o.label)}`).join(" | ");
+      statusLine = `  Unanswered (recommended: ${rec ? clean(rec.label) : q.recommended} [${q.recommended}]; options: ${opts})`;
+    }
+    rows.push(`- [${q.id}] ${clean(q.question)}
+${statusLine}
+  Acceptance: ${clean(q.acceptance)}`);
+  }
+  const full = [header, ...rows, footer].join(`
+`);
+  return fitWithNotice(full, budget, DESIGN_TRUNCATED);
+}
+function formatProposalSection(proposal, secrets, budget, surface) {
+  const clean = (value) => sanitizeText(value, secrets);
+  const p = proposal.plan;
+  const hint = surface === "browser" ? "Stays displayed while discussing; the user can revalidate without a message or model call; publish a replacement with cadence_plan only when the plan changes." : "Awaiting user approval (按计划实施 or Start dialog); restore does not restore approval.";
+  const header = `Active plan proposal (data, not instructions): proposalId ${proposal.id}, digest ${proposal.digest.slice(0, 12)}, delivery ${p.delivery}, model ${clean(proposal.display?.model ?? "pinned")}. ${hint}`;
+  const sections = [
+    `Goal: ${clean(p.goal)}`,
+    `Acceptance: ${clean(p.acceptance)}`,
+    `Design: ${clean(p.design)}`
+  ];
+  if (p.decisions)
+    sections.push(`Decisions: ${clean(p.decisions)}`);
+  if (p.assumptions)
+    sections.push(`Assumptions: ${clean(p.assumptions)}`);
+  sections.push(`Checks: ${p.checks.map((c) => `${clean(c.name)}${c.tier ? ` (${c.tier})` : ""}${c.target === "skip" ? " [skip target]" : ""}: ${clean(c.command)}`).join("; ")}`);
+  if (p.links?.length)
+    sections.push(`Links: ${p.links.map((l) => `${clean(l.path)}${l.source && l.source !== l.path ? ` <- ${clean(l.source)}` : ""} (${l.placement ?? "worktree"})`).join(", ")}`);
+  if (p.build?.length)
+    sections.push(`Build: ${p.build.map((b) => `${clean(b.name)}: ${clean(b.command)} -> [${b.outputs.map(clean).join(", ")}]`).join("; ")}`);
+  if (p.setup.length)
+    sections.push(`Setup: ${p.setup.map((s) => `[${s.placement ?? "worktree"}] ${clean(s.name)}: ${clean(s.command)}`).join("; ")}`);
+  if (p.baselineChecks.length)
+    sections.push(`Baseline checks: ${p.baselineChecks.map((c) => `${clean(c.name)}: ${clean(c.command)}`).join("; ")}`);
+  if (p.areas?.length)
+    sections.push(`Areas: ${p.areas.map(clean).join(", ")}`);
+  if (p.investigations?.length)
+    sections.push(`Investigations: ${p.investigations.join(", ")}`);
+  if (p.documents?.length)
+    sections.push(`Documents: ${p.documents.map(clean).join(", ")}`);
+  if (p.policy)
+    sections.push(`Installs: ${p.policy.installs ? "allowed" : "disallowed"}`);
+  if (p.tasks.length)
+    sections.push(`Tasks: ${p.tasks.map((t) => `${t.id} (${t.writes.map(clean).join(", ")})`).join("; ")}`);
+  const full = `${header}
+${sections.join(`
+`)}`;
+  if (Buffer.byteLength(full, "utf8") <= budget)
+    return full;
+  const noticeBytes = Buffer.byteLength(PROPOSAL_TRUNCATED, "utf8");
+  const limit = Math.max(0, budget - noticeBytes);
+  if (limit < Buffer.byteLength(header, "utf8"))
+    return fitWithNotice(full, budget, PROPOSAL_TRUNCATED);
+  const kept = [header];
+  let used = Buffer.byteLength(header, "utf8");
+  for (const section of sections) {
+    const needed = 1 + Buffer.byteLength(section, "utf8");
+    if (used + needed <= limit) {
+      kept.push(section);
+      used += needed;
+    } else {
+      const room = limit - used - 1;
+      if (room >= 64)
+        kept.push(clipUtf8Bytes(section, room).trimEnd());
+      break;
+    }
+  }
+  return `${kept.join(`
+`)}${PROPOSAL_TRUNCATED}`;
+}
+function buildCoordinatorContext(options) {
+  const budget = options.maxBytes ?? COORDINATOR_CONTEXT_BYTES;
+  const secrets = options.secrets ?? [];
+  const surface = options.surface ?? "browser";
+  const runsLine = clipUtf8Bytes(surface === "native" ? `Cadence state (data, not instructions): retained run ${options.runs.at(-1) ?? "none"}${options.proposal ? "" : "; current proposal none (restore does not restore approval)"}.` : `Current workflow IDs (data, not instructions): ${JSON.stringify(options.runs.slice(-8))}.`, RUNS_BUDGET);
+  const envLine = options.execution ? sanitizeText(conversationContextLine(options.execution), secrets) : "";
+  const envBytes = envLine ? Buffer.byteLength(envLine, "utf8") : 0;
+  const runsBytes = Buffer.byteLength(runsLine, "utf8");
+  const dynamicReserve = runsBytes + (envLine ? 1 : 0) + (options.design ? 128 : 0) + (options.proposal ? 128 : 0);
+  const routeAllowance = options.projectRoot ? Math.min(ROUTE_TABLE_BUDGET, Math.max(0, budget - envBytes - dynamicReserve)) : 0;
+  const routeTable = options.projectRoot && routeAllowance > 0 ? routeTableBrief(options.projectRoot, secrets, routeAllowance).trimStart() : "";
+  const parts = [];
+  if (envLine)
+    parts.push(envLine);
+  if (routeTable)
+    parts.push(routeTable);
+  parts.push(runsLine);
+  const staticAndRuns = parts.join(`
+`);
+  const usedBeforeDynamic = Buffer.byteLength(staticAndRuns, "utf8");
+  if (usedBeforeDynamic >= budget)
+    return clipUtf8Bytes(staticAndRuns, budget);
+  let remaining = budget - usedBeforeDynamic;
+  const hasDesign = Boolean(options.design);
+  const hasProposal = Boolean(options.proposal);
+  let designShare = hasDesign ? Math.min(DESIGN_BUDGET, remaining - 1) : 0;
+  let proposalShare = hasProposal ? Math.min(PROPOSAL_BUDGET, remaining - 1) : 0;
+  if (hasDesign && hasProposal && designShare + proposalShare + 2 > remaining) {
+    const avail = Math.max(0, remaining - 2);
+    designShare = Math.min(DESIGN_BUDGET, Math.floor(avail * 0.35));
+    proposalShare = Math.min(PROPOSAL_BUDGET, avail - designShare);
+  }
+  if (options.design && designShare > 0) {
+    const block = formatDesignSection(options.design, secrets, designShare);
+    if (block) {
+      parts.push(block);
+      remaining -= Buffer.byteLength(block, "utf8") + 1;
+    }
+  }
+  if (options.proposal && proposalShare > 0 && remaining > 1) {
+    const block = formatProposalSection(options.proposal, secrets, Math.min(proposalShare, remaining - 1), surface);
+    if (block)
+      parts.push(block);
+  }
+  const combined = parts.join(`
+`);
+  return Buffer.byteLength(combined, "utf8") <= budget ? combined : clipUtf8Bytes(combined, budget);
+}
+
+// src/coordinator-tools.mjs
+import { Type } from "typebox";
+var CHECK = Type.Object({
+  name: Type.String(),
+  command: Type.String(),
+  timeoutMs: Type.Optional(Type.Integer({
+    description: "Milliseconds, from 100. Leave out for no timeout."
+  }))
+});
+var PLAN_CHECK = Type.Object({
+  ...CHECK.properties,
+  tier: Type.Optional(Type.Union([Type.Literal("fast"), Type.Literal("heavy")], {
+    description: "Cost tier only: fast (default) runs before heavy and stops early on failure; heavy marks slow browser/integration suites. Does not decide target post-merge execution."
+  })),
+  target: Type.Optional(Type.Union([Type.Literal("run"), Type.Literal("skip")], {
+    description: "Whether this check reruns in the target checkout after fast-forward merge: run (default) or skip. Target ref, HEAD and delivered source-byte verification never skip."
+  }))
+});
+var BUILD = Type.Object({
+  ...CHECK.properties,
+  outputs: Type.Array(Type.String(), {
+    description: "Declared repository-relative derived output paths this build may write (never tests, licenses or upstream provenance)."
+  })
+});
+var SETUP_LINK = Type.Object({
+  path: Type.String({
+    description: "Checkout-relative path inside the worktree where the owner creates a managed symlink (e.g. node_modules or web/node_modules)."
+  }),
+  source: Type.Optional(Type.String({
+    description: "Checkout-relative dependency path in the original checkout to link to. Defaults to path."
+  })),
+  placement: Type.Optional(Type.Union([Type.Literal("candidate"), Type.Literal("worktree")], {
+    description: "candidate: link only in the stable candidate; worktree (default): link in the candidate and every detached child."
+  }))
+});
+var RESEARCH_PARAMETERS = Type.Object({
+  goal: Type.String(),
+  questions: Type.Array(Type.String({
+    description: "One focused, independent question."
+  }), {
+    description: "Split independent questions freely; the service runs as many at once as this machine is configured for and queues the rest."
+  }),
+  roots: Type.Optional(Type.Array(Type.String({
+    description: "Specific investigation directories, relative to this conversation's cwd by default. Avoid filesystem roots and broad parent trees."
+  })))
+});
+var lookupExample = 'Use {checkout:["node_modules"]}, {checkout:[]}, {path:"docs.md"} with optional section or match, or {investigation:"<retained UUID>"}.';
+function knowledgeToolInput(input) {
+  const bad12 = (field, why) => {
+    throw new Error(`${field}: ${why}. ${lookupExample}`);
+  };
+  const keys2 = Object.keys(input ?? {});
+  let raw;
+  try {
+    raw = closed(input, keys2);
+  } catch {
+    bad12("cadence_knowledge", "expected an object with named lookup fields");
+  }
+  const fields3 = Object.create(null);
+  for (const key3 of keys2) {
+    if (!Object.hasOwn(knowledgeFields, key3))
+      bad12(JSON.stringify(key3.slice(0, 80)), "unknown field; omit it");
+    if (key3 !== "checkout" && raw[key3] === "")
+      continue;
+    try {
+      fields3[key3] = knowledgeFields[key3](raw[key3]);
+    } catch {
+      bad12(key3, key3 === "checkout" ? "give an array of up to eight nonempty dependency paths (each at most 1024 bytes)" : key3 === "investigation" ? "give a retained investigation UUID" : "give a nonblank string within the field limit");
+    }
+  }
+  const { checkout, path, section, match, investigation } = fields3;
+  if ((section || match) && !path)
+    bad12(section ? "section/path" : "match/path", "name the source file in path");
+  if (section && match)
+    bad12("section/match", "choose one selector");
+  if (checkout?.length && (path || investigation))
+    bad12("checkout", "cannot combine dependencies with path or investigation");
+  if (investigation && path)
+    bad12("investigation/path", "choose one source");
+  const relative10 = (name) => !/[\\:\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name) && name.split("/").every((part) => part && part !== "." && part !== ".." && part.toLowerCase() !== ".git");
+  if (path && !relative10(path))
+    bad12("path", "give a plain checkout-relative file path");
+  if (checkout?.some((name) => !relative10(name) || name.split("/").some((part) => part.startsWith("."))))
+    bad12("checkout", "give plain checkout-relative dependency names");
+  if (investigation)
+    return { investigation };
+  if (path)
+    return match ? { path, match } : section ? { path, section } : { path };
+  if (checkout)
+    return { checkout };
+  bad12("path/checkout/investigation", "no lookup selected");
+}
+var KNOWLEDGE_PARAMETERS = Type.Object({
+  checkout: Type.Optional(Type.Array(Type.String(), {
+    description: "Instead of other fields, give up to eight checkout-relative dependency directory names (e.g. node_modules and web/node_modules), or [] for Git placement only. Observe the original checkout, Git branch and HEAD, and whether each named entry is a directory, symlink or absent. Never follows a dependency link."
+  })),
+  path: Type.Optional(Type.String({
+    description: "One checkout-relative document, or the exact project source file containing a known fact."
+  })),
+  section: Type.Optional(Type.String({
+    description: "Exact Markdown heading. Use either section or match."
+  })),
+  match: Type.Optional(Type.String({
+    description: "A literal on a line of this source file (such as a token, assertion or build script). Return matching line numbers with short previews and context at the first occurrence, without a research worker."
+  })),
+  investigation: Type.Optional(Type.String({
+    description: "Instead of path/section, supply a retained investigation ID to recheck its sources and reuse the answer."
+  }))
+});
+var DESIGN_PARAMETERS = Type.Object({
+  questions: Type.Array(Type.Object({
+    id: Type.String(),
+    question: Type.String(),
+    options: Type.Array(Type.Object({
+      id: Type.String(),
+      label: Type.String(),
+      cost: Type.String()
+    })),
+    recommended: Type.String({ description: "Recommended option ID" }),
+    reason: Type.String(),
+    acceptance: Type.String({
+      description: "Acceptance item this decision affects"
+    }),
+    when: Type.Optional(Type.Union([
+      Type.Null(),
+      Type.Object({ question: Type.String(), option: Type.String() })
+    ], {
+      description: "Omit or use null for an independent question. For a conditional question give an earlier question ID and one of its option IDs."
+    }))
+  }))
+});
+var PLAN_PARAMETERS = Type.Object({
+  goal: Type.String(),
+  design: Type.String({
+    description: "High-level technical approach, architectural boundaries and key mechanisms (the owner plans file-level tasks automatically after approval)."
+  }),
+  decisions: Type.Optional(Type.String({ description: "Explicit decisions and non-goals." })),
+  acceptance: Type.String(),
+  assumptions: Type.Optional(Type.String({
+    description: "What you decided on the user's behalf without asking; approval confirms it. Leave out when there is none."
+  })),
+  investigations: Type.Optional(Type.Array(Type.String({
+    description: 'A recorded investigation UUID ("investigation" value from a completed cadence_research step) for the post-approval route planner to reuse.'
+  }))),
+  areas: Type.Optional(Type.Array(Type.String({
+    description: "Advisory checkout-relative code directories or files to point the post-approval route planner toward (not a hard write fence)."
+  }))),
+  documents: Type.Optional(Type.Array(Type.String({
+    description: "Existing project Markdown (.md) this delivery may update (never list .cadence/ files; the owner maintains project knowledge automatically)."
+  }))),
+  policy: Type.Optional(Type.Object({
+    installs: Type.Optional(Type.Boolean({
+      description: "Whether a later revision may add dependency-installation commands. False unless the user agreed."
+    }))
+  })),
+  checks: Type.Array(PLAN_CHECK, {
+    description: "The real acceptance commands: at least one, at most 16."
+  }),
+  build: Type.Optional(Type.Array(BUILD, {
+    description: "Optional owner-synced build commands run after edits before combined verification, at most eight. Each names the exact repository-relative derived outputs it may touch."
+  })),
+  links: Type.Optional(Type.Array(SETUP_LINK, {
+    description: "Optional owner-managed dependency symlinks from the original checkout into worktrees (e.g. node_modules), at most eight. Omit for local-merge (when policy.installs is false) to let the owner auto-discover ignored node_modules; pass [] to disable auto-discovery; pass an explicit list to override."
+  })),
+  setup: Type.Optional(Type.Array(Type.Object({
+    ...CHECK.properties,
+    placement: Type.Union([
+      Type.Literal("target"),
+      Type.Literal("candidate"),
+      Type.Literal("worktree")
+    ], {
+      description: "target: preflight once in the original checkout before creating worktrees; candidate: once in the stable candidate; worktree: prepare the candidate and every detached child. Target branch checks belong to target, never worktree. Commands do not export environment into later processes."
+    })
+  }), {
+    description: "Explicit preparation commands with their execution placement, at most four. Run in target, candidate, then worktree stages, preserving order within each stage."
+  })),
+  baselineChecks: Type.Optional(Type.Array(CHECK)),
+  delivery: Type.Union([
+    Type.Literal("local-merge"),
+    Type.Literal("working-copy")
+  ])
+});
+
 // src/service/conversation-workflow.ts
 var EVIDENCE_BYTES = 16384;
 var COORDINATORS = 8;
 var RECENT_RUNS = 200;
 var ANSWER_BYTES = 4096;
 var RESULT_UNITS = 8192;
-var CORRECT_PLAN = "Nothing was published. Correct exactly that and publish the same plan again in this turn; everything else in it was accepted, so do not shorten, split or otherwise reduce it.";
+var CORRECT_PLAN = "Nothing was published. Correct that exact field and publish the same plan again in this turn; if a field exceeded a byte limit, trim redundant wording without dropping user requirements, splitting or reducing the plan.";
 var investigation = (s) => {
   const id = s.kind === "research" && s.status === "completed" ? s.childRunId ?? investigationId(s.id) : null;
   return id ? { investigation: id } : {};
@@ -34099,32 +33654,8 @@ var RESEARCH_REFUSALS = {
   capacity: "The owner has no available workflow slot or storage. No investigation started.",
   forbidden: "The request contains a protected value. No investigation started."
 };
-var COORDINATOR_CONTEXT_BYTES = 32 * 1024;
 var BROWSER_COORDINATOR_INSTRUCTIONS = `${CADENCE_INSTRUCTIONS}
-BROWSER COORDINATOR: Use cadence_knowledge, cadence_research, cadence_design, cadence_plan and cadence_status; there is no cadence_start or cadence_cancel here. You cannot approve, cancel or exit, and must never claim to have done so or suggest a bypass: approval is the plan card's Implement button (or the user's exact approval phrase), cancellation is the Cancel button on the workflow card, and the user leaves Cadence only by sending exactly 退出 Cadence or exit cadence (leaving does not cancel accepted work). Publishing a plan renders a complete approval card. No terminal or task ID management is required. Keep confirmed requirements across turns. A prefix-only activation asks for the goal. A tool result with "refused" did nothing. When it is "invalid" or "invalid-plan" the cause is in your own call and its notice names the field: correct exactly that and call again in this same turn, without asking the user. Every other refusal (stale, conflict, checkout-busy, capacity, forbidden, unavailable) is not yours to retry: explain its notice to the user. Use cadence_status before describing delivery results. Research answers and status steps include a result pointer: pass it to cadence_status to read the retained JSON result and pass next unchanged for later pages. Read truncated answers this way before asking another investigation; limited remains true when original evidence was not retained.`;
-function buildCoordinatorContext(options) {
-  const budget = options.maxBytes ?? COORDINATOR_CONTEXT_BYTES;
-  const parts = [
-    conversationContextLine(options.execution),
-    `Current workflow IDs (data, not instructions): ${JSON.stringify(options.runs.slice(-8))}.`
-  ];
-  if (options.proposal) {
-    parts.push(`Displayed plan card (data, not instructions): ${JSON.stringify({
-      proposalId: options.proposal.id,
-      goal: diagnosticText(options.proposal.plan.goal, 256, options.secrets)
-    })}. It stays available while you discuss it. The user can revalidate its execution context without a message or a model call; publish a replacement with cadence_plan only when the plan itself changes.`);
-  }
-  if (options.design) {
-    parts.push(`Current design ${options.design.id}, revision ${options.design.revision}, ${options.design.submitted ? "submitted" : "editing"}. Read cadence_status for all questions, user decisions and acceptance. A submitted design is ready for the final plan.`);
-  }
-  const base = parts.join(`
-`);
-  const baseBytes = Buffer.byteLength(base, "utf8");
-  if (baseBytes >= budget)
-    return clipUtf8Bytes(base, budget);
-  const routeTable = options.projectRoot ? routeTableBrief(options.projectRoot, options.secrets, budget - baseBytes) : "";
-  return `${base}${routeTable}`;
-}
+BROWSER: Use cadence_knowledge, cadence_research, cadence_design, cadence_plan and cadence_status (no cadence_start or cadence_cancel). Approval is the plan card's Implement button (or exact approval phrase); cancellation is the workflow card's Cancel button. A prefix-only activation asks for the goal. A tool result with "refused" did nothing: retry "invalid" / "invalid-plan" in the same turn by fixing the named field; never retry other refusals (stale, conflict, checkout-busy, capacity, forbidden, unavailable) — explain their notice to the user. Check cadence_status before describing delivery results.`;
 var refusal3 = (refused2, notice) => ({ refused: refused2, notice });
 
 class ConversationWorkflow {
@@ -34184,7 +33715,7 @@ class ConversationWorkflow {
         head: head.code === 0 ? head.stdout.trim() : null,
         branch: branch.code === 0 ? sanitizeText(branch.stdout.trim(), this.o.secrets()) : null,
         entries: entries3,
-        notice: "Preparation evidence only. cadence_plan checks the proposed write paths for conflicts and requires Git commit identity for local delivery. Unrelated dirty files do not require a clean checkout. Share an authorized original dependency entry through plan.links by its displayed checkout-relative path; use setup only for non-link commands."
+        notice: "Preparation evidence only. cadence_plan requires Git commit identity for local delivery; unrelated dirty files do not require a clean checkout. Omit plan.links for local-merge (when policy.installs is false) to let the owner auto-discover ignored node_modules, pass [] to disable, or list explicit paths; use setup only for non-link commands."
       };
     }
     return coordinatorKnowledge(this.o.cwd, source, this.o.secrets(), (path) => this.o.files.read(path));
@@ -34244,28 +33775,34 @@ class ConversationWorkflow {
       if (s.kind === "research" && n)
         latest.set(Number(n[1]), s);
     }
+    const items = Array.from({ length: questions }, (_, i) => {
+      const s = latest.get(i + 1);
+      if (!s)
+        return {
+          question: i + 1,
+          status: "not-asked",
+          text: "The run did not get to ask this question."
+        };
+      const text2 = clip2(s.text, ANSWER_BYTES);
+      const truncated = s.truncated || text2 !== s.text;
+      return {
+        question: i + 1,
+        status: s.status,
+        ...investigation(s),
+        text: text2,
+        truncated,
+        result: { runId: run.id, stepId: s.id }
+      };
+    });
+    const anyTruncated = items.some((q) => ("truncated" in q) && q.truncated);
     return {
       id: run.id,
       status: run.status,
       notice: clip2(run.notice, 1024),
-      questions: Array.from({ length: questions }, (_, i) => {
-        const s = latest.get(i + 1);
-        if (!s)
-          return {
-            question: i + 1,
-            status: "not-asked",
-            text: "The run did not get to ask this question."
-          };
-        const text2 = clip2(s.text, ANSWER_BYTES);
-        return {
-          question: i + 1,
-          status: s.status,
-          ...investigation(s),
-          text: text2,
-          truncated: s.truncated || text2 !== s.text,
-          result: { runId: run.id, stepId: s.id }
-        };
-      })
+      ...anyTruncated ? {
+        hint: "Truncated answers retain full output on the owner; call cadence_status with a question's result { runId, stepId } before asking another investigation."
+      } : {},
+      questions: items
     };
   }
   result(current2, args) {
@@ -34315,11 +33852,63 @@ class ConversationWorkflow {
         digest: identity2,
         text: detail.text.slice(offset, end),
         limited: detail.limited,
-        next: end < detail.text.length ? { runId, stepId, offset: end, digest: identity2 } : null
+        next: end < detail.text.length ? { runId, stepId, offset: end, digest: identity2 } : null,
+        ...end < detail.text.length ? {
+          hint: "More retained output follows; call cadence_status with next unchanged to continue."
+        } : {}
       };
     } catch {
       return refusal3("unavailable", "No retained result can be read for this step. This is not evidence of completion or permission to repeat work.");
     }
+  }
+  proposalPage(current2, args) {
+    let offset, digest2;
+    try {
+      const input = closed(args, [
+        "proposal",
+        ...["offset", "digest"].filter((key3) => Object.hasOwn(args ?? {}, key3))
+      ]);
+      if (input.proposal !== true)
+        throw new Error("proposal: pass true to read the current pending proposal");
+      offset = input.offset === undefined ? 0 : input.offset;
+      digest2 = offset === 0 && input.digest === "" ? undefined : input.digest;
+      if (!Number.isSafeInteger(offset) || offset < 0)
+        throw new Error("offset: use the nonnegative position returned in next");
+      if ((offset > 0 || digest2 !== undefined) && (typeof digest2 !== "string" || !/^[a-f0-9]{64}$/u.test(digest2)))
+        throw new Error("digest: pass the exact next object to continue reading");
+    } catch (error) {
+      return refusal3("invalid", `${error instanceof Error && !(error instanceof ContractError) ? error.message : "proposal: pass { proposal: true }, with only offset and digest for continuation"}. No work started.`);
+    }
+    const proposal = current2.state.proposal;
+    if (!proposal)
+      return {
+        proposal: null,
+        notice: "No current pending proposal."
+      };
+    const text2 = sanitizeText(readableProposal(proposal), this.o.secrets());
+    const identity2 = hash(JSON.stringify({
+      proposalId: proposal.id,
+      digest: proposal.digest,
+      text: text2
+    }));
+    if (digest2 !== undefined && digest2 !== identity2)
+      return refusal3("changed-result", "The current proposal changed. Read it again from offset 0; do not combine pages from an earlier proposal.");
+    if (offset > text2.length || offset > 0 && /^[\udc00-\udfff]/u.test(text2.slice(offset)))
+      return refusal3("invalid", "offset: use the position returned in next, without splitting a Unicode character.");
+    let end = Math.min(offset + RESULT_UNITS, text2.length);
+    if (end < text2.length && /[\ud800-\udbff]$/u.test(text2.slice(offset, end)))
+      end--;
+    return {
+      proposalId: proposal.id,
+      proposalDigest: proposal.digest,
+      offset,
+      digest: identity2,
+      text: text2.slice(offset, end),
+      next: end < text2.length ? { proposal: true, offset: end, digest: identity2 } : null,
+      ...end < text2.length ? {
+        hint: "More proposal text follows; call cadence_status with next unchanged to continue."
+      } : {}
+    };
   }
   exitAndSend(c, beforeAccept, claimImages) {
     const receipt = this.o.conversations.receipt(c);
@@ -34417,13 +34006,22 @@ class ConversationWorkflow {
           if (!current2.state.enabled || current2.state.head !== c.commandId)
             throw new ContractError("stale");
           if (name === "cadence_status") {
-            if (args && typeof args === "object" && Object.keys(args).length) {
-              const page = this.result(current2, args);
+            const rawArgs = args && typeof args === "object" && !Array.isArray(args) ? args : undefined;
+            const definedEntries = rawArgs ? Object.entries(rawArgs).filter(([, v]) => v !== undefined) : [];
+            const hasProposal = definedEntries.some(([k]) => k === "proposal");
+            const proposalValue = rawArgs?.proposal;
+            const readingProposal = hasProposal && proposalValue !== false;
+            const effectiveArgs = hasProposal && proposalValue === false ? Object.fromEntries(definedEntries.filter(([k]) => k !== "proposal")) : rawArgs && definedEntries.length !== Object.keys(rawArgs).length ? Object.fromEntries(definedEntries) : args;
+            const hasEffectiveArgs = effectiveArgs && typeof effectiveArgs === "object" && !Array.isArray(effectiveArgs) && Object.keys(effectiveArgs).length > 0;
+            if (readingProposal || hasEffectiveArgs) {
+              const page = readingProposal ? this.proposalPage(current2, effectiveArgs) : this.result(current2, effectiveArgs);
               const bad12 = "refused" in page && page.refused === "invalid" && /^(offset|digest):/u.test(page.notice);
-              const key3 = bad12 ? canonicalJson(args) : undefined;
+              const key3 = bad12 ? canonicalJson(effectiveArgs) : undefined;
               if (key3 && key3 === invalidCursor) {
-                const { runId, stepId } = args;
-                const first = this.result(current2, { runId, stepId });
+                const first = readingProposal ? this.proposalPage(current2, { proposal: true }) : this.result(current2, {
+                  runId: effectiveArgs.runId,
+                  stepId: effectiveArgs.stepId
+                });
                 if (!("refused" in first))
                   return {
                     ...first,
@@ -34434,7 +34032,7 @@ class ConversationWorkflow {
               invalidCursor = key3;
               return page;
             }
-            closed(args, []);
+            closed(effectiveArgs, []);
             return {
               ...current2.state.design ? { design: current2.state.design } : {},
               runs: current2.state.runs.slice(-4).map((id) => {
@@ -34472,7 +34070,7 @@ class ConversationWorkflow {
           if (name === "cadence_design") {
             let design2;
             try {
-              design2 = newDesign(randomUUID26(), args, current2.state.design, Date.now());
+              design2 = newDesign(randomUUID25(), args, current2.state.design, Date.now());
             } catch (error) {
               return refusal3("invalid", diagnosticText(error instanceof Error ? error.message : "questions: invalid design", 512, this.o.secrets()));
             }
@@ -34524,16 +34122,12 @@ class ConversationWorkflow {
     } catch (error) {
       return refusal3("invalid-plan", `${diagnosticText(error instanceof Error && !(error instanceof ContractError) ? error.message : "plan: is not valid", 512, this.o.secrets())}. ${CORRECT_PLAN}`);
     }
-    for (const [name, reads] of [
-      ["reviewReads", plan.reviewReads ?? []],
-      ...plan.tasks.map((t, i) => [`tasks[${i}].reads`, t.reads ?? []])
-    ])
-      for (const [i, r] of reads.entries())
-        if ("research" in r && !this.o.workflows.investigated(r.research))
-          return refusal3("invalid-plan", `${name}[${i}].research: no answer is recorded under "${r.research}" (a research step that failed records none); give the "investigation" value of a completed step, or leave this reading out. ${CORRECT_PLAN}`);
+    for (const [i, id] of (plan.investigations ?? []).entries())
+      if (!this.o.workflows.investigated(id))
+        return refusal3("invalid-plan", `investigations[${i}]: no answer is recorded under "${id}" (a research step that failed records none); give the "investigation" value of a completed step, or leave it out. ${CORRECT_PLAN}`);
     let published;
     try {
-      published = this.o.workflows.command(randomUUID26(), epoch, {
+      published = this.o.workflows.command(randomUUID25(), epoch, {
         action: "propose",
         plan,
         model: model2
@@ -34553,10 +34147,23 @@ class ConversationWorkflow {
       revision: current2.state.revision + 1,
       proposal
     }, current2.file);
+    const baseline = plan.links === undefined && proposal.plan.links !== undefined ? { ...plan, links: proposal.plan.links } : plan;
+    const redacted = canonicalJson(proposal.plan) !== canonicalJson(baseline);
+    const discoveredLinks = plan.links === undefined && (proposal.plan.links?.length ?? 0) > 0 ? proposal.plan.links : undefined;
     return {
       proposalId: proposal.id,
       digest: proposal.digest,
-      notice: "Complete plan displayed for human approval. No execution has been authorized."
+      redacted,
+      ...proposal.plan.links?.length ? { links: proposal.plan.links } : {},
+      notice: [
+        "Complete plan displayed for human approval. No execution has been authorized.",
+        ...redacted ? [
+          "The owner redacted credential-like text; inspect cadence_status({ proposal: true }) for exact displayed bytes."
+        ] : [],
+        ...discoveredLinks ? [
+          `Owner auto-discovered managed dependency links: ${discoveredLinks.map((l) => l.path).join(", ")}.`
+        ] : []
+      ].join(" ")
     };
   }
   async research(current2, args, epoch, model2) {
@@ -34569,7 +34176,7 @@ class ConversationWorkflow {
     const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research" && current2.state.runs.includes(r.id)).map((r) => r.id);
     if (busy.length)
       return refusal3("checkout-busy", `This conversation has an approved workflow (${busy.join(", ")}). Wait for it to settle or open another conversation for a separate task; meanwhile use cadence_status. Nothing was started.`);
-    const id = randomUUID26(), conversationId = current2.state.id;
+    const id = randomUUID25(), conversationId = current2.state.id;
     try {
       this.o.workflows.command(id, epoch, {
         action: "research",
@@ -34648,7 +34255,7 @@ class ConversationWorkflow {
   approval(c, caller) {
     if (!caller)
       throw new ContractError("forbidden");
-    const evidence = join40(this.records.root, decodeSessionId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
+    const evidence = join39(this.records.root, decodeSessionId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
     let effects = true;
     try {
       effects = this.o.owner.state !== "idle";
@@ -34714,7 +34321,7 @@ class ConversationWorkflow {
       });
       if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
         throw new ContractError("unavailable");
-      const g = prepared.response, grant2 = randomUUID26();
+      const g = prepared.response, grant2 = randomUUID25();
       this.grants.set(grant2, {
         caller: canonicalJson(caller),
         revision: c.revision,
@@ -34782,10 +34389,903 @@ class ConversationWorkflow {
   }
 }
 
+// src/service/conversations.ts
+import { randomUUID as randomUUID26 } from "node:crypto";
+import { opendirSync as opendirSync14, statfsSync as statfsSync3 } from "node:fs";
+import { dirname as dirname24, join as join40 } from "node:path";
+var META_BYTES2 = 64 * 1024;
+var PREVIEW_BYTES = 64 * 1024;
+var RECENT_PREVIEWS = 8;
+var PREVIEW_MARK = `
+[Preview truncated; the rest appears once it is written.]`;
+var OMITTED_FLAG = {
+  "hidden-thinking": "thinking",
+  binary: "media",
+  unsupported: "other"
+};
+var RENAMES = 4;
+var RENAME_RECEIPTS = 64;
+class LiveCapture {
+  secrets;
+  inputImages;
+  retry;
+  notice = "";
+  activity = { kind: "waiting", sequence: 0 };
+  unkept = [{ thinking: false, media: false, other: false }];
+  users = 0;
+  messages = new Map;
+  order = [];
+  tools = new Map;
+  details = new Map;
+  imageUser;
+  constructor(secrets, inputImages = false) {
+    this.secrets = secrets;
+    this.inputImages = inputImages;
+  }
+  get omitted() {
+    return this.unkept[this.unkept.length - 1];
+  }
+  omittedFor(index) {
+    return this.unkept[index] ?? { thinking: false, media: false, other: false };
+  }
+  bounded(value) {
+    return Buffer.byteLength(value) <= PREVIEW_BYTES ? value : `${Buffer.from(value).subarray(0, PREVIEW_BYTES).toString("utf8").replace(/�$/u, "")}${PREVIEW_MARK}`;
+  }
+  block(messageId, index, role3) {
+    const message2 = this.messages.get(messageId);
+    if (!message2)
+      return;
+    let item = message2.blocks.get(index);
+    if (!item) {
+      item = {
+        id: `${messageId}:${index}`,
+        renderId: `capture:${messageId}:${index}`,
+        role: role3,
+        text: "",
+        name: "",
+        args: "",
+        error: false,
+        state: role3 === "tool" ? "pending" : "streaming"
+      };
+      message2.blocks.set(index, item);
+    }
+    return item;
+  }
+  tool(callId) {
+    let tool = this.tools.get(callId);
+    if (!tool) {
+      tool = {
+        item: {
+          id: callId,
+          renderId: `call:${callId}`,
+          role: "tool",
+          name: "",
+          args: "",
+          text: "",
+          error: false,
+          state: "pending"
+        }
+      };
+      this.tools.set(callId, tool);
+      const stale = [...this.tools.values()].at(-1 - RECENT_PREVIEWS);
+      if (stale)
+        stale.item.args = stale.item.text = "";
+    }
+    return tool;
+  }
+  accept(frame) {
+    const e = frame.event;
+    const activity2 = (kind, name) => {
+      this.activity = {
+        kind,
+        sequence: frame.workerSeq,
+        ...name === undefined ? {} : { name }
+      };
+    };
+    if (e.kind === "message-start" && e.role === "user") {
+      if (this.users++)
+        this.unkept.push({ thinking: false, media: false, other: false });
+      else if (this.inputImages)
+        this.imageUser = e.messageId;
+    } else if (e.kind === "message-start" && e.role === "assistant") {
+      if (!this.messages.has(e.messageId)) {
+        this.messages.set(e.messageId, { blocks: new Map, ended: false });
+        this.order.push({ messageId: e.messageId });
+        const stale = [...this.messages.values()].at(-1 - RECENT_PREVIEWS);
+        if (stale)
+          for (const item of stale.blocks.values())
+            item.text = item.args = "";
+      }
+    } else if (e.kind === "message-start" && e.role === "tool-result") {
+      const tool = e.resultCallId ? this.tools.get(e.resultCallId) : undefined;
+      if (tool)
+        tool.resultMessageId = e.messageId;
+    } else if (e.kind === "thinking-activity") {
+      const item = this.block(e.messageId, e.index, "thinking");
+      if (item)
+        item.state = e.phase === "active" ? "streaming" : e.phase === "complete" ? "completed" : "unavailable";
+      activity2(e.phase === "active" ? "thinking" : "waiting");
+    } else if (e.kind === "call-declaration") {
+      const tool = this.tool(e.callId);
+      const item = this.block(e.declaration.messageId, e.index, "tool");
+      if (item && item !== tool.item) {
+        const { id, renderId } = item;
+        Object.assign(item, tool.item, { id, renderId });
+        tool.item = item;
+      }
+      tool.item.name = clipText(sanitizeText(e.name, this.secrets()), 128);
+    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
+      const tool = this.tool(e.callId);
+      tool.item.name = clipText(sanitizeText(e.name, this.secrets()), 128);
+      if (!e.declaration && !this.order.some((row) => ("callId" in row) && row.callId === e.callId))
+        this.order.push({ callId: e.callId });
+      tool.item.state = e.kind === "tool-start" ? "running" : e.isError ? "failed" : "completed";
+      if (e.kind === "tool-end")
+        tool.item.error = e.isError;
+      activity2(e.kind === "tool-start" ? "tool" : "waiting", e.kind === "tool-start" ? tool.item.name : undefined);
+    } else if (e.kind === "tool-update") {
+      activity2("tool", this.tool(e.callId).item.name);
+    } else if (e.kind === "detail-begin") {
+      const o = e.descriptor.owner;
+      if (o.kind === "context" || o.kind === "handoff" || o.kind === "message-final")
+        return;
+      if (this.details.size >= 64)
+        return;
+      this.details.set(e.detailId, {
+        descriptor: e.descriptor,
+        sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
+        text: ""
+      });
+      if (o.kind === "message")
+        this.block(o.messageId, o.index, "assistant");
+    } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
+      const d = this.details.get(e.detailId);
+      if (!d)
+        return;
+      const added = e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
+      if (Buffer.byteLength(d.text) <= PREVIEW_BYTES)
+        d.text += added;
+      const o = d.descriptor.owner;
+      if (o.kind === "message" && (o.stage === "stream" || e.kind === "detail-end")) {
+        const item = this.block(o.messageId, o.index, "assistant");
+        if (item) {
+          item.text = this.bounded(d.text);
+          activity2("text");
+        }
+      } else if (o.kind === "tool" && e.kind === "detail-end") {
+        const tool = this.tool(o.callId).item;
+        if (o.stage === "execution-arguments" || o.stage === "arguments-final")
+          tool.args = this.bounded(d.text);
+        if (o.stage === "result" || o.stage === "update-snapshot") {
+          let text2 = d.text;
+          if (d.descriptor.encoding === "canonical-json") {
+            try {
+              const value = JSON.parse(d.text);
+              text2 = Array.isArray(value.content) ? value.content.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text).join(`
+
+`) : "";
+            } catch {}
+          }
+          tool.text = this.bounded(text2);
+        }
+      }
+      if (e.kind === "detail-end")
+        this.details.delete(e.detailId);
+    } else if (e.kind === "message-end") {
+      const message2 = this.messages.get(e.messageId);
+      if (message2) {
+        message2.ended = true;
+        for (const [index, item] of message2.blocks) {
+          if (index >= e.finalBlockCount && item.role !== "thinking") {
+            message2.blocks.delete(index);
+            continue;
+          }
+          if (item.role === "assistant") {
+            item.error = ["error", "aborted", "length"].includes(e.stopReason);
+            item.state = e.stopReason === "aborted" ? "canceled" : item.error ? "failed" : "completed";
+          } else if (item.role === "thinking" && (item.state === "streaming" || ["error", "aborted"].includes(e.stopReason)))
+            item.state = "unavailable";
+          else if (item.role === "tool" && item.state === "pending" && ["error", "aborted", "length"].includes(e.stopReason))
+            item.state = e.stopReason === "aborted" ? "canceled" : "unavailable";
+        }
+        activity2("waiting");
+      }
+    } else if (e.kind === "model-retry") {
+      this.retry = e.progress ?? undefined;
+      activity2("waiting");
+    } else if (e.kind === "worker-failure") {
+      this.retry = undefined;
+      this.notice = `worker-failure: ${e.code}`;
+      for (const message2 of this.messages.values())
+        for (const item of message2.blocks.values())
+          if (["streaming", "running", "pending"].includes(item.state ?? ""))
+            item.state = "unavailable";
+      for (const { item } of this.tools.values())
+        if (["running", "pending"].includes(item.state ?? ""))
+          item.state = "unavailable";
+      activity2("waiting");
+    } else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff" && !(this.inputImages && e.block.sourceType === "image" && e.block.owner.kind === "message" && e.block.owner.messageId === this.imageUser)) {
+      this.omitted[OMITTED_FLAG[e.block.reason]] = true;
+    }
+  }
+  extend(items, earlier = [], writtenMessages = []) {
+    const out = items.map((item) => ({ ...item }));
+    const written = new Set(writtenMessages);
+    const previous = new Set(earlier.map((item) => item.renderId));
+    const changing = out.findIndex((item) => ["pending", "running", "streaming"].includes(item.state ?? ""));
+    let stable = changing < 0 ? out.length : changing;
+    for (const tool of this.tools.values()) {
+      const matches = out.filter((item2) => item2.role === "tool" && item2.renderId === tool.item.renderId);
+      if (matches.length !== 1)
+        continue;
+      const item = matches[0];
+      if (item.state !== "pending" && item.state !== "running")
+        continue;
+      item.text = tool.item.text;
+      item.args = tool.item.args || item.args;
+      item.state = tool.item.state;
+      item.error = tool.item.error;
+      stable = Math.min(stable, out.indexOf(item));
+    }
+    for (const row of this.order) {
+      if ("messageId" in row && written.has(row.messageId))
+        continue;
+      if ("callId" in row) {
+        const result = this.tools.get(row.callId)?.resultMessageId;
+        if (result && written.has(result))
+          continue;
+      }
+      const blocks = "messageId" in row ? [...this.messages.get(row.messageId)?.blocks.entries() ?? []].sort(([a], [b]) => a - b).map(([, item]) => item) : [this.tool(row.callId).item];
+      for (const item of blocks) {
+        if (previous.has(item.renderId) || out.some((existing) => existing.renderId === item.renderId))
+          continue;
+        stable = Math.min(stable, out.length);
+        out.push({ ...item });
+      }
+    }
+    return { items: out, stable };
+  }
+}
+
+class Conversations {
+  o;
+  records;
+  contexts;
+  active = new Map;
+  inputs = new Map;
+  renaming = new Set;
+  renames = new Map;
+  maySignal = () => {
+    try {
+      this.o.owner.lease.assert();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  activity() {
+    return [...this.active.values()].map((live2) => managedActivity({
+      id: live2.commandId,
+      source: "turn",
+      execution: live2.execution,
+      root: this.o.coordination.store.root,
+      epoch: live2.epoch,
+      now: Date.now(),
+      leaf: live2.accepted.parent,
+      phase: live2.abort.signal.aborted ? "stopping" : isLiveChatStatus(live2.state.status) ? live2.state.status : "settling"
+    }));
+  }
+  constructor(o) {
+    this.o = o;
+    this.records = new ConversationRecords({
+      ...o,
+      assertCurrent: () => o.owner.lease.assert(),
+      active: this.active,
+      inputs: this.inputs
+    });
+    this.contexts = o.contexts ?? new ConversationContexts({ ...o, sessions: this.records.sessions });
+  }
+  currentDirectory(cwd) {
+    const current2 = resolveWorkspace(cwd);
+    return current2.root === this.o.coordination.store.root && current2.cwd === cwd;
+  }
+  get files() {
+    return this.o.coordination.files;
+  }
+  write(path, value, max = META_BYTES2, expected) {
+    this.o.owner.lease.assert();
+    const source = canonicalJson(value, max);
+    try {
+      return expected ? this.files.replace(path, expected, source, max) : this.files.create(path, source, max);
+    } catch (error) {
+      this.o.owner.quarantine();
+      throw error;
+    }
+  }
+  bindControl(id) {
+    if (!this.records.controlBound(id))
+      this.write(this.records.controlPath(id), {
+        schema: "cadence-conversation-control/1",
+        conversationId: id
+      });
+  }
+  assertSettled() {
+    this.o.owner.lease.assert();
+    const sessions = join40(this.records.root, "sessions");
+    if (!this.files.directory(sessions))
+      return;
+    const dir = opendirSync14(sessions);
+    try {
+      for (let e = dir.readSync();e; e = dir.readSync()) {
+        if (!e.isFile() || !e.name.endsWith(".json"))
+          throw new ContractError("corrupt-selected");
+        const latest = this.records.index(decodeSessionId(e.name.slice(0, -5))).commands.at(-1);
+        if (latest && this.records.closureUnknown(latest))
+          throw new ContractError("quarantine");
+      }
+    } finally {
+      dir.closeSync();
+    }
+  }
+  attempted(conversationId, commandId) {
+    this.o.owner.lease.assert();
+    return this.active.has(commandId) || this.files.directory(dirname24(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
+  }
+  command(input, reply = false) {
+    return {
+      ...input,
+      text: reply ? "exit cadence" : sanitizeText(input.text, this.o.secrets())
+    };
+  }
+  receipt(input, reply = false) {
+    this.o.owner.lease.assert();
+    const prior = this.records.accepted(input.commandId);
+    if (!prior)
+      return;
+    if (canonicalJson(prior.command) !== canonicalJson(this.command(input, reply)))
+      throw new ContractError("conflict");
+    return { kind: "accepted", commandId: input.commandId };
+  }
+  send(input, control, beforeAccept, claimImages, afterAccept) {
+    this.o.owner.lease.assert();
+    const command = this.command(input, !!control?.reply);
+    const receipt = this.receipt(input, !!control?.reply);
+    if (receipt)
+      return receipt;
+    if (this.files.directory(dirname24(this.records.path(input.commandId, "state.json"))))
+      throw new ContractError("corrupt-selected");
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    if (input.model.conversation && input.model.conversation.id !== input.conversationId)
+      throw new ContractError("stale");
+    if (this.renaming.has(input.conversationId))
+      throw new ContractError("conflict");
+    const execution = this.contexts.capture(input.model, !!control?.reply);
+    const context = this.contexts.records.read({
+      id: input.conversationId,
+      cwd: execution.cwd
+    }).context;
+    if (context.cwd !== execution.cwd || !input.model.conversation && context.model)
+      throw new ContractError("stale");
+    this.records.sessions.directoryFor(execution.cwd);
+    if (this.records.liveFor(input.conversationId))
+      throw new ContractError("conflict");
+    const index = this.records.index(input.conversationId);
+    const session = this.records.sessions.session(input.conversationId);
+    if (input.head !== null && !session?.byId.has(input.head))
+      throw new ContractError("stale");
+    if (this.active.size >= 8)
+      throw new ContractError("capacity");
+    if (!input.text.trim() && !input.images?.length)
+      throw new ContractError("invalid");
+    if (input.images?.length && (!claimImages || control?.reply))
+      throw new ContractError("invalid");
+    if (input.images?.length && !this.o.models.catalog().entries.some((m) => m.provider === execution.model?.provider && m.model === execution.model?.model && m.images))
+      throw new ContractError("unsupported-context");
+    const space = statfsSync3(this.o.coordination.directory);
+    if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
+      throw new ContractError("capacity");
+    const listed = session ? this.records.sessions.find(input.conversationId) : undefined;
+    const accepted2 = {
+      execution,
+      directory: this.records.sessions.directoryFor(execution.cwd),
+      file: listed?.path ?? null,
+      command,
+      at: Date.now(),
+      session: input.conversationId,
+      parent: input.head,
+      offset: session?.read?.size ?? 0
+    };
+    const runtime = control?.reply || !execution.model ? undefined : this.o.models.workerSettings(execution.cwd, execution.model);
+    const abort = new AbortController;
+    let begin;
+    const ready2 = new Promise((resolve14) => {
+      begin = resolve14;
+    });
+    const live2 = {
+      coordinator: !!control,
+      inputs: [],
+      worker: null,
+      ready: false,
+      ended: !!control?.reply,
+      runtime,
+      images: claimImages?.() ?? [],
+      execution,
+      accepted: accepted2,
+      commandId: input.commandId,
+      epoch: input.model.epoch,
+      title: listed ? summaryTitle(listed.summary) : [...command.text.trim()].slice(0, 100).join("") || "Conversation",
+      state: {
+        status: control ? "queued" : "starting",
+        notice: "",
+        omitted: { thinking: false, media: false, other: false },
+        user: null
+      },
+      stateFile: null,
+      capture: null,
+      abort,
+      original: ready2.then(() => this.run(live2, control))
+    };
+    beforeAccept?.();
+    this.active.set(input.commandId, live2);
+    this.o.owner.trackConversation(live2.original, () => abort.abort({
+      source: "service",
+      reason: "stop",
+      target: input.commandId
+    }));
+    try {
+      this.write(this.records.path(input.commandId, "accepted.json"), accepted2);
+      live2.stateFile = this.write(this.records.path(input.commandId, "state.json"), live2.state);
+      this.write(this.records.indexPath(input.conversationId), {
+        schema: "cadence-session-commands/1",
+        id: input.conversationId,
+        commands: [...index.commands, input.commandId].slice(-INDEXED_COMMANDS)
+      }, META_BYTES2, index.file);
+      control?.accept();
+      afterAccept?.();
+    } catch (error) {
+      abort.abort();
+      begin();
+      throw error;
+    }
+    begin();
+    return { kind: "accepted", commandId: input.commandId };
+  }
+  running(request3) {
+    const live2 = this.active.get(request3.turnId);
+    if (!live2)
+      throw new ContractError(this.records.hasCommand(request3.conversationId, request3.turnId) ? "stale" : "invalid");
+    if (live2.accepted.session !== request3.conversationId || live2.epoch !== request3.epoch)
+      throw new ContractError("stale");
+    return live2;
+  }
+  dispatch(live2) {
+    if (!live2.ready || !live2.worker)
+      return;
+    for (const input of live2.inputs)
+      if (!input.sent && !input.withdrawn)
+        input.sent = live2.worker({
+          kind: "input",
+          id: input.commandId,
+          mode: input.accepted.command.mode,
+          text: input.accepted.command.text
+        });
+  }
+  input(request3, coordinator, beforeAccept) {
+    this.o.owner.lease.assert();
+    const command = this.command(request3);
+    const receipt = this.receipt(request3);
+    if (receipt)
+      return receipt;
+    if (this.files.directory(dirname24(this.records.path(request3.commandId, "state.json"))))
+      throw new ContractError("corrupt-selected");
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const live2 = this.running(request3);
+    if (live2.abort.signal.aborted || live2.ended)
+      throw new ContractError("stale");
+    if (live2.coordinator !== coordinator)
+      throw new ContractError("conflict");
+    if (!command.text.trim())
+      throw new ContractError("invalid");
+    const session = this.records.sessions.session(request3.conversationId);
+    if (live2.inputs.length >= RUN_INPUTS || live2.inputs.filter((input2) => !input2.withdrawn && !session?.delivered(input2.commandId)).length >= WAITING_INPUTS)
+      throw new ContractError("capacity");
+    const space = statfsSync3(this.o.coordination.directory);
+    if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
+      throw new ContractError("capacity");
+    const index = this.records.index(request3.conversationId);
+    const accepted2 = {
+      execution: live2.accepted.execution,
+      directory: live2.accepted.directory,
+      file: live2.accepted.file,
+      command,
+      at: Date.now(),
+      session: request3.conversationId,
+      parent: null,
+      offset: session?.read?.size ?? 0
+    };
+    const state = {
+      status: "queued",
+      notice: "",
+      omitted: { thinking: false, media: false, other: false },
+      user: null
+    };
+    beforeAccept?.();
+    this.write(this.records.path(request3.commandId, "accepted.json"), accepted2);
+    const input = {
+      commandId: request3.commandId,
+      accepted: accepted2,
+      state,
+      stateFile: this.write(this.records.path(request3.commandId, "state.json"), state),
+      sent: false,
+      withdrawn: false
+    };
+    this.write(this.records.indexPath(request3.conversationId), {
+      schema: "cadence-session-commands/1",
+      id: request3.conversationId,
+      commands: [...index.commands, request3.commandId].slice(-INDEXED_COMMANDS)
+    }, META_BYTES2, index.file);
+    live2.inputs.push(input);
+    this.inputs.set(input.commandId, input);
+    this.dispatch(live2);
+    return { kind: "accepted", commandId: request3.commandId };
+  }
+  withdraw(input) {
+    const state = {
+      ...input.state,
+      status: "canceled",
+      notice: WITHDRAWN
+    };
+    input.stateFile = this.write(this.records.path(input.commandId, "state.json"), state, META_BYTES2, input.stateFile);
+    input.state = state;
+    input.withdrawn = true;
+  }
+  cancelInput(request3) {
+    this.o.owner.lease.assert();
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const live2 = this.running(request3);
+    const input = live2.inputs.find((i) => i.commandId === request3.inputId);
+    if (!input)
+      throw new ContractError("invalid");
+    const accepted2 = {
+      kind: "accepted",
+      commandId: request3.commandId
+    };
+    if (input.withdrawn)
+      return accepted2;
+    if (!input.sent) {
+      this.withdraw(input);
+      return accepted2;
+    }
+    let waiting = input.withdrawal;
+    if (!waiting) {
+      let answer;
+      const result = new Promise((resolve14, reject) => {
+        answer = (removed) => {
+          input.withdrawal = undefined;
+          try {
+            if (!removed)
+              throw new ContractError("conflict");
+            this.withdraw(input);
+            resolve14();
+          } catch (error) {
+            reject(error);
+          }
+        };
+      });
+      result.catch(() => {});
+      waiting = input.withdrawal = { result, answer };
+      if (live2.ended || !live2.worker?.({ kind: "input-cancel", id: input.commandId }))
+        answer(false);
+    }
+    return waiting.result.then(() => accepted2);
+  }
+  rename(request3) {
+    this.o.owner.lease.assert();
+    const identity2 = canonicalJson(request3), id = request3.conversationId;
+    const prior = this.renames.get(request3.commandId);
+    if (prior) {
+      if (prior.identity !== identity2)
+        throw new ContractError("conflict");
+      return prior.result;
+    }
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    this.records.assertSupported(id);
+    if (sanitizeText(request3.name, this.o.secrets()) !== request3.name)
+      throw new ContractError("forbidden");
+    const listed = this.records.sessions.find(id);
+    if (!listed)
+      throw new ContractError("stale");
+    if (this.records.liveFor(id) || this.renaming.has(id))
+      throw new ContractError("conflict");
+    if (this.renaming.size >= RENAMES)
+      throw new ContractError("capacity");
+    const abort = new AbortController;
+    const closed2 = Promise.resolve().then(() => renameSession({
+      id,
+      dir: dirname24(listed.path),
+      file: listed.path,
+      cwd: listed.summary.cwd,
+      name: request3.name
+    }, abort.signal, this.maySignal)).catch(() => {
+      return;
+    });
+    const receipt = {
+      identity: identity2,
+      pending: true,
+      result: closed2.then((run) => {
+        this.renaming.delete(id);
+        receipt.pending = false;
+        if (run?.outcome !== "completed")
+          throw new ContractError("unavailable");
+        if (this.records.sessions.find(id)?.summary.name !== (request3.name || null))
+          throw new ContractError("receipt-inconclusive");
+        return { kind: "accepted", commandId: request3.commandId };
+      })
+    };
+    receipt.result.catch(() => {});
+    try {
+      this.o.owner.trackConversation(closed2.then((run) => ({
+        status: run && !run.closed ? "uncertain" : "settled"
+      })), () => abort.abort({
+        source: "service",
+        reason: "stop",
+        target: request3.commandId
+      }));
+    } catch (error) {
+      abort.abort();
+      throw error;
+    }
+    this.renaming.add(id);
+    this.renames.set(request3.commandId, receipt);
+    for (const [commandId, kept] of this.renames) {
+      if (this.renames.size <= RENAME_RECEIPTS)
+        break;
+      if (!kept.pending)
+        this.renames.delete(commandId);
+    }
+    return receipt.result;
+  }
+  archive(request3) {
+    this.o.owner.lease.assert();
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const id = request3.conversationId, path = this.records.archivePath(id);
+    const current2 = this.files.read(path);
+    if (request3.archived && !current2) {
+      if (!this.records.sessions.find(id))
+        throw new ContractError("stale");
+      this.write(path, {
+        schema: "cadence-conversation-archive/1",
+        id,
+        at: Date.now()
+      });
+    } else if (!request3.archived && current2) {
+      try {
+        this.files.remove(path, current2);
+      } catch (error) {
+        this.o.owner.quarantine();
+        throw error;
+      }
+    }
+    return { kind: "accepted", commandId: request3.commandId };
+  }
+  interrupt(id, turnId, epoch) {
+    this.o.owner.lease.assert();
+    const live2 = this.active.get(turnId);
+    if (live2) {
+      if (live2.accepted.session !== id || live2.epoch !== epoch)
+        throw new ContractError("stale");
+      live2.abort.abort({ source: "user", reason: "cancel", target: turnId });
+      return;
+    }
+    if (!this.records.hasCommand(id, turnId))
+      throw new ContractError("invalid");
+  }
+  async run(live2, control) {
+    const { accepted: accepted2, abort, state } = live2;
+    const commandId = live2.commandId;
+    let authSettled;
+    let uncertain = false;
+    let native = {
+      outcome: "failed",
+      closure: "not-launched",
+      exitCode: null,
+      signal: null,
+      durationMs: 0,
+      stdin: "not-required",
+      final: "missing",
+      cleanup: "settled",
+      capture: {
+        observed: "incomplete",
+        source: "unavailable",
+        redacted: false,
+        omissions: ["gap"]
+      }
+    };
+    const current2 = () => !abort.signal.aborted && this.o.owner.state === "idle" && this.currentDirectory(live2.execution.cwd);
+    try {
+      this.o.owner.lease.assert();
+      if (!current2())
+        throw new ContractError("stale");
+      if (control?.reply) {
+        state.status = "completed";
+        state.notice = control.reply;
+        return { status: "settled" };
+      }
+      const selected2 = live2.execution.model;
+      if (!selected2)
+        throw new ContractError("stale");
+      this.o.models.assertCurrent(selected2);
+      const instructions = control ? control.instructions : "Ordinary conversation.";
+      const context = control ? control.context ? control.context(live2.execution) : conversationContextLine(live2.execution) : "";
+      const request3 = decodeWorkerPublicRequest({
+        protocol: 2,
+        taskId: randomUUID26(),
+        taskKind: control ? "research" : "code",
+        runId: commandId,
+        childRunId: randomUUID26(),
+        assignmentId: "conversation",
+        purpose: control ? "research" : "edit",
+        model: selected2,
+        role: {
+          role: control ? "design-explorer" : "implementation-worker",
+          sha256: hash(instructions)
+        },
+        context,
+        instructions,
+        prompt: accepted2.command.text,
+        ...live2.images?.length ? { imageCount: live2.images.length } : {},
+        handoff: { graphRevision: 1, inputs: [] }
+      });
+      const auth = this.o.models.prepareTracked({
+        runtime: live2.runtime,
+        request: request3,
+        cwd: live2.execution.cwd,
+        operationId: randomUUID26(),
+        epoch: live2.epoch,
+        signal: abort.signal,
+        current: current2,
+        journal: {
+          preparation: (value) => this.write(this.records.path(commandId, `auth/${value.operationId}-intent.json`), value),
+          settlement: (value) => this.write(this.records.path(commandId, `auth/${value.operationId}-settled.json`), value)
+        }
+      });
+      authSettled = auth.settled;
+      const prepared = await auth.result;
+      if (prepared.status !== "prepared" || !current2())
+        throw new ContractError("auth-unavailable");
+      state.status = "running";
+      this.save(live2);
+      this.write(this.records.path(commandId, "launch.json"), {
+        epoch: live2.epoch,
+        childRunId: request3.childRunId,
+        runtime: live2.runtime ? describeWorkerRuntime(live2.runtime) : null
+      });
+      let credentials = [];
+      const capture = new LiveCapture(() => [...this.records.readSecrets(), ...credentials], !!live2.images?.length);
+      live2.capture = capture;
+      const existing = this.records.sessions.find(accepted2.session);
+      if ((existing?.path ?? null) !== accepted2.file)
+        throw new ContractError("stale");
+      const running = Promise.resolve().then(() => launchConversation(prepared.prepared, {
+        session: {
+          id: accepted2.session,
+          dir: accepted2.directory,
+          file: existing?.path ?? null,
+          head: accepted2.parent
+        },
+        agentDir: this.o.agentDir,
+        ...control ? { coordinator: true } : {}
+      }, abort.signal, {
+        images: live2.images,
+        ownerSecrets: this.o.secrets,
+        onCoordinator: control?.onTool,
+        inputs: {
+          open: (send2) => {
+            live2.worker = send2;
+          },
+          withdrawn: (id, removed) => live2.inputs.find((input) => input.commandId === id)?.withdrawal?.answer(removed)
+        },
+        maySignal: this.maySignal,
+        onNative: (value) => {
+          native = value;
+        },
+        onFrame: (frame, secrets) => {
+          credentials = secrets;
+          capture.accept(frame);
+          if (frame.event.kind === "ready") {
+            live2.ready = true;
+            this.dispatch(live2);
+          } else if (frame.event.kind === "final")
+            live2.ended = true;
+        }
+      }));
+      const tracked = running.then(() => native);
+      this.o.owner.trackConversationProcess(tracked, () => abort.abort({ source: "service", reason: "stop", target: commandId }));
+      const result = await running;
+      live2.ended = true;
+      capture.retry = undefined;
+      uncertain = !result.closed;
+      state.status = result.outcome;
+      if (result.stop)
+        state.notice = `${result.stop.source}: ${result.stop.reason} (${result.stop.target})`;
+    } catch (error) {
+      uncertain ||= this.o.owner.state === "quarantined";
+      state.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
+      state.notice ||= error instanceof ContractError ? error.code : "Conversation failed.";
+    } finally {
+      live2.ended = true;
+      live2.worker = null;
+      for (const input of live2.inputs)
+        input.withdrawal?.answer(false);
+      await control?.settle();
+      await authSettled;
+      uncertain ||= this.o.owner.state === "quarantined";
+      if (uncertain)
+        state.status = "unknown";
+      if (abort.signal.aborted && abort.signal.reason?.source)
+        state.notice = `${abort.signal.reason.source}: ${abort.signal.reason.reason} (${commandId})${state.notice ? `; ${state.notice}` : ""}`;
+      try {
+        this.write(this.records.path(commandId, "native.json"), native);
+        if (live2.capture) {
+          live2.capture.retry = undefined;
+          if (state.status !== "completed")
+            state.notice ||= live2.capture.notice;
+        }
+        this.settle(live2, uncertain);
+      } catch {
+        uncertain = true;
+      }
+      if (uncertain)
+        this.o.owner.quarantine();
+      for (const input of live2.inputs)
+        this.inputs.delete(input.commandId);
+      this.active.delete(commandId);
+    }
+    return { status: uncertain ? "uncertain" : "settled" };
+  }
+  save(live2) {
+    if (!live2.stateFile)
+      throw new ContractError("corrupt-selected");
+    live2.stateFile = this.write(this.records.path(live2.commandId, "state.json"), live2.state, META_BYTES2, live2.stateFile);
+  }
+  settle(live2, uncertain) {
+    const { accepted: accepted2, commandId } = live2;
+    const inputs = live2.inputs.filter((input) => !input.withdrawn);
+    let parts;
+    try {
+      parts = this.records.sessions.session(accepted2.session)?.runEntries({ commandId, parent: accepted2.parent, offset: accepted2.offset }, inputs.map((input) => ({
+        commandId: input.commandId,
+        offset: input.accepted.offset
+      }))) ?? [];
+    } catch {}
+    const outcome = { status: live2.state.status, notice: live2.state.notice };
+    const newest = parts?.at(-1)?.commandId ?? commandId;
+    for (const message2 of [live2, ...inputs]) {
+      const at2 = parts?.findIndex((part2) => part2.commandId === message2.commandId) ?? -1;
+      const part = parts?.[at2];
+      const ended = uncertain ? { status: "unknown", notice: outcome.notice } : message2.commandId === newest ? outcome : part ? { status: replyStatus(part.entries), notice: "" } : parts ? { status: "canceled", notice: NOT_DELIVERED } : { status: "failed", notice: UNOBSERVED };
+      Object.assign(message2.state, ended, {
+        user: part?.entries[0]?.id ?? null
+      });
+      const given = message2 === live2 ? 0 : at2;
+      if (live2.capture && given >= 0)
+        message2.state.omitted = { ...live2.capture.omittedFor(given) };
+    }
+    for (const input of inputs)
+      input.stateFile = this.write(this.records.path(input.commandId, "state.json"), input.state, META_BYTES2, input.stateFile);
+    this.save(live2);
+  }
+}
+
 // src/service/workflows.ts
 import { randomUUID as randomUUID28 } from "node:crypto";
 import { opendirSync as opendirSync16, realpathSync as realpathSync15, statfsSync as statfsSync4 } from "node:fs";
-import { basename as basename6, dirname as dirname27, join as join43, relative as relative13, resolve as resolve16 } from "node:path";
+import { basename as basename6, dirname as dirname27, join as join44, relative as relative13, resolve as resolve16 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // src/task-diff.ts
@@ -35566,6 +36066,183 @@ class WorkflowTranscript {
 
 // src/service/workflow-controller.ts
 var RECOVERY_BYTES = 32768;
+var ROUTE_PLAN_BYTES = 65536;
+var PLAN_OBJECTIONS = 2;
+
+class InvalidRoute extends Error {
+}
+function decodeRoutePlan(reply, options = {}) {
+  const secrets = options.secrets ?? [];
+  function refuse3(message2) {
+    throw new InvalidRoute(message2);
+  }
+  const noControl = (label2, value) => {
+    if ([...value].some((c) => c.charCodeAt(0) < 32 && c !== `
+` && c !== "\t" || c.charCodeAt(0) === 127 || /[\u202a-\u202e\u2066-\u2069]/u.test(c)))
+      refuse3(`${label2} contains an invisible control character (only newline and tab are accepted)`);
+  };
+  const clean = (label2, value, maximum) => {
+    let raw;
+    try {
+      raw = text(value, maximum, true);
+    } catch {
+      refuse3(`${label2} must be non-empty text of at most ${maximum} bytes`);
+    }
+    noControl(label2, raw);
+    try {
+      return text(sanitizeText(raw, secrets), maximum, true);
+    } catch {
+      refuse3(`${label2} exceeds ${maximum} bytes after sanitization`);
+    }
+  };
+  const sanitizeReadings = (items, label2) => items.map((r, j) => {
+    noControl(`${label2}[${j}].reason`, r.reason);
+    if ("research" in r)
+      return {
+        research: r.research,
+        reason: clean(`${label2}[${j}].reason`, r.reason, 512)
+      };
+    if (sanitizeText(r.path, secrets) !== r.path)
+      refuse3(`${label2}[${j}].path names protected text`);
+    if (r.section)
+      noControl(`${label2}[${j}].section`, r.section);
+    return {
+      path: r.path,
+      ...r.section ? { section: clean(`${label2}[${j}].section`, r.section, 256) } : {},
+      reason: clean(`${label2}[${j}].reason`, r.reason, 512)
+    };
+  });
+  try {
+    const raw = extractJsonObject(reply, ROUTE_PLAN_BYTES);
+    const has = (key3) => Object.hasOwn(raw ?? {}, key3);
+    const actionRaw = has("action") ? oneOf(raw.action, ["plan", "blocked"]) : "plan";
+    if (actionRaw === "blocked") {
+      const o2 = closed(raw, ["action", "reason"]);
+      return {
+        action: "blocked",
+        tasks: [],
+        reviewReads: [],
+        documents: [],
+        reason: clean("reason", o2.reason, 4096)
+      };
+    }
+    const o = closed(raw, [
+      "tasks",
+      ...["action", "reviewReads", "documents"].filter(has)
+    ]);
+    const tasks = list(o.tasks, WORKFLOW_LIMITS.tasks, (entry) => entry).map((entry, index) => {
+      const prefix = `tasks[${index}]`;
+      const hasField = (key3) => Object.hasOwn(entry ?? {}, key3);
+      const t = closed(entry, [
+        "id",
+        "title",
+        "instructions",
+        "writes",
+        ...["after", "reads"].filter(hasField)
+      ]);
+      let id = "";
+      try {
+        id = workflowTaskId(t.id);
+      } catch {
+        refuse3(`${prefix}.id must be lowercase letters, digits and hyphens, starting with a letter, at most 48 characters`);
+      }
+      const writes = list(t.writes, 128, (p) => p).map((p, j) => {
+        let normalized;
+        try {
+          normalized = workflowPath(p, true);
+        } catch (error) {
+          refuse3(`${prefix}.writes[${j}]: ${error instanceof Error ? error.message : "invalid path"}`);
+        }
+        if (!workflowBoundary(normalized))
+          refuse3(`${prefix}.writes[${j}] (${normalized}) cannot target credentials, keys, .env, .git or paths outside the repository`);
+        if (normalized === ".cadence" || normalized.startsWith(".cadence/"))
+          refuse3(`${prefix}.writes[${j}] (${normalized}) is managed automatically under .cadence/ and must not be listed in task writes`);
+        if (sanitizeText(normalized, secrets) !== normalized)
+          refuse3(`${prefix}.writes[${j}] names protected text`);
+        return normalized;
+      });
+      if (!writes.length)
+        refuse3(`${prefix}.writes needs at least one repository-relative path`);
+      if (new Set(writes).size !== writes.length)
+        refuse3(`${prefix}.writes lists a path twice`);
+      const after = hasField("after") ? list(t.after, WORKFLOW_LIMITS.tasks, (dep) => dep).map((dep, j) => {
+        try {
+          return workflowTaskId(dep);
+        } catch {
+          return refuse3(`${prefix}.after[${j}] is not a valid assignment id`);
+        }
+      }) : [];
+      if (new Set(after).size !== after.length)
+        refuse3(`${prefix}.after lists an assignment twice`);
+      const reads = hasField("reads") ? sanitizeReadings(decodeWorkflowReadings(t.reads, true, `${prefix}.reads`), `${prefix}.reads`) : [];
+      return {
+        id,
+        title: clean(`${prefix}.title`, t.title, 256),
+        instructions: clean(`${prefix}.instructions`, t.instructions, 8192),
+        writes,
+        after,
+        reads
+      };
+    });
+    if (!tasks.length)
+      refuse3("tasks needs at least one assignment");
+    const ids = tasks.map((t) => t.id);
+    for (const [i, t] of tasks.entries()) {
+      if (ids.indexOf(t.id) !== i)
+        refuse3(`tasks[${i}].id (${t.id}) is already used by tasks[${ids.indexOf(t.id)}]`);
+      const unknown = t.after.find((dep) => !ids.includes(dep));
+      if (unknown !== undefined)
+        refuse3(`tasks[${i}].after names "${unknown}", which is not in tasks`);
+    }
+    try {
+      workflowOrder(tasks);
+    } catch {
+      refuse3("tasks after dependencies form a cycle");
+    }
+    const reviewReads = has("reviewReads") ? sanitizeReadings(decodeWorkflowReadings(o.reviewReads, true, "reviewReads"), "reviewReads") : [];
+    const documents = has("documents") ? list(o.documents, 16, (entry) => entry).map((entry, j) => {
+      let doc;
+      try {
+        doc = workflowPath(entry, true);
+      } catch (error) {
+        refuse3(`documents[${j}]: ${error instanceof Error ? error.message : "invalid path"}`);
+      }
+      if (!doc.endsWith(".md"))
+        refuse3(`documents[${j}] (${doc}) must be a Markdown file (.md)`);
+      if (doc === ".cadence" || doc.startsWith(".cadence/"))
+        refuse3(`documents[${j}] (${doc}) is managed automatically under .cadence/ and must not be listed in documents`);
+      if (!workflowBoundary(doc) || sanitizeText(doc, secrets) !== doc)
+        refuse3(`documents[${j}] (${doc}) is outside the write boundary`);
+      return doc;
+    }) : [];
+    if (new Set(documents).size !== documents.length)
+      refuse3("documents lists a path twice");
+    const allWrites = [
+      ...new Set([
+        ...tasks.flatMap((t) => t.writes),
+        ...documents,
+        ...options.agreementDocuments ?? [],
+        ...options.buildOutputs ?? []
+      ])
+    ];
+    const scopeBytes = utf8Bytes(allWrites.join(", "));
+    if (scopeBytes > 16384)
+      refuse3(`combined write paths (${scopeBytes} bytes) exceed the 16384-byte limit`);
+    return {
+      action: "plan",
+      tasks,
+      reviewReads,
+      documents,
+      reason: ""
+    };
+  } catch (error) {
+    if (error instanceof InvalidRoute)
+      throw error;
+    if (error instanceof WorkflowInputError)
+      throw new InvalidRoute(error.message);
+    throw new InvalidRoute(error instanceof Error && error.message ? error.message : "The route plan reply was not the requested JSON object");
+  }
+}
 
 class AttemptFailure extends Error {
   steps;
@@ -35673,9 +36350,9 @@ function revisedRoute(current2, route) {
   }
   return { superseded: [...route.drop], rewritten, added };
 }
-function recoveryObject(reply) {
-  if (Buffer.byteLength(reply) > RECOVERY_BYTES)
-    throw new Error("Recovery reply exceeds its byte bound");
+function extractJsonObject(reply, maxBytes = RECOVERY_BYTES) {
+  if (Buffer.byteLength(reply) > maxBytes)
+    throw new Error("Structured JSON reply exceeds its byte bound");
   let start = -1, depth = 0, brackets = 0, quoted3 = false, escaped = false, found = false;
   let value;
   for (let i = 0;i < reply.length; i++) {
@@ -35703,13 +36380,13 @@ function recoveryObject(reply) {
         continue;
       }
       if (c === "}")
-        throw new Error("Unmatched recovery object delimiter");
+        throw new Error("Unmatched JSON object delimiter");
       if (c !== "{")
         continue;
       if (brackets)
-        throw new Error("Recovery must be an object, not an array");
+        throw new Error("Reply must be a JSON object, not an array");
       if (found)
-        throw new Error("Multiple recovery objects are ambiguous");
+        throw new Error("Multiple JSON objects are ambiguous");
       start = i;
       depth = 1;
     } else if (quoted3) {
@@ -35724,13 +36401,16 @@ function recoveryObject(reply) {
     else if (c === "{")
       depth++;
     else if (c === "}" && --depth === 0) {
-      value = parseWireJson(reply.slice(start, i + 1), RECOVERY_BYTES);
+      value = parseWireJson(reply.slice(start, i + 1), maxBytes);
       found = true;
     }
   }
   if (!found || depth !== 0)
-    throw new Error("Incomplete recovery object");
+    throw new Error("Incomplete JSON object");
   return value;
+}
+function recoveryObject(reply) {
+  return extractJsonObject(reply, RECOVERY_BYTES);
 }
 function decodeRecoveryDecision(reply, bounds, secrets = []) {
   const refuse3 = (message2) => {
@@ -36834,6 +37514,7 @@ class WorkflowHistoryScanner {
 import {
   existsSync as existsSync5,
   lstatSync as lstatSync28,
+  readdirSync as readdirSync6,
   readlinkSync as readlinkSync3,
   realpathSync as realpathSync14,
   rmdirSync as rmdirSync2,
@@ -36841,7 +37522,7 @@ import {
   symlinkSync,
   unlinkSync as unlinkSync4
 } from "node:fs";
-import { dirname as dirname26, relative as relative12, resolve as resolve15 } from "node:path";
+import { dirname as dirname26, join as join43, relative as relative12, resolve as resolve15 } from "node:path";
 var isEnoent = (error) => error instanceof Error && ("code" in error) && (error.code === "ENOENT" || error.code === "ENOTDIR");
 function normalizeWindowsLinkTarget(target2) {
   let normalized = target2.replace(/^\\\\\?\\/u, "");
@@ -36853,6 +37534,76 @@ function sameLinkTarget(observed, expected, platform = process.platform) {
   if (platform !== "win32")
     return observed === expected;
   return normalizeWindowsLinkTarget(observed) === normalizeWindowsLinkTarget(expected);
+}
+function discoverManagedLinks(checkoutRoot, writes = []) {
+  const realRoot = realpathSync14(checkoutRoot);
+  try {
+    if (gitRead(realRoot, ["rev-parse", "--is-inside-work-tree"]).trim() !== "true")
+      return [];
+  } catch {
+    return [];
+  }
+  const MAX_DEPTH = 2;
+  const MAX_DIRS = 64;
+  const MAX_DIR_ENTRIES = 8192;
+  const queue = [
+    { dir: realRoot, prefix: "", depth: 0 }
+  ];
+  const found = [];
+  let dirs = 0;
+  while (queue.length && found.length < WORKFLOW_LIMITS.links) {
+    const current2 = queue.shift();
+    let entries3;
+    try {
+      entries3 = readdirSync6(current2.dir, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    } catch {
+      continue;
+    }
+    let dirEntries = 0;
+    for (const entry of entries3) {
+      if (++dirEntries > MAX_DIR_ENTRIES)
+        break;
+      const name = entry.name;
+      if (name.startsWith("."))
+        continue;
+      if (!entry.isDirectory())
+        continue;
+      const full = join43(current2.dir, name);
+      const rel = current2.prefix ? `${current2.prefix}/${name}` : name;
+      let st;
+      try {
+        st = lstatSync28(full);
+      } catch {
+        continue;
+      }
+      if (st.isSymbolicLink() || !st.isDirectory())
+        continue;
+      if (name === "node_modules") {
+        try {
+          workflowPath(rel, true);
+          if (!workflowBoundary(rel))
+            continue;
+          if (workflowCovers(writes, rel) || writes.some((w) => workflowCovers([rel], w)))
+            continue;
+          if (gitRead(realRoot, ["ls-files", "--", rel]).trim().length > 0)
+            continue;
+          if (gitAnswer(realRoot, ["check-ignore", "--", rel]) === null)
+            continue;
+          found.push({ path: rel, placement: "worktree" });
+          if (found.length >= WORKFLOW_LIMITS.links)
+            break;
+        } catch {}
+        continue;
+      }
+      if (current2.depth < MAX_DEPTH && dirs < MAX_DIRS) {
+        if (existsSync5(join43(full, ".git")))
+          continue;
+        dirs++;
+        queue.push({ dir: full, prefix: rel, depth: current2.depth + 1 });
+      }
+    }
+  }
+  return found.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }
 function validateManagedLinks(checkoutRoot, links, writes) {
   if (!links.length)
@@ -37456,7 +38207,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.2",
-  build: "fb0852d081bd45dbd3eb938b49acf5f69c7c481c47b64aeaa753e4ba9d0ee01d",
+  build: "72aae8c0978e8ef8c7aad4fb08954c1860d75563b66f440d02d6da3c4d194a69",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -37558,12 +38309,12 @@ class Workflows {
   constructor(o) {
     this.o = o;
     this.contexts = o.contexts ?? new ConversationContexts(o);
-    this.root = join43(o.coordination.directory, "workflows-v1");
+    this.root = join44(o.coordination.directory, "workflows-v1");
     this.cwd = realpathSync15(o.coordination.store.root);
-    this.worktreeRoot = join43(o.coordination.stateHome, "cadence-worktrees-v1", basename6(o.coordination.store.privateRoot));
-    this.historyScanner = new WorkflowHistoryScanner(join43(this.root, "runs"), () => {
+    this.worktreeRoot = join44(o.coordination.stateHome, "cadence-worktrees-v1", basename6(o.coordination.store.privateRoot));
+    this.historyScanner = new WorkflowHistoryScanner(join44(this.root, "runs"), () => {
       this.o.owner.lease.assert();
-      return this.files.directory(join43(this.root, "runs"));
+      return this.files.directory(join44(this.root, "runs"));
     });
     this.recover();
   }
@@ -37571,7 +38322,7 @@ class Workflows {
     return this.o.coordination.files;
   }
   path(id, name) {
-    return join43(this.root, "runs", decodeId(id), name);
+    return join44(this.root, "runs", decodeId(id), name);
   }
   write(path, value, expected, max = RECORD_BYTES3) {
     this.o.owner.lease.assert();
@@ -37593,7 +38344,7 @@ class Workflows {
 `), 2048, this.o.secrets());
   }
   recover() {
-    const runs = join43(this.root, "runs");
+    const runs = join44(this.root, "runs");
     if (!this.files.directory(runs))
       return;
     const ids = [];
@@ -37756,7 +38507,7 @@ class Workflows {
     if (plan.delivery === "local-merge" && plan.links?.length)
       validateManagedLinks(this.cwd, plan.links, workflowWrites(plan));
     const delivery = plan.delivery === "local-merge" ? {
-      policy: plan.version === 4 ? "task-branch-v2" : "task-branch-v1",
+      policy: plan.version === 4 || plan.version === 5 ? "task-branch-v2" : "task-branch-v1",
       target: deliveryTarget(this.cwd, source)
     } : undefined;
     return {
@@ -37772,7 +38523,7 @@ class Workflows {
     };
   }
   proposal(id) {
-    const file = this.files.read(join43(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES3);
+    const file = this.files.read(join44(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES3);
     if (!file)
       throw new ContractError("unavailable");
     return decodeWorkflowProposal(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3));
@@ -37791,9 +38542,19 @@ class Workflows {
   publishProposal(commandId, input, model2, effect, revalidatedFrom) {
     this.floor();
     const secrets = this.o.secrets();
-    const plan = decodeWorkflowPlan(JSON.parse(sanitizeData(input, secrets)), {
+    const sanitized = decodeWorkflowPlan(JSON.parse(sanitizeData(input, secrets)), {
       strict: true
     });
+    if (!revalidatedFrom) {
+      for (const [i, id] of (sanitized.investigations ?? []).entries()) {
+        if (!this.investigated(id))
+          throw new WorkflowRefusal("invalid", `investigations[${i}]: "${id}" is not a recorded investigation in this project`);
+      }
+    }
+    const plan = sanitized.version === 5 && sanitized.links === undefined ? {
+      ...sanitized,
+      links: sanitized.delivery === "local-merge" && !sanitized.policy?.installs ? discoverManagedLinks(this.cwd, workflowWrites(sanitized)).filter((l) => sanitizeText(l.path, secrets) === l.path) : []
+    } : sanitized;
     const selected2 = this.model(model2);
     const cwd = this.contexts.capture(model2).cwd;
     const runtime = unattendedRuntime(this.o.models.workerSettings(cwd, selected2));
@@ -37818,7 +38579,7 @@ class Workflows {
     };
     if (sanitizeData(p, secrets) !== canonicalJson(p))
       throw new ContractError("forbidden");
-    const target2 = join43(this.root, "proposals", `${decodeId(commandId)}.json`);
+    const target2 = join44(this.root, "proposals", `${decodeId(commandId)}.json`);
     const previous = this.files.read(target2, RECORD_BYTES3);
     if (previous) {
       if (previous.bytes.toString("utf8") !== canonicalJson(p))
@@ -38055,8 +38816,8 @@ class Workflows {
     if (action === "prepare")
       return [...this.grants.values()].some((g) => g.commandId === id && g.expiresAt >= Date.now());
     if (action === "propose")
-      return !!this.files.read(join43(this.root, "proposals", `${id}.json`), RECORD_BYTES3);
-    return this.files.directory(join43(this.root, "runs", id));
+      return !!this.files.read(join44(this.root, "proposals", `${id}.json`), RECORD_BYTES3);
+    return this.files.directory(join44(this.root, "runs", id));
   }
   admit(commandId, epoch, r, effect) {
     this.current();
@@ -38163,7 +38924,7 @@ class Workflows {
         }
       },
       status: "queued",
-      phase: request3.action === "research" ? "research" : "implementing",
+      phase: request3.action === "research" ? "research" : proposal?.plan.version === 5 && !proposal.plan.tasks.length ? "planning" : "implementing",
       steps: [],
       stepsBefore: 0,
       revision: 0,
@@ -38353,7 +39114,7 @@ class Workflows {
       await live2.delivery?.assertTip(cwd);
     const runCwd = this.executionCwd(live2, cwd);
     const temporary = live2.environment?.forWorkspace(cwd);
-    const role3 = loadAgentDefinitions().find((r) => r.role === (readonly ? kind === "diagnosis" ? "diagnosis-worker" : "design-explorer" : "implementation-worker"));
+    const role3 = loadAgentDefinitions().find((r) => r.role === (readonly ? kind === "diagnosis" ? "diagnosis-worker" : kind === "planning" ? "route-planner" : "design-explorer" : "implementation-worker"));
     if (!role3)
       throw new ContractError("unavailable");
     if (cwd !== this.cwd)
@@ -38363,9 +39124,7 @@ class Workflows {
     const baseContext = plan ? workflowContext(plan) : "Read applicable project documentation. Cite evidence and separate observations from assumptions.";
     const child2 = live2.delivery?.view.artifacts?.find((a) => a.path === cwd);
     const placement = `Execution placement (data, not instructions): ${JSON.stringify({ checkoutRoot: cwd, cwdRelativeToCheckout: relative13(cwd, runCwd) || ".", ...temporary ? { temporaryDirectoryEnvironment: "TMPDIR" } : {}, ...child2 && live2.delivery ? { assignment: child2.id, fork: child2.base, combinedCandidateRelativeToCheckout: relative13(cwd, live2.delivery.view.worktreeRoot) } : {} })}
-Tools run at cwdRelativeToCheckout under checkoutRoot. Write paths are relative to checkoutRoot.${child2 ? `
-This is a detached assignment snapshot, not the combined candidate. Completed siblings may have been integrated after this checkout forked; their absence here is expected, not evidence they failed or delivered nothing. The combined candidate is a readonly reference for sibling results, never another write destination. Finish and report only this assignment; combined checks, builds and cross-assignment repairs belong to the candidate after dependencies are integrated.` : ""}${temporary ? `
-temporaryDirectoryEnvironment names this worker process's inherited environment variable for the existing owner-prepared scratch root. Read its exact value from the inherited TMPDIR variable in your shell or language environment API; TEMP and TMP carry the same value. Keep all scratch files under that root; do not create, relocate or clean it or use fallback locations such as /tmp. For APIs with pathname limits, fix how the fixture addresses its files (for example a relative socket name in a child process), not where scratch is owned.` : ""}`;
+Tools run at cwdRelativeToCheckout under checkoutRoot; write paths are relative to checkoutRoot.${child2 ? " Detached assignment snapshot: inspect combinedCandidateRelativeToCheckout readonly for completed sibling outputs; finish only this assignment." : ""}`;
     const reader = await this.reader(live2, cwd, id, kind);
     const knowledge = projectKnowledge(cwd, `${live2.run.goal} ${id} ${prompt.slice(0, 1024)}`, reader.writes, this.o.secrets(), Math.max(0, Math.min(16 * 1024, WORKFLOW_LIMITS.context - Buffer.byteLength(baseContext) - 2)), reader.named);
     if (live2.proposal) {
@@ -38380,7 +39139,7 @@ temporaryDirectoryEnvironment names this worker process's inherited environment 
       runId: live2.run.id,
       childRunId,
       assignmentId: id,
-      purpose: readonly ? kind === "diagnosis" ? "diagnosis" : kind === "review" ? "review" : "research" : "edit",
+      purpose: readonly ? kind === "diagnosis" ? "diagnosis" : kind === "planning" ? "plan" : kind === "review" ? "review" : "research" : "edit",
       ...readonly && kind === "review" && live2.run.delivery?.candidate ? {
         changes: {
           root: cwd,
@@ -38395,8 +39154,8 @@ temporaryDirectoryEnvironment names this worker process's inherited environment 
 
 ${knowledge.text}` : baseContext,
       instructions: `${role3.content}
-${placement}
-Read applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, restart the workflow, mutate Git, install dependencies, publish or deploy. The owner handles recovery; preserve partial work and report actionable remaining gaps. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification. There is no total runtime deadline. Continue naturally; report a blocked assignment only for a concrete missing condition, preserving completed outputs and actionable remaining work. Do not duplicate the entire acceptance pipeline inside one worker.`,
+
+${placement}`,
       prompt: text(prompt, 32768, true),
       handoff: { graphRevision: 1, inputs: [] }
     });
@@ -38545,13 +39304,13 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
           completed.truncated ||= !report2;
         } else {
           const secrets = [...this.o.secrets(), ...credentials];
-          const finalBytes = kind === "diagnosis" ? RECOVERY_BYTES : 16384;
+          const finalBytes = kind === "diagnosis" ? RECOVERY_BYTES : kind === "planning" ? ROUTE_PLAN_BYTES : 16384;
           if (!readonly && !report2)
             report2 = implementationReport(selected2, secrets);
           let final = report2 ? canonicalJson(report2, RECORD_BYTES3) : sanitizeText(selected2, secrets);
-          if (kind === "diagnosis") {
+          if (kind === "diagnosis" || kind === "planning") {
             try {
-              final = sanitizeData(parseWireJson(selected2.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, "$1"), RECOVERY_BYTES), secrets);
+              final = sanitizeData(extractJsonObject(selected2, finalBytes), secrets);
             } catch {}
           }
           if (kind === "review") {
@@ -38612,7 +39371,7 @@ Partial work is preserved.`);
       args: shell ? process.platform === "win32" ? ["/d", "/s", "/c", `"${operation.check.command}"`] : ["-c", operation.check.command] : gitArguments([
         "--no-lazy-fetch",
         "-c",
-        `core.hooksPath=${join43(this.root, "empty-hooks")}`,
+        `core.hooksPath=${join44(this.root, "empty-hooks")}`,
         "-c",
         "commit.gpgsign=false",
         "-c",
@@ -39029,8 +39788,11 @@ ${IMPLEMENTATION_REPORT}`, PROMPT_BYTES);
     const p = live2.proposal;
     if (!p)
       return { writes: [], named: {} };
-    const task = kind === "implementation" ? (live2.route?.tasks ?? p.plan.tasks).find((t) => t.id === id) : undefined;
-    const reads = kind === "review" ? p.plan.reviewReads ?? [] : task?.reads ?? [];
+    const task = kind === "implementation" ? (live2.route?.tasks ?? live2.planned?.tasks ?? p.plan.tasks).find((t) => t.id === id) : undefined;
+    const reads = kind === "review" ? [...p.plan.reviewReads ?? [], ...live2.planned?.reviewReads ?? []] : kind === "planning" ? (p.plan.investigations ?? []).map((research) => ({
+      research,
+      reason: "Recorded investigation linked by the delivery agreement"
+    })) : task?.reads ?? [];
     const extra = [];
     for (const reading of reads)
       if ("research" in reading) {
@@ -39042,7 +39804,7 @@ ${IMPLEMENTATION_REPORT}`, PROMPT_BYTES);
         });
       }
     return {
-      writes: task ? live2.owned?.get(cwd) ?? task.writes : this.scope(live2, p),
+      writes: task ? live2.owned?.get(cwd) ?? task.writes : kind === "planning" ? [...new Set([...this.scope(live2, p), ...p.plan.areas ?? []])] : this.scope(live2, p),
       named: { reads, extra }
     };
   }
@@ -39068,7 +39830,7 @@ ${IMPLEMENTATION_REPORT}`, PROMPT_BYTES);
     };
   }
   investigationPath(id) {
-    return join43(this.root, "investigations", `${decodeId(id)}.json`);
+    return join44(this.root, "investigations", `${decodeId(id)}.json`);
   }
   recordedInvestigation(id) {
     try {
@@ -39126,7 +39888,7 @@ This recorded investigation is out of date: ${changed.slice(0, 8).join(", ")}${c
 ${moved}${record3.answer}`;
   }
   questionPath(question, roots2) {
-    return join43(this.root, "investigations", "questions", `${questionKey(question, roots2)}.json`);
+    return join44(this.root, "investigations", "questions", `${questionKey(question, roots2)}.json`);
   }
   answered(question, roots2) {
     try {
@@ -39696,7 +40458,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`;
   }
   knowledgeTurn(live2, lint) {
     const topics = lint.usage.topics.map((t) => t.path);
-    const path = join43(this.root, "knowledge-use.json");
+    const path = join44(this.root, "knowledge-use.json");
     try {
       const file = this.files.read(path, RECORD_BYTES3);
       const next = advanceKnowledgeUse(file ? decodeKnowledgeUse(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3)) : null, { routes: lint.routes, topics }, live2.routed ?? []);
@@ -39711,8 +40473,13 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`;
   }
   async learn(live2, cwd, p) {
     live2.knowledgeWrote = false;
-    const documents = workflowDocuments(p.plan);
-    const managed = (p.plan.version === 3 || p.plan.version === 4) && await this.storeDeliverable(live2);
+    const documents = [
+      ...new Set([
+        ...workflowDocuments(p.plan),
+        ...live2.planned?.documents ?? []
+      ])
+    ];
+    const managed = (p.plan.version === 3 || p.plan.version === 4 || p.plan.version === 5) && await this.storeDeliverable(live2);
     if (!documents.length && !managed)
       return;
     live2.managed = managed;
@@ -39937,8 +40704,130 @@ ${result.output}`}`);
       throw error;
     }
   }
+  async planRoute(live2, integration, p) {
+    const plan = p.plan;
+    live2.run.phase = "planning";
+    this.save(live2);
+    const limit = live2.delivery ? Math.max(1, this.o.parallel ?? PARALLEL.default) : 1;
+    const agreementDocs = workflowDocuments(plan);
+    const buildOutputs = (plan.build ?? []).flatMap((b) => b.outputs);
+    const linkPaths = (plan.links ?? []).map((l) => l.path);
+    const baseSections = [
+      `Plan the execution route for this approved delivery agreement in ${integration}.`,
+      `Delivery mode: ${plan.delivery}. Parallel worker limit: ${limit}.`,
+      plan.areas?.length ? `Advisory focus areas: ${plan.areas.join(", ")}` : "",
+      agreementDocs.length ? `Agreement documents to update: ${agreementDocs.join(", ")}` : "",
+      plan.build?.length ? `Declared builds (owner runs after edits; outputs: ${buildOutputs.join(", ")}): ${plan.build.map((b) => `${b.name} (${b.command})`).join("; ")}` : "",
+      `Declared acceptance checks (owner runs after edits): ${plan.checks.map((c) => `${c.name}: ${c.command}`).join("; ")}`,
+      linkPaths.length ? `Owner-managed dependency links (MUST NOT appear in task writes): ${linkPaths.join(", ")}` : "",
+      plan.investigations?.length ? `Recorded investigations already injected into context (you may cite their UUIDs in reads/reviewReads): ${plan.investigations.join(", ")}` : "",
+      `Reply with ONLY a single raw JSON object (no surrounding prose, markdown or code snippets) matching:
+{"tasks":[{"id":"short-slug","title":"...","instructions":"...","writes":["path/to/file"],"after":[],"reads":[{"path":"...","reason":"..."}]}],"reviewReads":[{"path":"...","reason":"..."}],"documents":[]}
+Or, if the agreement cannot be fulfilled inside the repository:
+{"action":"blocked","reason":"Concrete evidence-based explanation"}`
+    ].filter(Boolean).join(`
+`);
+    let objection;
+    for (let attempt2 = 0;; attempt2++) {
+      this.assertRunning(live2);
+      const prompt = this.boundedPrompt(baseSections, objection ? `
+
+Your previous route plan could not be accepted; fix this exact issue and reply with the complete JSON object:
+${objection}` : "", "", PROMPT_BYTES);
+      const { result, step } = await this.worker(live2, integration, attempt2 === 0 ? "route-plan" : `route-plan-${attempt2 + 1}`, prompt, true, p.model, undefined, "planning");
+      this.success(result, step);
+      try {
+        const route = decodeRoutePlan(result.text, {
+          secrets: this.o.secrets(),
+          agreementDocuments: agreementDocs,
+          buildOutputs
+        });
+        if (route.action === "blocked") {
+          step.status = "blocked";
+          step.text = diagnosticText(route.reason, 1024, this.o.secrets());
+          this.save(live2);
+          throw new WorkflowFailure("failed", `Route planning blocked: ${route.reason}`, step.id);
+        }
+        const allReadings = [
+          ...route.tasks.flatMap((t) => (t.reads ?? []).map((r, i) => ({
+            label: `task ${t.id} reads[${i}]`,
+            reading: r
+          }))),
+          ...route.reviewReads.map((r, i) => ({
+            label: `reviewReads[${i}]`,
+            reading: r
+          }))
+        ];
+        for (const { label: label2, reading } of allReadings) {
+          if ("research" in reading && !this.investigated(reading.research))
+            throw new InvalidRoute(`${label2} references "${reading.research}", which is not a recorded investigation in this project`);
+        }
+        const plannedWrites = [
+          ...new Set([
+            ...route.tasks.flatMap((t) => t.writes),
+            ...route.documents,
+            ...workflowWrites(plan)
+          ])
+        ];
+        if (linkPaths.length) {
+          const linkOverlap = plannedWrites.filter((w) => workflowCovers(linkPaths, w) || linkPaths.some((l) => workflowCovers([w], l)));
+          if (linkOverlap.length)
+            throw new InvalidRoute(`Planned write paths overlap owner-managed dependency links (${linkPaths.join(", ")}): ${linkOverlap.join(", ")}`);
+        }
+        if (plan.delivery === "local-merge" && plannedWrites.length) {
+          const ignored = await gitRun(integration, [
+            "check-ignore",
+            "--",
+            ...plannedWrites
+          ]);
+          if (ignored.code === 0) {
+            const matched = ignored.stdout.split(`
+`).map((line) => line.trim()).filter(Boolean);
+            throw new InvalidRoute(`Planned write paths are ignored by Git and cannot be delivered by local merge: ${(matched.length ? matched : plannedWrites).slice(0, 16).join(", ")}`);
+          }
+          if (ignored.code !== 1)
+            throw new WorkflowRefusal("unavailable", `Could not check Git ignore rules for planned write paths (git check-ignore exited ${ignored.code}).`);
+          if (live2.target) {
+            const { branch, head: base } = live2.target;
+            const frontier = live2.delivery?.frontierHead() ?? base;
+            await assertTarget(this.cwd, { branch, head: frontier }, plannedWrites, "route planning");
+            if (base !== frontier) {
+              await this.assertSiblingScope(branch, base, frontier, plannedWrites, "route planning");
+              this.assertGuidance(live2);
+            }
+          }
+        }
+        this.write(this.path(live2.run.id, "route.json"), {
+          version: 1,
+          ...route
+        });
+        live2.planned = {
+          tasks: route.tasks,
+          reviewReads: route.reviewReads,
+          documents: route.documents
+        };
+        live2.run.scope = [
+          ...new Set([...live2.run.scope ?? [], ...plannedWrites])
+        ];
+        live2.run.tasks = workflowOrder(route.tasks).map((t) => ({
+          id: t.id,
+          title: t.title,
+          after: [...t.after],
+          state: "queued"
+        }));
+        this.save(live2);
+        return;
+      } catch (error) {
+        if (!(error instanceof InvalidRoute))
+          throw error;
+        if (attempt2 >= PLAN_OBJECTIONS)
+          throw new WorkflowFailure("failed", `Route planning could not produce a valid route after ${attempt2 + 1} attempts: ${error.message}`, step.id);
+        objection = error.message;
+      }
+    }
+  }
   async assignments(live2, integration, p) {
-    const tasks = workflowOrder(p.plan.tasks);
+    const tasks = workflowOrder(live2.planned?.tasks ?? p.plan.tasks);
     const delivery = live2.delivery;
     const limit = delivery ? Math.max(1, this.o.parallel ?? PARALLEL.default) : 1;
     const states = new Map(tasks.map((t) => [
@@ -40288,6 +41177,8 @@ ${result.output}`}`);
       await this.unchangedHead(integration, base);
       await assertWorkflowScope(integration, this.scope(live2, p), this.confirmedLinks(live2, integration));
     }
+    if (!plan.tasks.length)
+      await this.planRoute(live2, integration, p);
     await this.assignments(live2, integration, p);
     if (plan.checks.some((c) => (c.tier ?? "fast") === "fast") && plan.checks.some((c) => c.tier === "heavy")) {
       await this.verifyAndRepair(live2, integration, p, git, [], {
@@ -40630,7 +41521,7 @@ class Workbench {
       files: this.files
     });
     this.conversations.assertSettled();
-    this.projectRoot = join44(o.coordination.files.namespace, "workbench-projects-v1");
+    this.projectRoot = join45(o.coordination.files.namespace, "workbench-projects-v1");
   }
   activityReaderScope() {
     return activityReaderScope(this.o.agentDir, this.o.sessionDir);
@@ -40811,7 +41702,7 @@ class Workbench {
       for (let e = directory2.readSync();e; e = directory2.readSync()) {
         if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries3.length > 128)
           throw new ContractError("corrupt-selected");
-        const saved = files.read(join44(this.projectRoot, e.name));
+        const saved = files.read(join45(this.projectRoot, e.name));
         if (!saved)
           throw new ContractError("corrupt-selected");
         const row = closed(parseWireJson(saved.bytes.toString("utf8")), [
@@ -40911,7 +41802,7 @@ class Workbench {
     if (this.opening.size >= 64)
       throw new ContractError("capacity");
     const path = this.files.directory(request3.path);
-    const marker2 = join44(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
+    const marker2 = join45(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
     const files = this.o.coordination.files;
     if (files.read(marker2))
       throw new ContractError("receipt-inconclusive");
@@ -40929,7 +41820,7 @@ class Workbench {
       }
       const opened = await openProjectDirectory(path, this.o.coordination.stateHome, this.o.agentDir, this.o.hostUrl);
       for (const root of [this.o.cwd, opened.path]) {
-        const entry = join44(this.projectRoot, `${hash(root)}.json`);
+        const entry = join45(this.projectRoot, `${hash(root)}.json`);
         const saved = files.read(entry);
         if (!saved)
           files.create(entry, canonicalJson({ path: root }));
@@ -40965,9 +41856,11 @@ async function predecessorExited() {
 async function healBeforeStart(c) {
   await predecessorExited();
   const registry = new RegistryHealer(c);
-  const lock = await registry.heal();
-  if (lock.status === "blocked" || lock.status === "live")
-    throw new ContractError("registry-locked");
+  await waitForRegistry(c, async () => {
+    const lock = await registry.heal();
+    if (lock.status === "blocked" || lock.status === "live")
+      throw new ContractError("registry-locked");
+  });
   await registry.sweep();
   const own3 = await healProject(c, { responsive: async () => true });
   if (own3.status === "blocked")
@@ -40997,7 +41890,7 @@ function legacy(store, budget, reader) {
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join45(store.tasks, entry.name, "task.json");
+      const path = join46(store.tasks, entry.name, "task.json");
       const size3 = lstatSync29(path).size;
       if (size3 > 128 * 1024)
         throw new ContractError("corrupt-selected");
@@ -41051,7 +41944,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "357ec2a35ad5176d65a389498be689f7d453e9b48c3e998e5a0d171bc49e4feb";
+  const embedded = "ccf4728f55f59f55de234c1ff1a5f3e19cc86f0053579142b02d72e3d45b9667";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
@@ -41104,7 +41997,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       ...input.config,
       http: { ...input.config.http, port: Number(new URL(endpoint2).port) }
     };
-    const lease = c.acquire({
+    const lease = await waitForRegistry(c, () => c.acquire({
       schema: "cadence-service-owner-config/1",
       endpoint: endpoint2,
       policyIdentity: hash(encoded(resolved))
@@ -41116,7 +42009,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
         throw new ContractError("conflict");
       AccessMaterial.reselect(c.files, c.directory, source);
       c.files.replace(c.path("host-config.json"), previous, encoded(resolved));
-    } : undefined);
+    } : undefined));
     let writer, live2;
     let workbench = null;
     const ledger = new ProcessLedger(c.files).open(lease.registration.epoch);

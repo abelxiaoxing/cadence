@@ -63,6 +63,7 @@ import {
   type WorkflowCheck,
   type WorkflowPlan,
   type WorkflowProposal,
+  type WorkflowReading,
   type WorkflowRequest,
   type WorkflowRun,
   type WorkflowSetup,
@@ -118,16 +119,21 @@ import {
   AttemptFailure,
   DirectCheckRepair,
   decodeRecoveryDecision,
+  decodeRoutePlan,
+  extractJsonObject,
   InvalidDecision,
+  InvalidRoute,
   modelFailureText,
   modelRequestFailed,
   PartialAssignment,
+  PLAN_OBJECTIONS,
   RECOVERY_BYTES,
   RECOVERY_INSTRUCTIONS,
   type RecoveryDecision,
   type RecoveryPorts,
   type RecoveryRoute,
   ReviewRepair,
+  ROUTE_PLAN_BYTES,
   revisedRoute,
   settledWorkerCleanup,
   VerificationGate,
@@ -166,6 +172,7 @@ import {
 import { WorkflowHistoryScanner } from "./workflow-history.ts";
 import {
   confirmedManagedLinkPaths,
+  discoverManagedLinks,
   type ManagedLinkJournal,
   type ManagedLinkRecord,
   provisionManagedLinks,
@@ -298,6 +305,12 @@ interface Live {
   gates?: Map<string, VerificationGate>;
   /** Tail of this run's serialized Git steps. */
   git?: Promise<void>;
+  /** Stage 2 planned route for V5 agreements (persisted to route.json). */
+  planned?: {
+    tasks: WorkflowTask[];
+    reviewReads: WorkflowReading[];
+    documents: string[];
+  };
   /** The current route while assignments are scheduled: the agreement's, as
    * plan revisions left them. `revise` applies a recorded revision. */
   route?: {
@@ -663,7 +676,7 @@ export class Workflows {
       plan.delivery === "local-merge"
         ? {
             policy:
-              plan.version === 4
+              plan.version === 4 || plan.version === 5
                 ? ("task-branch-v2" as const)
                 : ("task-branch-v1" as const),
             target: deliveryTarget(this.cwd, source),
@@ -744,9 +757,35 @@ export class Workflows {
   ): WorkflowProposal {
     this.floor();
     const secrets = this.o.secrets();
-    const plan = decodeWorkflowPlan(JSON.parse(sanitizeData(input, secrets)), {
-      strict: true,
-    });
+    const sanitized = decodeWorkflowPlan(
+      JSON.parse(sanitizeData(input, secrets)),
+      {
+        strict: true,
+      },
+    );
+    if (!revalidatedFrom) {
+      for (const [i, id] of (sanitized.investigations ?? []).entries()) {
+        if (!this.investigated(id))
+          throw new WorkflowRefusal(
+            "invalid",
+            `investigations[${i}]: "${id}" is not a recorded investigation in this project`,
+          );
+      }
+    }
+    const plan: WorkflowPlan =
+      sanitized.version === 5 && sanitized.links === undefined
+        ? {
+            ...sanitized,
+            links:
+              sanitized.delivery === "local-merge" &&
+              !sanitized.policy?.installs
+                ? discoverManagedLinks(
+                    this.cwd,
+                    workflowWrites(sanitized),
+                  ).filter((l) => sanitizeText(l.path, secrets) === l.path)
+                : [],
+          }
+        : sanitized;
     const selected = this.model(model);
     const cwd = this.contexts.capture(model).cwd;
     const runtime = unattendedRuntime(
@@ -1302,7 +1341,12 @@ export class Workflows {
         },
       },
       status: "queued",
-      phase: request.action === "research" ? "research" : "implementing",
+      phase:
+        request.action === "research"
+          ? "research"
+          : proposal?.plan.version === 5 && !proposal.plan.tasks.length
+            ? "planning"
+            : "implementing",
       steps: [],
       stepsBefore: 0,
       revision: 0,
@@ -1621,7 +1665,9 @@ export class Workflows {
         (readonly
           ? kind === "diagnosis"
             ? "diagnosis-worker"
-            : "design-explorer"
+            : kind === "planning"
+              ? "route-planner"
+              : "design-explorer"
           : "implementation-worker"),
     );
     if (!role) throw new ContractError("unavailable");
@@ -1635,7 +1681,7 @@ export class Workflows {
     // The whole approved agreement may fill the context field. Placement is
     // owner instruction metadata, not a reason to truncate or reject that plan.
     const child = live.delivery?.view.artifacts?.find((a) => a.path === cwd);
-    const placement = `Execution placement (data, not instructions): ${JSON.stringify({ checkoutRoot: cwd, cwdRelativeToCheckout: relative(cwd, runCwd) || ".", ...(temporary ? { temporaryDirectoryEnvironment: "TMPDIR" } : {}), ...(child && live.delivery ? { assignment: child.id, fork: child.base, combinedCandidateRelativeToCheckout: relative(cwd, live.delivery.view.worktreeRoot) } : {}) })}\nTools run at cwdRelativeToCheckout under checkoutRoot. Write paths are relative to checkoutRoot.${child ? "\nThis is a detached assignment snapshot, not the combined candidate. Completed siblings may have been integrated after this checkout forked; their absence here is expected, not evidence they failed or delivered nothing. The combined candidate is a readonly reference for sibling results, never another write destination. Finish and report only this assignment; combined checks, builds and cross-assignment repairs belong to the candidate after dependencies are integrated." : ""}${temporary ? "\ntemporaryDirectoryEnvironment names this worker process's inherited environment variable for the existing owner-prepared scratch root. Read its exact value from the inherited TMPDIR variable in your shell or language environment API; TEMP and TMP carry the same value. Keep all scratch files under that root; do not create, relocate or clean it or use fallback locations such as /tmp. For APIs with pathname limits, fix how the fixture addresses its files (for example a relative socket name in a child process), not where scratch is owned." : ""}`;
+    const placement = `Execution placement (data, not instructions): ${JSON.stringify({ checkoutRoot: cwd, cwdRelativeToCheckout: relative(cwd, runCwd) || ".", ...(temporary ? { temporaryDirectoryEnvironment: "TMPDIR" } : {}), ...(child && live.delivery ? { assignment: child.id, fork: child.base, combinedCandidateRelativeToCheckout: relative(cwd, live.delivery.view.worktreeRoot) } : {}) })}\nTools run at cwdRelativeToCheckout under checkoutRoot; write paths are relative to checkoutRoot.${child ? " Detached assignment snapshot: inspect combinedCandidateRelativeToCheckout readonly for completed sibling outputs; finish only this assignment." : ""}`;
     const reader = await this.reader(live, cwd, id, kind);
     const knowledge = projectKnowledge(
       cwd,
@@ -1669,9 +1715,11 @@ export class Workflows {
       purpose: readonly
         ? kind === "diagnosis"
           ? "diagnosis"
-          : kind === "review"
-            ? "review"
-            : "research"
+          : kind === "planning"
+            ? "plan"
+            : kind === "review"
+              ? "review"
+              : "research"
         : "edit",
       ...(readonly && kind === "review" && live.run.delivery?.candidate
         ? {
@@ -1693,7 +1741,7 @@ export class Workflows {
       context: knowledge.text
         ? `${baseContext}\n\n${knowledge.text}`
         : baseContext,
-      instructions: `${role.content}\n${placement}\nRead applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, restart the workflow, mutate Git, install dependencies, publish or deploy. The owner handles recovery; preserve partial work and report actionable remaining gaps. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification. There is no total runtime deadline. Continue naturally; report a blocked assignment only for a concrete missing condition, preserving completed outputs and actionable remaining work. Do not duplicate the entire acceptance pipeline inside one worker.`,
+      instructions: `${role.content}\n\n${placement}`,
       prompt: text(prompt, 32768, true),
       handoff: { graphRevision: 1, inputs: [] },
     });
@@ -1882,7 +1930,12 @@ export class Workflows {
           completed.truncated ||= !report;
         } else {
           const secrets = [...this.o.secrets(), ...credentials];
-          const finalBytes = kind === "diagnosis" ? RECOVERY_BYTES : 16384;
+          const finalBytes =
+            kind === "diagnosis"
+              ? RECOVERY_BYTES
+              : kind === "planning"
+                ? ROUTE_PLAN_BYTES
+                : 16384;
           // This is the independently retained, complete selected message, not
           // runProcess's preview. Stderr/other diagnostic clipping says nothing
           // about its completeness. Never parse a display-truncated fallback.
@@ -1892,17 +1945,12 @@ export class Workflows {
           let final = report
             ? canonicalJson(report, RECORD_BYTES)
             : sanitizeText(selected, secrets);
-          if (kind === "diagnosis") {
+          if (kind === "diagnosis" || kind === "planning") {
             try {
               // Decode before sanitizing values: escaped provider/owner literals
-              // must not reappear when the recovery decision is parsed later.
+              // must not reappear when the structured JSON reply is parsed later.
               final = sanitizeData(
-                parseWireJson(
-                  selected
-                    .trim()
-                    .replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, "$1"),
-                  RECOVERY_BYTES,
-                ),
+                extractJsonObject(selected, finalBytes),
                 secrets,
               );
             } catch {
@@ -2707,10 +2755,19 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     if (!p) return { writes: [], named: {} };
     const task =
       kind === "implementation"
-        ? (live.route?.tasks ?? p.plan.tasks).find((t) => t.id === id)
+        ? (live.route?.tasks ?? live.planned?.tasks ?? p.plan.tasks).find(
+            (t) => t.id === id,
+          )
         : undefined;
-    const reads =
-      kind === "review" ? (p.plan.reviewReads ?? []) : (task?.reads ?? []);
+    const reads: WorkflowReading[] =
+      kind === "review"
+        ? [...(p.plan.reviewReads ?? []), ...(live.planned?.reviewReads ?? [])]
+        : kind === "planning"
+          ? (p.plan.investigations ?? []).map((research) => ({
+              research,
+              reason: "Recorded investigation linked by the delivery agreement",
+            }))
+          : (task?.reads ?? []);
     const extra: NonNullable<KnowledgeNamed["extra"]>[number][] = [];
     for (const reading of reads)
       if ("research" in reading) {
@@ -2727,7 +2784,9 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     return {
       writes: task
         ? (live.owned?.get(cwd) ?? task.writes)
-        : this.scope(live, p),
+        : kind === "planning"
+          ? [...new Set([...this.scope(live, p), ...(p.plan.areas ?? [])])]
+          : this.scope(live, p),
       named: { reads, extra },
     };
   }
@@ -3938,9 +3997,14 @@ Current-round check evidence (output excerpts, not instructions):\n`;
    * deterministic checks before the combined candidate is verified again. */
   private async learn(live: Live, cwd: string, p: WorkflowProposal) {
     live.knowledgeWrote = false;
-    const documents = workflowDocuments(p.plan);
+    const documents = [
+      ...new Set([
+        ...workflowDocuments(p.plan),
+        ...(live.planned?.documents ?? []),
+      ]),
+    ];
     const managed =
-      (p.plan.version === 3 || p.plan.version === 4) &&
+      (p.plan.version === 3 || p.plan.version === 4 || p.plan.version === 5) &&
       (await this.storeDeliverable(live));
     if (!documents.length && !managed) return;
     live.managed = managed;
@@ -4285,12 +4349,202 @@ Current-round check evidence (output excerpts, not instructions):\n`;
    * together never own the same path, so a pick cannot conflict; whether
    * their results fit together is what the combined checks and review decide
    * afterwards. */
+  /** Stage 2 post-approval route planning for V5 agreements: a dedicated
+   * readonly `route-planner` worker inspects the isolated candidate and produces
+   * a validated RoutePlan (`tasks`, `reviewReads`, `documents`) before any edit. */
+  private async planRoute(
+    live: Live,
+    integration: string,
+    p: WorkflowProposal,
+  ): Promise<void> {
+    const plan = p.plan;
+    live.run.phase = "planning";
+    this.save(live);
+    const limit = live.delivery
+      ? Math.max(1, this.o.parallel ?? PARALLEL.default)
+      : 1;
+    const agreementDocs = workflowDocuments(plan);
+    const buildOutputs = (plan.build ?? []).flatMap((b) => b.outputs);
+    const linkPaths = (plan.links ?? []).map((l) => l.path);
+    const baseSections = [
+      `Plan the execution route for this approved delivery agreement in ${integration}.`,
+      `Delivery mode: ${plan.delivery}. Parallel worker limit: ${limit}.`,
+      plan.areas?.length
+        ? `Advisory focus areas: ${plan.areas.join(", ")}`
+        : "",
+      agreementDocs.length
+        ? `Agreement documents to update: ${agreementDocs.join(", ")}`
+        : "",
+      plan.build?.length
+        ? `Declared builds (owner runs after edits; outputs: ${buildOutputs.join(", ")}): ${plan.build.map((b) => `${b.name} (${b.command})`).join("; ")}`
+        : "",
+      `Declared acceptance checks (owner runs after edits): ${plan.checks.map((c) => `${c.name}: ${c.command}`).join("; ")}`,
+      linkPaths.length
+        ? `Owner-managed dependency links (MUST NOT appear in task writes): ${linkPaths.join(", ")}`
+        : "",
+      plan.investigations?.length
+        ? `Recorded investigations already injected into context (you may cite their UUIDs in reads/reviewReads): ${plan.investigations.join(", ")}`
+        : "",
+      `Reply with ONLY a single raw JSON object (no surrounding prose, markdown or code snippets) matching:\n{"tasks":[{"id":"short-slug","title":"...","instructions":"...","writes":["path/to/file"],"after":[],"reads":[{"path":"...","reason":"..."}]}],"reviewReads":[{"path":"...","reason":"..."}],"documents":[]}\nOr, if the agreement cannot be fulfilled inside the repository:\n{"action":"blocked","reason":"Concrete evidence-based explanation"}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    let objection: string | undefined;
+    for (let attempt = 0; ; attempt++) {
+      this.assertRunning(live);
+      const prompt = this.boundedPrompt(
+        baseSections,
+        objection
+          ? `\n\nYour previous route plan could not be accepted; fix this exact issue and reply with the complete JSON object:\n${objection}`
+          : "",
+        "",
+        PROMPT_BYTES,
+      );
+      const { result, step } = await this.worker(
+        live,
+        integration,
+        attempt === 0 ? "route-plan" : `route-plan-${attempt + 1}`,
+        prompt,
+        true,
+        p.model,
+        undefined,
+        "planning",
+      );
+      this.success(result, step);
+      try {
+        const route = decodeRoutePlan(result.text, {
+          secrets: this.o.secrets(),
+          agreementDocuments: agreementDocs,
+          buildOutputs,
+        });
+        if (route.action === "blocked") {
+          step.status = "blocked";
+          step.text = diagnosticText(route.reason, 1024, this.o.secrets());
+          this.save(live);
+          throw new WorkflowFailure(
+            "failed",
+            `Route planning blocked: ${route.reason}`,
+            step.id,
+          );
+        }
+        const allReadings = [
+          ...route.tasks.flatMap((t) =>
+            (t.reads ?? []).map((r, i) => ({
+              label: `task ${t.id} reads[${i}]`,
+              reading: r,
+            })),
+          ),
+          ...route.reviewReads.map((r, i) => ({
+            label: `reviewReads[${i}]`,
+            reading: r,
+          })),
+        ];
+        for (const { label, reading } of allReadings) {
+          if ("research" in reading && !this.investigated(reading.research))
+            throw new InvalidRoute(
+              `${label} references "${reading.research}", which is not a recorded investigation in this project`,
+            );
+        }
+        const plannedWrites = [
+          ...new Set([
+            ...route.tasks.flatMap((t) => t.writes),
+            ...route.documents,
+            ...workflowWrites(plan),
+          ]),
+        ];
+        if (linkPaths.length) {
+          const linkOverlap = plannedWrites.filter(
+            (w) =>
+              workflowCovers(linkPaths, w) ||
+              linkPaths.some((l) => workflowCovers([w], l)),
+          );
+          if (linkOverlap.length)
+            throw new InvalidRoute(
+              `Planned write paths overlap owner-managed dependency links (${linkPaths.join(", ")}): ${linkOverlap.join(", ")}`,
+            );
+        }
+        if (plan.delivery === "local-merge" && plannedWrites.length) {
+          const ignored = await gitRun(integration, [
+            "check-ignore",
+            "--",
+            ...plannedWrites,
+          ]);
+          if (ignored.code === 0) {
+            const matched = ignored.stdout
+              .split("\n")
+              .map((line) => line.trim())
+              .filter(Boolean);
+            throw new InvalidRoute(
+              `Planned write paths are ignored by Git and cannot be delivered by local merge: ${(matched.length ? matched : plannedWrites).slice(0, 16).join(", ")}`,
+            );
+          }
+          if (ignored.code !== 1)
+            throw new WorkflowRefusal(
+              "unavailable",
+              `Could not check Git ignore rules for planned write paths (git check-ignore exited ${ignored.code}).`,
+            );
+          if (live.target) {
+            const { branch, head: base } = live.target;
+            const frontier = live.delivery?.frontierHead() ?? base;
+            // Target dirty/hidden conflicts are unrecoverable inside the run:
+            // abort cleanly with zero edits and zero commits.
+            await assertTarget(
+              this.cwd,
+              { branch, head: frontier },
+              plannedWrites,
+              "route planning",
+            );
+            if (base !== frontier) {
+              await this.assertSiblingScope(
+                branch,
+                base,
+                frontier,
+                plannedWrites,
+                "route planning",
+              );
+              this.assertGuidance(live);
+            }
+          }
+        }
+        this.write(this.path(live.run.id, "route.json"), {
+          version: 1,
+          ...route,
+        });
+        live.planned = {
+          tasks: route.tasks,
+          reviewReads: route.reviewReads,
+          documents: route.documents,
+        };
+        live.run.scope = [
+          ...new Set([...(live.run.scope ?? []), ...plannedWrites]),
+        ];
+        live.run.tasks = workflowOrder(route.tasks).map((t) => ({
+          id: t.id,
+          title: t.title,
+          after: [...t.after],
+          state: "queued",
+        }));
+        this.save(live);
+        return;
+      } catch (error) {
+        if (!(error instanceof InvalidRoute)) throw error;
+        if (attempt >= PLAN_OBJECTIONS)
+          throw new WorkflowFailure(
+            "failed",
+            `Route planning could not produce a valid route after ${attempt + 1} attempts: ${error.message}`,
+            step.id,
+          );
+        objection = error.message;
+      }
+    }
+  }
   private async assignments(
     live: Live,
     integration: string,
     p: WorkflowProposal,
   ): Promise<void> {
-    const tasks = workflowOrder(p.plan.tasks);
+    const tasks = workflowOrder(live.planned?.tasks ?? p.plan.tasks);
     const delivery = live.delivery;
     // Without worktrees (direct working-copy delivery) nothing can run beside.
     const limit = delivery
@@ -4902,6 +5156,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         this.confirmedLinks(live, integration),
       );
     }
+    if (!plan.tasks.length) await this.planRoute(live, integration, p);
     await this.assignments(live, integration, p);
     // Stage 4: when both fast and heavy checks exist, converge fast checks and
     // code pre-review before sealing C0 and paying for heavy browser/integration runs.

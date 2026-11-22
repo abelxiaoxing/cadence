@@ -159,7 +159,7 @@ export declare function parseWireJson(
 ): unknown;
 export declare function decodePublicError(v: unknown): PublicError;
 export type TaskKind = "code" | "research" | "diagnosis";
-export type Purpose = "research" | "diagnosis" | "review" | "edit";
+export type Purpose = "research" | "plan" | "diagnosis" | "review" | "edit";
 export type ExecutionOutcome =
   | "completed"
   | "failed"
@@ -225,7 +225,11 @@ export declare const thinkingLevels: readonly ModelSelection["thinking"][];
 export declare function decodeModelSelector(v: unknown): ModelSelector;
 export declare function decodeModelSelection(v: unknown): ModelSelection;
 export interface RoleSelection {
-  role: "design-explorer" | "implementation-worker" | "diagnosis-worker";
+  role:
+    | "design-explorer"
+    | "route-planner"
+    | "implementation-worker"
+    | "diagnosis-worker";
   sha256: string;
 }
 export declare function role(v: unknown): RoleSelection;

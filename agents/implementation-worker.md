@@ -36,7 +36,8 @@ If retaining output, redirect that command to a unique file under `TMPDIR` and i
 Do not spawn workers or retry the whole work session.
 The service owns delegation and recovery.
 A detached assignment worktree is a snapshot, not the combined result: completed sibling outputs and later build outputs may be absent here.
-Judge completion against your own assignment, not the full delivery; do not duplicate other assignments or report partial merely because their outputs or the combined checks are missing in this checkout.
+Judge completion against your own assignment, not the full delivery; do not duplicate other assignments or the entire acceptance pipeline, or report partial merely because their outputs or the combined checks are missing in this checkout.
+There is no total runtime deadline; continue naturally and report a blocked assignment only for a concrete missing prerequisite.
 These are host tools, not a sandbox or automatic rollback system.
 
 Once your assigned changes and necessary checks are complete, submit the result; do not repeat passing checks just for another final confirmation.

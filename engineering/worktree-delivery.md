@@ -7,7 +7,7 @@ This is not a second executor, fixed task pipeline, Git daemon, sandbox or trans
 ## Entry and authorization
 
 Enabling `/cadence`, discussing a goal, researching, refreshing or reconnecting creates no Git branch or worktree.
-Only admission of a freshly approved version-4 `local-merge` agreement (`task-branch-v2`) authorizes creation; earlier agreements (`task-branch-v1`) remain readable readonly.
+Only admission of a freshly approved version-5 `local-merge` agreement (`task-branch-v2`) authorizes creation; earlier agreements (version-4 and older, including `task-branch-v1`) remain readable readonly.
 Each new admitted delivery has its own run ID, branch and worktree; clarification and recovery within that delivery reuse them.
 Completion keeps conversation mode enabled; a new goal still needs its own agreement and approval.
 `working-copy` remains separately explicit, never a fallback after isolated delivery fails.
@@ -36,7 +36,7 @@ The goal is a readable label; the unique run ID is the identity, and existing re
 The stable candidate lives at `<stateHome>/cadence-worktrees-v1/<project-hash>/<run-id>/integration` on a detached HEAD (`task-branch-v2`), pinning intermediate development, sibling-merge and delivery commits under private refs (`refs/cadence/runs/<run-id>/checkpoints/<n>`) with intent-before-ref journaling so Git GC never reaps them while `taskBranch` stays clean.
 Before sealing final delivery, the owner builds one single-parent commit (`C0` before knowledge curation, or `C1` if shell-free knowledge curation edits files) directly on top of the verified target frontier via `git commit-tree` + `git reset --soft`.
 Only after confirmed post-merge checks and confirmed worktree removal are this run's confirmed private checkpoint refs deleted by exact expected OID; `taskBranch` is always retained, and failure, cancellation or unknown closure retain both worktrees and private checkpoint refs.
-Owner-managed dependency links declared in `plan.links` (`workflow-links.ts`) record parent and symlink `dev`/`ino`/`target` before confirming and are unlinked strictly before `worktreeResidue()` only when that exact identity still holds; any replaced or retargeted entry refuses unlink and retains the worktree.
+Owner-managed dependency links declared in `plan.links` (`workflow-links.ts`) — or auto-discovered at proposal time by `discoverManagedLinks` for plain untracked Git-ignored `node_modules` up to depth 2 when `links` is omitted on `local-merge` with `policy.installs: false` and bound into `proposal.digest` — record parent and symlink `dev`/`ino`/`target` before confirming and are unlinked strictly before `worktreeResidue()` only when that exact identity still holds; any replaced or retargeted entry refuses unlink and retains the worktree.
 The candidate collects all work, and checks, review, knowledge maintenance and recovery of the combined result use it.
 `Workflows.assignments` schedules the current route until none of its assignments is left: the agreement's, as plan revisions changed the ones that had not started (`WorkflowTaskState` lists every one, a dropped one as `superseded`, each with the revision that last changed it).
 One whose dependencies are integrated and whose write paths no running assignment owns is ready; up to the execution limit (`parallelLimit`) run at once and the rest wait.
@@ -148,7 +148,7 @@ Restart marks incomplete stages unknown without resuming implementation, commits
 ## Regression owners
 
 - `task-worktree`: real Git branch/ref/candidate/scope (`task-branch-v1` retained and `task-branch-v2` detached checkpoints, private refs, single-parent sealing, exact ref cleanup), exact acceptance, repeated deliveries and residue retention.
-- `workflow-links`: owner-managed dependency link validation, identity-recorded provisioning, safe unlinking under trailing-slash `.gitignore`, and refusal/retention when replaced, retargeted or accompanied by unknown ignored residue.
+- `workflow-links`, `workflow-v5-planning`: proposal-time `discoverManagedLinks` (plain untracked Git-ignored `node_modules`), owner-managed dependency link validation, identity-recorded provisioning, safe unlinking under trailing-slash `.gitignore`, refusal/retention when replaced or retargeted, and Stage 2 `planRoute()` (`route-planner`, objection retries, `blocked` and dirty-target zero-edit aborts).
 - `workflow-review-ledger`: behavior-family convergence (`ReviewLedger`), V4 review verdicts/reports, Stage 4 fast+pre-review ordering before heavy checks, and POSIX process-group settlement gating for timed-out checks.
 - `workflow-delivery-runtime`: adaptive owner plus `AssignmentRunner`/`VerificationGate` with controlled native/worker ports; optimistic Stage 5 `C0` checks before `exclusive`, shell-free zero-edit `learn()` same-OID `C0` reuse vs `C1` re-verification, private-only reports, `target:skip` with mandatory ref/source checks, post-merge repair on top of merged history, changed targets, cancellation and crash checkpoint-intent recovery.
 - `workflow-delivery-admission`: proposal/receipt persistence and bound target; the longer full admission case remains slow.

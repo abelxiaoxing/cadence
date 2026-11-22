@@ -971,7 +971,9 @@ it("automatic recovery and knowledge progress remain live and do not request ano
   expect(html).toContain("Complete delivery agreement");
   expect(html).toContain("<details>");
   // The statement of what one approval covers stands beside the plan.
-  expect(html).toContain("The service then finishes on its own");
+  expect(html).toContain(
+    "After approval the service plans parallel tasks from the codebase",
+  );
   expect(html).toContain("Assumptions (confirmed by approval)");
   expect(html).not.toContain("At most 2 repair rounds");
 });
@@ -1225,4 +1227,43 @@ it("labels the displayed bounded file and its copy action in the selected locale
   expect(html).toContain("步骤结果");
   expect(html).toContain("预览已截断。");
   expect(html).toContain("  bounded result\n</pre>");
+});
+
+it("renders V5 planning phase and step kind in English and Chinese", () => {
+  const planningRun: WorkflowRun = {
+    id: randomUUID(),
+    epoch: randomUUID(),
+    goal: "Plan V5 route",
+    status: "running",
+    phase: "planning",
+    notice: "",
+    mergedCommit: null,
+    humanReviewed: false,
+    steps: [
+      {
+        id: `plan-route-${randomUUID()}`,
+        childRunId: randomUUID(),
+        kind: "planning",
+        status: "running",
+        text: "",
+        exitCode: null,
+        truncated: false,
+      },
+    ],
+  };
+  const en = renderToStaticMarkup(
+    <LocaleProvider initial="en">
+      <WorkflowRunState run={planningRun} />
+      <WorkflowStepSummary run={planningRun} step={planningRun.steps[0]} />
+    </LocaleProvider>,
+  );
+  expect(en).toContain("planning");
+  expect(en).toContain("plan-route");
+  const zh = renderToStaticMarkup(
+    <LocaleProvider initial="zh">
+      <WorkflowRunState run={planningRun} />
+      <WorkflowStepSummary run={planningRun} step={planningRun.steps[0]} />
+    </LocaleProvider>,
+  );
+  expect(zh).toContain("规划中");
 });

@@ -22,7 +22,7 @@ import {
   workingSnapshot,
   worktreeResidue,
 } from "../src/service/workflow-git.ts";
-import { plan } from "./helpers/workflow-plan.ts";
+import { stagedPlan as plan } from "./helpers/workflow-plan.ts";
 
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), "workflow-scope-"));

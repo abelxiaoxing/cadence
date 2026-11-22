@@ -4,7 +4,7 @@ import { AttemptFailure } from "../src/service/workflow-controller.ts";
 import { reviewReport, reviewVerdict } from "../src/service/workflow-report.ts";
 import { ReviewLedger } from "../src/service/workflow-review-ledger.ts";
 import { Workflows } from "../src/service/workflows.ts";
-import { plan } from "./helpers/workflow-plan.ts";
+import { stagedPlan as plan } from "./helpers/workflow-plan.ts";
 
 const issue = (
   id: string,

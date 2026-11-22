@@ -16,7 +16,7 @@ import { AttemptFailure } from "../src/service/workflow-controller.ts";
 import { deliveryObservation } from "../src/service/workflow-delivery.ts";
 import * as workflowGit from "../src/service/workflow-git.ts";
 import { Workflows } from "../src/service/workflows.ts";
-import { plan } from "./helpers/workflow-plan.ts";
+import { stagedPlan as plan } from "./helpers/workflow-plan.ts";
 
 vi.mock("../src/service/workflow-git.ts", async (original) => ({
   ...(await original<typeof import("../src/service/workflow-git.ts")>()),
@@ -78,6 +78,7 @@ function fixture() {
     assertRunning() {},
     assertStartable: async () => {},
     write: (p: string, v: unknown) => records.set(p, v),
+    planRoute: vi.fn(async () => {}),
     learn: vi.fn(async () => {}),
     publish: vi.fn(),
     verifyAndRepair: vi.fn(async () => {}),
