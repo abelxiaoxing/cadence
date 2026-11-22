@@ -108,7 +108,7 @@ bun install
 bun run verify
 ```
 
-Hinweise nach Bereich: [engineering/](engineering/) und [AGENTS.md](AGENTS.md). `verify` ist das einzige schnelle Gate; es braucht einen offiziellen Node-Build und ein privates temporäres Verzeichnis ([Verifikation](engineering/verification.md)).
+Hinweise nach Bereich: [.cadence/project.md](.cadence/project.md) und [AGENTS.md](AGENTS.md). `verify` ist das einzige schnelle Gate; es braucht einen offiziellen Node-Build und ein privates temporäres Verzeichnis ([Verifikation](.cadence/knowledge/verification-and-builds.md)).
 
 ## Lizenz
 

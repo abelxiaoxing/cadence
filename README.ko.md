@@ -115,7 +115,7 @@ bun install
 bun run verify
 ```
 
-영역별 안내는 [engineering/](engineering/)와 [AGENTS.md](AGENTS.md). `verify`는 유일한 빠른 게이트이며 공식 Node 빌드와 비공개 임시 디렉터리가 필요합니다([검증](engineering/verification.md)).
+영역별 안내는 [.cadence/project.md](.cadence/project.md)와 [AGENTS.md](AGENTS.md). `verify`는 유일한 빠른 게이트이며 공식 Node 빌드와 비공개 임시 디렉터리가 필요합니다([검증](.cadence/knowledge/verification-and-builds.md)).
 
 ## 라이선스
 

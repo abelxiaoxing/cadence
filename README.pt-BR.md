@@ -108,7 +108,7 @@ bun install
 bun run verify
 ```
 
-Guias por área em [engineering/](engineering/) e [AGENTS.md](AGENTS.md). `verify` é o único portão rápido; exige um build oficial do Node e um diretório temporário privado ([verificação](engineering/verification.md)).
+Guias por área em [.cadence/project.md](.cadence/project.md) e [AGENTS.md](AGENTS.md). `verify` é o único portão rápido; exige um build oficial do Node e um diretório temporário privado ([verificação](.cadence/knowledge/verification-and-builds.md)).
 
 ## Licença
 

@@ -110,8 +110,8 @@ bun install
 bun run verify
 ```
 
-按领域划分的说明见 [engineering/](engineering/) 与 [AGENTS.md](AGENTS.md)。
-`verify` 是唯一的快速门禁，需要官方 Node 构建和私有临时目录（[验证](engineering/verification.md)）。
+按领域划分的说明见 [.cadence/project.md](.cadence/project.md) 与 [AGENTS.md](AGENTS.md)。
+`verify` 是唯一的快速门禁，需要官方 Node 构建和私有临时目录（[验证](.cadence/knowledge/verification-and-builds.md)）。
 
 ## 许可证
 

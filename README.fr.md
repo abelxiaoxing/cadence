@@ -108,7 +108,7 @@ bun install
 bun run verify
 ```
 
-Guides par domaine : [engineering/](engineering/) et [AGENTS.md](AGENTS.md). `verify` est l'unique barrière rapide ; il faut un build Node officiel et un répertoire temporaire privé ([vérification](engineering/verification.md)).
+Guides par domaine : [.cadence/project.md](.cadence/project.md) et [AGENTS.md](AGENTS.md). `verify` est l'unique barrière rapide ; il faut un build Node officiel et un répertoire temporaire privé ([vérification](.cadence/knowledge/verification-and-builds.md)).
 
 ## Licence
 

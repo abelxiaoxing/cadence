@@ -110,7 +110,7 @@ bun install
 bun run verify
 ```
 
-Guidance by area is in [engineering/](engineering/) and [AGENTS.md](AGENTS.md). `verify` is the single fast gate; it needs an official Node build and a private temporary directory ([verification](engineering/verification.md)).
+Guidance by area is routed from [.cadence/project.md](.cadence/project.md) and [AGENTS.md](AGENTS.md). `verify` is the single fast gate; it needs an official Node build and a private temporary directory ([verification](.cadence/knowledge/verification-and-builds.md)).
 
 ## License
 

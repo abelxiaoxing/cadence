@@ -1,6 +1,6 @@
 // @module-tag slow
 /** The real systemd user manager, opt-in (CADENCE_SYSTEMD_E2E=1; see
- * engineering/verification.md). A generated workbench unit, the bundled CLI
+ * .cadence/knowledge/verification-and-builds.md). A generated workbench unit, the bundled CLI
  * and gateway and a real transient job: a child inside the service is refused
  * without any change, and the WebUI route restarts the service from outside it.
  * The unit lives in a private HOME and is linked from the manager's runtime
