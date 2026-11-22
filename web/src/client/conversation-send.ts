@@ -127,7 +127,13 @@ export function captureSend(input: {
   text: string;
   images?: readonly File[];
   revision: number;
-  intent: "ordinary" | "enter" | "message" | "exit" | "design";
+  intent:
+    | "ordinary"
+    | "exit-ordinary"
+    | "enter"
+    | "message"
+    | "exit"
+    | "design";
   location?: ConversationLocation;
   model?: ModelSelector;
   installModel?: boolean;
@@ -157,13 +163,20 @@ export function captureSend(input: {
         }
       : input.intent === "ordinary"
         ? { kind: "send", ...common, text: message }
-        : {
-            kind: "cadence-send",
-            ...common,
-            text: message,
-            intent: input.intent,
-            revision: integer(input.revision, 0),
-          };
+        : input.intent === "exit-ordinary"
+          ? {
+              kind: "send",
+              ...common,
+              text: message,
+              exitRevision: integer(input.revision, 0),
+            }
+          : {
+              kind: "cadence-send",
+              ...common,
+              text: message,
+              intent: input.intent,
+              revision: integer(input.revision, 0),
+            };
   return Object.freeze({
     text: message,
     ...(input.installModel ? { installModel: true } : {}),

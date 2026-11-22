@@ -1260,13 +1260,24 @@ export const zh = {
   "Cadence mode": "Cadence 模式",
   "Turn on Cadence": "开启 Cadence",
   "Turn off Cadence": "关闭 Cadence",
-  "Cadence mode is on. Click to exit it.": "Cadence 模式已开启，点击退出。",
+  "Cadence mode is on. Click to exit on your next message.":
+    "Cadence 模式已开启，点击后将在发送下一条消息时退出。",
   "Your next message turns on Cadence mode. Click to cancel.":
     "发送下一条消息时将开启 Cadence 模式，点击取消。",
-  "Turn on Cadence mode: agree on a plan before implementation.":
-    "开启 Cadence 模式：先商定计划，再开始实施。",
+  "Your next message exits Cadence mode and sends normally. Click to stay in Cadence.":
+    "发送下一条消息时将退出 Cadence 并按普通对话发送，点击取消。",
+  "Turn on Cadence mode on your next message: agree on a plan before implementation.":
+    "在发送下一条消息时开启 Cadence 模式：先商定计划，再开始实施。",
   "Your next message turns on Cadence mode.":
     "发送下一条消息时将开启 Cadence 模式。",
+  "Your next message exits Cadence mode and sends normally.":
+    "发送下一条消息时将退出 Cadence 并按普通对话发送。",
+  "Your next message exits Cadence mode.":
+    "发送下一条消息时将退出 Cadence 模式。",
+  "Remove the /cadence prefix to send as an ordinary message.":
+    "消息以 /cadence 开头，发送时将进入 Cadence 模式；如需普通发送请先删除 /cadence 前缀。",
+  "Edit the exit command to stay in Cadence mode.":
+    "当前消息是退出指令，发送时将退出 Cadence 模式；如需保持开启请修改消息内容。",
   "The service is unavailable right now ({code}).":
     "服务暂时不可用（{code}）。",
   "Another operation is still in progress ({code}). Try again when it finishes.":

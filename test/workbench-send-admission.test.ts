@@ -8,7 +8,7 @@ import { UnacceptedConversationCommand } from "../src/service/workbench-send-ref
 // Fault-injection unit seam: the real registration/persistence marker is tested
 // separately through generated-owner HTTP. No fake native-success qualification.
 function fixture(
-  kind: "send" | "cadence-send" | "cadence-exit",
+  kind: "send" | "send-exit" | "cadence-send" | "cadence-exit",
   prior: boolean,
   afterAcceptance: boolean,
 ) {
@@ -26,14 +26,16 @@ function fixture(
       ? { kind, ...common, revision: 0 }
       : kind === "send"
         ? { kind, ...common, text: "hello", model }
-        : {
-            kind,
-            ...common,
-            text: "hello",
-            model,
-            revision: 0,
-            intent: "message",
-          };
+        : kind === "send-exit"
+          ? { kind: "send", ...common, text: "hello", model, exitRevision: 0 }
+          : {
+              kind,
+              ...common,
+              text: "hello",
+              model,
+              revision: 0,
+              intent: "message",
+            };
   const refuse = (accepting?: () => void) => {
     if (afterAcceptance) accepting?.();
     throw new ContractError("stale");
@@ -46,6 +48,8 @@ function fixture(
     cadence: {
       records: { state: () => ({ head: null, enabled: kind !== "send" }) },
       send: (_request: unknown, accepting?: () => void) => refuse(accepting),
+      exitAndSend: (_request: unknown, accepting?: () => void) =>
+        refuse(accepting),
     },
     conversations: {
       attempted: () => prior,
@@ -57,7 +61,7 @@ function fixture(
   return () => workbench.command(request);
 }
 
-it.each(["send", "cadence-send", "cadence-exit"] as const)(
+it.each(["send", "send-exit", "cadence-send", "cadence-exit"] as const)(
   "%s distinguishes fresh pre-acceptance refusal from prior/partial acceptance",
   (kind) => {
     expect(fixture(kind, false, false)).toThrow(UnacceptedConversationCommand);

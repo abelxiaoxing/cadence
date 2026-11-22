@@ -450,6 +450,38 @@ export class ConversationWorkflow {
       );
     }
   }
+  /** Atomically exits Cadence mode when admitting an ordinary message turn. */
+  exitAndSend(
+    c: Extract<WorkbenchCommand, { kind: "send" }>,
+    beforeAccept?: () => void,
+    claimImages?: () => InputImage[],
+  ): WorkbenchResult {
+    // A lost reply observes its original acceptance before freshness checks.
+    const receipt = this.o.conversations.receipt(c);
+    if (receipt) return receipt;
+    const { state, file } = this.records.usable(c.conversationId);
+    if (!state.enabled || c.exitRevision !== state.revision)
+      throw new ContractError("stale");
+    if (this.active.has(c.conversationId)) throw new ContractError("conflict");
+    const next: CadenceConversation = {
+      id: state.id,
+      revision: state.revision + 1,
+      enabled: false,
+      head: c.commandId,
+      proposal: null,
+      runs: state.runs,
+    };
+    return this.o.conversations.send(
+      c,
+      undefined,
+      beforeAccept,
+      claimImages,
+      () => {
+        this.o.conversations.bindControl(c.conversationId);
+        this.save(next, file);
+      },
+    );
+  }
   send(
     c: Send,
     beforeAccept?: () => void,

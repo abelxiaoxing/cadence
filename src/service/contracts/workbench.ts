@@ -336,6 +336,8 @@ export type WorkbenchCommand =
       text: string;
       images?: string[];
       model: ChoiceVersion;
+      /** Atomically exit Cadence mode when admitting this ordinary message. */
+      exitRevision?: number;
     }
   | {
       /** A message for a reply that is running: `turnId` is that reply's
@@ -1174,6 +1176,7 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       "text",
       ...(Object.hasOwn(v ?? {}, "images") ? ["images"] : []),
       "model",
+      ...(Object.hasOwn(v ?? {}, "exitRevision") ? ["exitRevision"] : []),
     ]);
     return {
       kind,
@@ -1185,6 +1188,9 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
         ? {}
         : { images: list(o.images, Number.MAX_SAFE_INTEGER, decodeId) }),
       model: decodeChoiceVersion(o.model),
+      ...(o.exitRevision === undefined
+        ? {}
+        : { exitRevision: integer(o.exitRevision, 0) }),
     };
   }
   if (

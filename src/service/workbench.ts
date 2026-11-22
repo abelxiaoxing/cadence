@@ -251,6 +251,8 @@ export class Workbench implements WorkbenchPort {
         mayHaveEffects = true;
       };
       if (request.kind === "send") {
+        if (request.exitRevision !== undefined)
+          return this.cadence.exitAndSend(request, accepting, claimImages);
         // A lost reply observes its original acceptance before mode checks.
         const receipt = this.conversations.receipt(request);
         if (receipt) return receipt;

@@ -647,6 +647,7 @@ export class Conversations {
     control?: ConversationControl,
     beforeAccept?: () => void,
     claimImages?: () => InputImage[],
+    afterAccept?: () => void,
   ): WorkbenchResult {
     this.o.owner.lease.assert();
     const command = this.command(input, !!control?.reply);
@@ -786,6 +787,7 @@ export class Conversations {
       // Control state commits last: it never names a message that is not durably
       // recorded. A failure here leaves an older, still-valid control record.
       control?.accept();
+      afterAccept?.();
     } catch (error) {
       abort.abort();
       begin();

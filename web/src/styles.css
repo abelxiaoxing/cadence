@@ -5553,7 +5553,7 @@ button.link:hover:not(:disabled) {
   text-decoration: underline;
 }
 
-/* ---- Cadence mode switch: one click turns the mode on or off ---- */
+/* ---- Cadence mode switch: selects whether the next Send uses Cadence ---- */
 .mode-toggle {
   flex: none;
   gap: 7px;
@@ -5569,7 +5569,7 @@ button.link:hover:not(:disabled) {
   width: 14px;
   height: 14px;
 }
-/* Off reads as the entry into Cadence: a dashed accent outline to click. */
+/* Off (ordinary or pending exit): dashed accent outline to turn Cadence on. */
 .mode-toggle.off {
   border: 1px dashed var(--accent-text);
   color: var(--accent-text);
@@ -5577,7 +5577,7 @@ button.link:hover:not(:disabled) {
 .mode-toggle.off:hover:not(:disabled) {
   background: var(--accent-soft);
 }
-/* On is a filled pill: the mode is active, one click exits it. */
+/* On (active or pending enter): filled pill to turn Cadence off on next Send. */
 .mode-toggle.on {
   border-color: var(--prism-b);
   background: var(--prism-b);

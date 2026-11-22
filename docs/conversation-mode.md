@@ -3,7 +3,7 @@
 In a trusted Pi terminal or a WebUI conversation in an explicitly selected project, enter `/cadence <goal>` once (or `/cadence` to discuss the goal).
 Cadence stays enabled for the entire conversation, including after a goal finishes.
 Continue using normal messages; do not repeat the command for clarification or another goal.
-Type `退出 Cadence` or `exit cadence` (in Pi also `/cadence exit`) to leave the mode explicitly; in the browser the mode switch beside **Send** switches immediately on click: from off it enters with a bare `/cadence` (your draft stays and is not consumed), from on it leaves.
+Type `退出 Cadence` or `exit cadence` (in Pi also `/cadence exit`) to leave the mode explicitly; in the browser the mode switch beside **Send** sets whether your next message uses Cadence without sending immediately: turning it on enters Cadence when you send your next message, and turning it off exits Cadence and sends your next message as an ordinary turn.
 Leaving, closing Pi/browser and switching conversations detach; they do not cancel accepted work.
 Browser conversation mode is retained by the project owner, not by a browser-only toggle, and works without a live Pi terminal.
 

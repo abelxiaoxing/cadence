@@ -437,8 +437,15 @@ export function ChatWorkspace({
     show(_id: string, _then: Target["then"]) {},
     stepVersion(_turnId: string, _step: -1 | 1) {},
   });
-  const [mode, setMode] = useState<"chat" | "cadence">(() =>
-    stored(`${draftKey}:mode`) === "cadence" ? "cadence" : "chat",
+  const [pendingMode, setPendingMode] = useState<"enter" | "exit" | null>(
+    () => {
+      const saved = stored(`${draftKey}:mode`);
+      return saved === "enter" || saved === "cadence"
+        ? "enter"
+        : saved === "exit"
+          ? "exit"
+          : null;
+    },
   );
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -712,16 +719,24 @@ export function ChatWorkspace({
     },
     [draftKey],
   );
-  const input = cadenceInput(draft, cadence ? "cadence" : mode);
+  const slashCadence = cadenceInput(draft, "chat").mode === "cadence";
+  const phraseExit = cadence && cadenceExit(draft);
+  const nextCadence = slashCadence
+    ? true
+    : phraseExit
+      ? false
+      : cadence
+        ? pendingMode !== "exit"
+        : pendingMode === "enter";
   const modeFacts = {
     active: cadence,
-    armed: input.mode === "cadence",
+    armed: nextCadence,
     known: cadenceKnown,
   };
   const modeState = composerMode(modeFacts);
   const modeHint =
-    modeState === "off" && modeFacts.armed
-      ? modeHints.armed
+    modeState === "leaving" && phraseExit
+      ? "Your next message exits Cadence mode."
       : modeHints[modeState];
   const canSend =
     enabled &&
@@ -906,9 +921,11 @@ export function ChatWorkspace({
   // live reply). Never reinterpret a draft across these two input paths.
   const discussionPath = running
     ? liveRun && JSON.stringify([id, liveRun.commandId, liveRun.epoch])
-    : cadence
-      ? undefined
-      : mode;
+    : nextCadence
+      ? cadence
+        ? undefined
+        : "cadence"
+      : "chat";
   const discussionSource = useMemo(
     () => (discussionPath ? Symbol(discussionPath) : undefined),
     [discussionPath],
@@ -1081,11 +1098,12 @@ export function ChatWorkspace({
   }, []);
   useEffect(() => {
     try {
-      sessionStorage.setItem(`${draftKey}:mode`, mode);
+      if (pendingMode) sessionStorage.setItem(`${draftKey}:mode`, pendingMode);
+      else sessionStorage.removeItem(`${draftKey}:mode`);
     } catch {
       /* local preference only */
     }
-  }, [draftKey, mode]);
+  }, [draftKey, pendingMode]);
   useEffect(() => {
     try {
       sessionStorage.setItem(draftKey, draft);
@@ -1130,6 +1148,7 @@ export function ChatWorkspace({
         conversation.commands.includes(pending))
     ) {
       setPending("");
+      setPendingMode(null);
       setError("");
       if (modelDraftConsumed(pending, modelCommand)) {
         setReceived(pending);
@@ -1642,9 +1661,23 @@ export function ChatWorkspace({
   ) => {
     const message = retained?.text ?? override ?? draft;
     const images = retained?.images ?? (override ? [] : imageDraft.files);
+    const slash =
+      !submitDesign && cadenceInput(message, "chat").mode === "cadence";
     const exiting = retained
       ? retained.command.kind === "cadence-exit"
-      : cadence && cadenceExit(message);
+      : !submitDesign && cadence && cadenceExit(message);
+    const exitingOrdinary = retained
+      ? retained.command.kind === "send" &&
+        retained.command.exitRevision !== undefined
+      : !submitDesign &&
+        !exiting &&
+        !slash &&
+        cadence &&
+        pendingMode === "exit";
+    const entering = retained
+      ? retained.command.kind === "cadence-send" &&
+        retained.command.intent === "enter"
+      : !submitDesign && !cadence && (slash || pendingMode === "enter");
     const phrase =
       !images.length && !retained && !override && cadenceApproval(message);
     if (phrase && !phraseCurrent()) {
@@ -1669,12 +1702,11 @@ export function ChatWorkspace({
       refuse(t("Remove images before exiting Cadence."));
       return;
     }
-    if (phrase && cadence) {
+    if (phrase && cadence && !exitingOrdinary) {
       await approve();
       return;
     }
-    const selecting = cadenceInput(message, mode).mode === "cadence";
-    if (!canPrepareOnly && (cadence || selecting) && !cadenceKnown) {
+    if (!canPrepareOnly && (cadence || entering) && !cadenceKnown) {
       refuse(
         t(
           "Cadence state unavailable. Observe the conversation before sending.",
@@ -1778,11 +1810,13 @@ export function ChatWorkspace({
             ? "design"
             : exiting
               ? "exit"
-              : cadence
-                ? "message"
-                : selecting
-                  ? "enter"
-                  : "ordinary",
+              : exitingOrdinary
+                ? "exit-ordinary"
+                : cadence
+                  ? "message"
+                  : entering
+                    ? "enter"
+                    : "ordinary",
         });
       if (retained) {
         if (
@@ -1802,7 +1836,7 @@ export function ChatWorkspace({
           sendRefused(reply.error.code, reply.error.effect);
         } else {
           setPending("");
-          setMode("chat");
+          setPendingMode(null);
           setDraft((value) => (value === message ? "" : value));
         }
         workflow.refresh();
@@ -1939,8 +1973,11 @@ export function ChatWorkspace({
         setDraftModel(null);
         setDraft((value) => (value === sentDraft.current ? "" : value));
         setPending("");
-        if (command.kind === "cadence-send") {
-          setMode("chat");
+        if (
+          command.kind === "cadence-send" ||
+          (command.kind === "send" && command.exitRevision !== undefined)
+        ) {
+          setPendingMode(null);
         }
         if (!override) pushPromptHistory(workspaceId, message);
         // The new reply ends the branch: follow it as the session's latest.
@@ -2022,7 +2059,7 @@ export function ChatWorkspace({
   const sentInputs = useRef(new Map<string, string>());
   const inputBlock = inputRefusal({
     images: imageDraft.files.length,
-    modeChange: cadence ? cadenceExit(draft) : input.mode === "cadence",
+    modeChange: cadence !== nextCadence,
     anchored: !!anchor,
     waiting: conversation.pending.length,
   });
@@ -2892,18 +2929,33 @@ export function ChatWorkspace({
               ? t("Cadence state unavailable")
               : running
                 ? t("Wait for the current reply before changing mode.")
-                : (waitingReason ??
-                  t("Current action context unavailable; observe again.")),
-            disabled: cadence
-              ? !canExit
-              : !!running || busy || !!pending || awaitingModel,
+                : waitingReason,
+            disabled:
+              !cadenceKnown || !!running || busy || !!pending || awaitingModel,
             onClick: () => {
-              if (cadence) {
-                void send("exit cadence");
+              if (slashCadence) {
+                setPendingMode(null);
+                refuse(
+                  t(
+                    "Remove the /cadence prefix to send as an ordinary message.",
+                  ),
+                );
                 return;
               }
-              // A bare /cadence enters Cadence now; the draft stays unconsumed.
-              void send("/cadence");
+              if (phraseExit) {
+                setPendingMode(null);
+                refuse(t("Edit the exit command to stay in Cadence mode."));
+                return;
+              }
+              if (cadence) {
+                setPendingMode((current) =>
+                  current === "exit" ? null : "exit",
+                );
+                return;
+              }
+              setPendingMode((current) =>
+                current === "enter" ? null : "enter",
+              );
             },
           }}
           model={{
@@ -2955,8 +3007,7 @@ export function ChatWorkspace({
           }
           onStop={() => void interrupt()}
           canSend={
-            ((cadence && cadenceExit(draft) ? canExit : canSend) ||
-              canPrepareOnly) &&
+            ((phraseExit ? canExit : canSend) || canPrepareOnly) &&
             !attaching &&
             (!!draft.trim() || imageDraft.files.length > 0)
           }

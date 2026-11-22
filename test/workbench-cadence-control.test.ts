@@ -103,14 +103,17 @@ function fixture(
       ++hasTurnCalls;
       return turns.get(id)?.includes(turn) ?? false;
     },
+    attempted: (_id: string, commandId: string) => receipts.has(commandId),
     receipt: (input: { commandId: string }) =>
       receipts.has(input.commandId)
         ? { kind: "accepted", commandId: input.commandId }
         : undefined,
     send(
       input: { commandId: string; conversationId: string },
-      control: ConversationControl,
+      control: ConversationControl | undefined,
       beforeAccept?: () => void,
+      _claimImages?: unknown,
+      afterAccept?: () => void,
     ) {
       beforeAccept?.();
       // The real owner records the turn before the control state commits.
@@ -119,8 +122,9 @@ function fixture(
         input.commandId,
       ]);
       receipts.add(input.commandId);
-      control.accept();
-      controls.set(input.commandId, control);
+      control?.accept();
+      afterAccept?.();
+      if (control) controls.set(input.commandId, control);
       return { kind: "accepted", commandId: input.commandId };
     },
     latestRun: (id: string) => {
@@ -297,6 +301,8 @@ function fixture(
     send,
     tool,
     settle,
+    conversations,
+    controls,
     instructions: (turn: string) => controls.get(turn)?.instructions ?? "",
     context: (
       turn: string,
@@ -1744,4 +1750,95 @@ it("browser model padding selects the actual reader; direct owner requests remai
   ).toMatchObject({ matchingLines: 1 });
   expect(lookup).toHaveBeenCalledOnce();
   await f.settle(turn);
+});
+
+it("an ordinary send with exitRevision atomically exits Cadence, retires plan/design, keeps runs and refuses stale or active states without effect", async () => {
+  const f = fixture();
+  const id = randomUUID();
+  const enterTurn = f.send(id, "enter");
+  // Publish a design draft and research run, submit design, then publish a plan.
+  await f.tool(enterTurn, "cadence_design", {
+    questions: designQuestionsFixture,
+  });
+  await f.tool(enterTurn, "cadence_research", {
+    goal: "check",
+    questions: ["q1"],
+  });
+  await f.settle(enterTurn);
+  const draftDesign = f.cw.records.state(id).design!;
+  const planTurn = f.send(
+    id,
+    "design",
+    designSummary(reviseDesign(draftDesign, draftDesign.answers, true)),
+  );
+  await f.tool(planTurn, "cadence_plan", plan());
+  const before = f.cw.records.state(id);
+  expect(before.enabled).toBe(true);
+  expect(before.design?.submitted).toBe(true);
+  expect(before.proposal).not.toBeNull();
+  expect(before.runs).toHaveLength(1);
+
+  const ordinary = (
+    overrides: Partial<Extract<WorkbenchCommand, { kind: "send" }>> = {},
+  ): Extract<WorkbenchCommand, { kind: "send" }> => ({
+    kind: "send",
+    commandId: randomUUID(),
+    conversationId: id,
+    head: null,
+    text: "handle directly",
+    model: f.model,
+    exitRevision: before.revision,
+    ...overrides,
+  });
+
+  // Active coordinator turn refuses with conflict and changes nothing.
+  expect(() => f.cw.exitAndSend(ordinary())).toThrow("conflict");
+  expect(f.cw.records.state(id)).toEqual(before);
+
+  await f.settle(planTurn);
+
+  // Stale exitRevision refuses without changing state.
+  expect(() =>
+    f.cw.exitAndSend(ordinary({ exitRevision: before.revision - 1 })),
+  ).toThrow("stale");
+  expect(f.cw.records.state(id)).toEqual(before);
+
+  // Ordinary send WITHOUT exitRevision still refuses via Workbench.send.
+  const workbench = Object.assign(Object.create(Workbench.prototype), {
+    o: { owner: f.owner },
+    cadence: f.cw,
+    conversations: f.conversations,
+    images: { claim: () => [] },
+  }) as Workbench;
+  const plain = ordinary();
+  delete plain.exitRevision;
+  expect(() => workbench.command(plain)).toThrow(UnacceptedConversationCommand);
+  expect(f.cw.records.state(id).enabled).toBe(true);
+
+  // Atomic exit-and-send succeeds as an ordinary turn (no coordinator control).
+  const cmd = ordinary();
+  const accepted = workbench.command(cmd);
+  expect(accepted).toEqual({ kind: "accepted", commandId: cmd.commandId });
+  const after = f.cw.records.state(id);
+  expect(after).toEqual({
+    id,
+    revision: before.revision + 1,
+    enabled: false,
+    head: cmd.commandId,
+    proposal: null,
+    runs: before.runs,
+  });
+  expect(after.design).toBeUndefined();
+  expect(f.controls.has(cmd.commandId)).toBe(false);
+
+  // Lost-reply retry observes its receipt idempotently.
+  expect(workbench.command(cmd)).toEqual({
+    kind: "accepted",
+    commandId: cmd.commandId,
+  });
+
+  // Already-exited conversation refuses another exitRevision send with effect:none.
+  expect(() =>
+    workbench.command(ordinary({ exitRevision: after.revision })),
+  ).toThrow(UnacceptedConversationCommand);
 });
