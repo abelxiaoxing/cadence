@@ -718,7 +718,11 @@ export function ChatWorkspace({
     armed: input.mode === "cadence",
     known: cadenceKnown,
   };
-  const modeHint = modeHints[composerMode(modeFacts)];
+  const modeState = composerMode(modeFacts);
+  const modeHint =
+    modeState === "off" && modeFacts.armed
+      ? modeHints.armed
+      : modeHints[modeState];
   const canSend =
     enabled &&
     !(activitySelected && !conversation.summary) &&
@@ -2898,11 +2902,8 @@ export function ChatWorkspace({
                 void send("exit cadence");
                 return;
               }
-              if (input.mode === "cadence") {
-                setMode("chat");
-                if (cadenceInput(draft, "chat").mode === "cadence")
-                  setDraft(input.text);
-              } else setMode("cadence");
+              // A bare /cadence enters Cadence now; the draft stays unconsumed.
+              void send("/cadence");
             },
           }}
           model={{
