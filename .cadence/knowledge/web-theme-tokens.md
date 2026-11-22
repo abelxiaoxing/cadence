@@ -21,3 +21,13 @@ Why: The pinned `.vis-item` supplies its own blue border and background, so a la
 Anchors: `web/dist/assets/vis-timeline.css#.vis-item`, `web/src/timeline/timeline.css#.rtr-tlbody .vis-item.rtr-tc`, `web/src/timeline/timeline-client.mjs#toolClass`
 
 Source: this delivery, 2026-11-20
+
+### The mode toggle's base and disabled declarations are pinned by the capsule contrast test
+
+Kind: pitfall
+
+Why: The capsule readability test reads the base `.mode-toggle` `background: transparent` and `.mode-toggle:disabled` `opacity: 1` from the stylesheet source and asserts both, so a restyle that drops or changes either declaration fails it.
+
+Anchors: `test/web/theme.test.tsx#keeps the disabled mode label, model and placeholder readable on the input capsule`, `web/src/styles.css#.mode-toggle:disabled`
+
+Source: this delivery, 2026-11-20
