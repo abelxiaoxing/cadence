@@ -366,6 +366,8 @@ export function TaskSidebar({
   // The conversations the history leaves out, read only while they are shown.
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(true);
+  // Older history beyond Today and Yesterday stays folded until expanded or filtered.
+  const [earlierOpen, setEarlierOpen] = useState(false);
   const heading = useId();
   const archived = useConversationHistory(
     client,
@@ -493,6 +495,49 @@ export function TaskSidebar({
     (!discovery?.error &&
       unlinkedReports.some((a) => a.freshness === "current"));
   const pinned = new Set([...replying, ...linked.keys(), ...discovered.keys()]);
+  // Stable first-observed tie-breaker for concurrent work that carries no
+  // immutable start timestamp (e.g. terminal-only reports or older owners).
+  const pinnedOrder = useRef<{ seq: number; seen: Map<string, number> }>({
+    seq: 0,
+    seen: new Map(),
+  });
+  const pinnedSignature = [...pinned].sort().join(",");
+  useLayoutEffect(() => {
+    const current = new Set(pinnedSignature ? pinnedSignature.split(",") : []);
+    const { seen } = pinnedOrder.current;
+    for (const id of [...seen.keys()]) {
+      if (!current.has(id)) seen.delete(id);
+    }
+    for (const id of current) {
+      if (!seen.has(id)) seen.set(id, ++pinnedOrder.current.seq);
+    }
+  }, [pinnedSignature]);
+  const activeStartedAt = (id: string) => {
+    let latest = summaries.get(id)?.live?.startedAt ?? 0;
+    for (const run of linked.get(id) ?? []) {
+      const at = run.diagnostics?.acceptedAt ?? 0;
+      if (at > latest) latest = at;
+    }
+    return latest;
+  };
+  const orderedPinned = [...pinned].sort((a, b) => {
+    const diff = activeStartedAt(b) - activeStartedAt(a);
+    if (diff !== 0) return diff;
+    const seenDiff =
+      (pinnedOrder.current.seen.get(b) ?? 0) -
+      (pinnedOrder.current.seen.get(a) ?? 0);
+    if (seenDiff !== 0) return seenDiff;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  const isPinnedLive = (id: string) => {
+    const flows = linked.get(id);
+    const reports = discovered.get(id);
+    return (
+      (replying.has(id) && chatActivityKnown) ||
+      (!!flows && !workflowError) ||
+      (!discovery?.error && !!reports?.some((a) => a.freshness === "current"))
+    );
+  };
   const pastChats = chats.filter((chat) => !pinned.has(chat.id));
   const activityKnown =
     executionStopped ||
@@ -573,12 +618,16 @@ export function TaskSidebar({
     const busy = pinned.has(id);
     const status = chat?.status;
     const staleReply = unsettled(status) && !replying.has(id);
+    const busyLive = busy && isPinnedLive(id);
     const activityLabel = busy
-      ? (replying.has(id) && chatActivityKnown) ||
-        (flows && !workflowError) ||
-        (!discovery?.error && reports?.some((a) => a.freshness === "current"))
+      ? busyLive
         ? t("Working")
         : t("Stale observation")
+      : undefined;
+    const activityState = busy
+      ? busyLive
+        ? ("live" as const)
+        : ("stale" as const)
       : undefined;
     const showActions = !!chat && !replying.has(id) && !unsettled(status);
     const label = chat ?? {
@@ -594,6 +643,7 @@ export function TaskSidebar({
           chat={label}
           selected={id === conversationId}
           activityLabel={activityLabel}
+          activityState={activityState}
           state={
             staleReply
               ? t("Not observed")
@@ -637,10 +687,20 @@ export function TaskSidebar({
       </div>
     );
   };
+  const shownPinned = orderedPinned.filter((id) => {
+    const title = summaries.get(id)?.title ?? t("Conversation {id}", { id });
+    return matchesFilter(title, filter);
+  });
   const shownChats = pastChats.filter((chat) =>
     matchesFilter(chat.title, filter),
   );
   const shownTasks = history.filter((r) => matchesFilter(r.goal, filter));
+  const timeGroups = groupByTime(shownChats, (chat) => chat.updatedAt);
+  const todayChats = timeGroups.find((g) => g.key === "today")?.items ?? [];
+  const yesterdayChats =
+    timeGroups.find((g) => g.key === "yesterday")?.items ?? [];
+  const earlierChats = timeGroups.find((g) => g.key === "earlier")?.items ?? [];
+  const earlierExpanded = earlierOpen || filter.trim().length > 0;
   const page = tasks.page && !("kind" in tasks.page) ? tasks.page : undefined;
   const countKnown =
     activityKnown &&
@@ -650,8 +710,7 @@ export function TaskSidebar({
       ? !!archived.value && !archived.error
       : !!listedChats && (!historyWorkspace || (!!page && !tasks.error)));
   const total = archivedOpen
-    ? (archived.value?.entries ?? []).filter((chat) => !pinned.has(chat.id))
-        .length
+    ? (archived.value?.entries ?? []).length
     : pastChats.length +
       history.length +
       new Set(active.map((run) => run.taskId)).size;
@@ -659,97 +718,21 @@ export function TaskSidebar({
     ? archived.canPrevious || !!archived.value?.next
     : tasks.canPrevious || !!page?.next || chatHistoryPartial;
   const count = countKnown
-    ? `${pinned.size + total}${partial ? "+" : ""}`
+    ? `${(archivedOpen ? 0 : pinned.size) + total}${partial ? "+" : ""}`
     : t("Not observed");
+  const collapsedActive = pinned.size + unlinkedCount + active.length;
+  const collapsedLive =
+    orderedPinned.some(isPinnedLive) || unlinkedCurrent || active.length > 0;
+  const hasFilterable =
+    pinned.size > 0 || pastChats.length > 0 || history.length > 0;
   return (
     <aside className="panel panel-left lp-panel">
       {discovery && <ActivityList {...discovery} represented={represented} />}
       <ConversationActions onConversation={onNewConversation} />
-      {/* One scroll lifetime for every history row. Its live prefix remains
-          reachable even with older history filtered, archived or folded. */}
+      {/* One unified history section: running conversations stay pinned at the
+          top of Today rather than floating above the history heading. */}
       <section className="lp-section grow" aria-labelledby={heading}>
         <div className="lp-section-body">
-          {!executionStopped && activeRuns?.status !== "complete" && (
-            <p className="panel-hint">
-              {t(
-                "Active roster unavailable; absence is not proof of settlement.",
-              )}
-            </p>
-          )}
-          {!executionStopped && workflowError && (
-            <p className="panel-hint">
-              {t(
-                "Workflow activity unavailable; retained work may still be running.",
-              )}
-            </p>
-          )}
-          {!executionStopped && !chatActivityKnown && (
-            <p className="panel-hint">
-              {t("Conversation activity unavailable.")}
-            </p>
-          )}
-          {[...pinned].sort().map((id) => chatRow(id, summaries.get(id)))}
-          {unlinkedCount > 0 && (
-            <details className="history-unlinked">
-              <summary>
-                <span
-                  className="status-dot busy"
-                  role="img"
-                  aria-label={
-                    unlinkedCurrent ? t("Working") : t("Stale observation")
-                  }
-                />
-                {t("Unattributed work")} · {unlinkedCount}
-              </summary>
-              {unlinked.map(workflowRow)}
-              {unlinkedReports.map(reportRow)}
-            </details>
-          )}
-          {active.map((run) => {
-            const title = records.find(
-              (r) => r.owner.taskId === run.taskId,
-            )?.goal;
-            return (
-              <div key={run.runId} className="conversation-group">
-                <button
-                  type="button"
-                  className={`session-item${taskId === run.taskId && scope?.kind === "task" ? " active" : ""}`}
-                  onClick={() => onTask(run.taskId, title)}
-                  title={run.runId}
-                >
-                  <span
-                    className="status-dot busy"
-                    role="img"
-                    aria-label={t("Working")}
-                  />
-                  <span className="session-info">
-                    <span className="session-title">
-                      {title ?? t("Task {id}", { id: run.taskId.slice(0, 8) })}
-                    </span>
-                    <span className="session-sub">
-                      {tx(run.kind)} · {run.runId.slice(0, 8)}
-                    </span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="conversation-stop"
-                  disabled={!canCancel || canceling.has(run.runId)}
-                  onClick={() => onCancel(run.runId)}
-                >
-                  <FiSquare aria-hidden="true" />
-                  {t("Cancel run — request stop")}
-                </button>
-                {taskId === run.taskId && (
-                  <ConversationTree
-                    runs={runs.filter((r) => r.runId === run.runId)}
-                    scope={scope}
-                    onScope={onScope}
-                  />
-                )}
-              </div>
-            );
-          })}
           <header className="lp-section-header">
             <button
               type="button"
@@ -769,6 +752,28 @@ export function TaskSidebar({
                     : "Conversation history",
                 )}
               </span>
+              {!historyOpen && collapsedActive > 0 && (
+                <span
+                  role="img"
+                  className={`lp-live-pill${collapsedLive ? "" : " stale"}`}
+                  title={
+                    collapsedLive
+                      ? t("{count} running", { count: collapsedActive })
+                      : t("Stale observation")
+                  }
+                  aria-label={
+                    collapsedLive
+                      ? t("{count} running", { count: collapsedActive })
+                      : t("Stale observation")
+                  }
+                >
+                  <span
+                    className={`status-dot ${collapsedLive ? "live" : "busy"}`}
+                    aria-hidden="true"
+                  />
+                  {collapsedActive}
+                </span>
+              )}
               <span className="lp-count">{count}</span>
             </button>
             <button
@@ -789,7 +794,7 @@ export function TaskSidebar({
             <ArchivedList
               list={archived}
               onBack={() => setArchivedOpen(false)}
-              row={(chat) => !pinned.has(chat.id) && chatRow(chat.id, chat)}
+              row={(chat) => chatRow(chat.id, chat)}
             />
           )}
           <nav
@@ -797,7 +802,26 @@ export function TaskSidebar({
             className="task-list"
             hidden={!historyOpen || archivedOpen}
           >
-            {(pastChats.length > 0 || history.length > 0) && (
+            {!executionStopped && activeRuns?.status !== "complete" && (
+              <p className="panel-hint">
+                {t(
+                  "Active roster unavailable; absence is not proof of settlement.",
+                )}
+              </p>
+            )}
+            {!executionStopped && workflowError && (
+              <p className="panel-hint">
+                {t(
+                  "Workflow activity unavailable; retained work may still be running.",
+                )}
+              </p>
+            )}
+            {!executionStopped && !chatActivityKnown && (
+              <p className="panel-hint">
+                {t("Conversation activity unavailable.")}
+              </p>
+            )}
+            {hasFilterable && (
               <label className="lp-filter">
                 <FiSearch aria-hidden="true" />
                 <input
@@ -820,12 +844,101 @@ export function TaskSidebar({
                 )}
               </label>
             )}
-            {groupByTime(shownChats, (chat) => chat.updatedAt).map((group) => (
-              <div className="lp-time-group" key={group.key}>
-                <h3 className="lp-time-label">{t(TIME_GROUPS[group.key])}</h3>
-                {group.items.map((chat) => chatRow(chat.id, chat))}
+            {unlinkedCount > 0 && (
+              <details className="history-unlinked">
+                <summary>
+                  <span
+                    className={`status-dot ${unlinkedCurrent ? "live" : "busy"}`}
+                    role="img"
+                    aria-label={
+                      unlinkedCurrent ? t("Working") : t("Stale observation")
+                    }
+                  />
+                  {t("Unattributed work")} · {unlinkedCount}
+                </summary>
+                {unlinked.map(workflowRow)}
+                {unlinkedReports.map(reportRow)}
+              </details>
+            )}
+            {active.map((run) => {
+              const title = records.find(
+                (r) => r.owner.taskId === run.taskId,
+              )?.goal;
+              return (
+                <div key={run.runId} className="conversation-group">
+                  <button
+                    type="button"
+                    className={`session-item${taskId === run.taskId && scope?.kind === "task" ? " active" : ""}`}
+                    onClick={() => onTask(run.taskId, title)}
+                    title={run.runId}
+                  >
+                    <span
+                      className="status-dot live"
+                      role="img"
+                      aria-label={t("Working")}
+                    />
+                    <span className="session-info">
+                      <span className="session-title">
+                        {title ??
+                          t("Task {id}", { id: run.taskId.slice(0, 8) })}
+                      </span>
+                      <span className="session-sub">
+                        {tx(run.kind)} · {run.runId.slice(0, 8)}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="conversation-stop"
+                    disabled={!canCancel || canceling.has(run.runId)}
+                    onClick={() => onCancel(run.runId)}
+                  >
+                    <FiSquare aria-hidden="true" />
+                    {t("Cancel run — request stop")}
+                  </button>
+                  {taskId === run.taskId && (
+                    <ConversationTree
+                      runs={runs.filter((r) => r.runId === run.runId)}
+                      scope={scope}
+                      onScope={onScope}
+                    />
+                  )}
+                </div>
+              );
+            })}
+            {(shownPinned.length > 0 || todayChats.length > 0) && (
+              <div className="lp-time-group" key="today">
+                <h3 className="lp-time-label">{t(TIME_GROUPS.today)}</h3>
+                {shownPinned.map((id) => chatRow(id, summaries.get(id)))}
+                {todayChats.map((chat) => chatRow(chat.id, chat))}
               </div>
-            ))}
+            )}
+            {yesterdayChats.length > 0 && (
+              <div className="lp-time-group" key="yesterday">
+                <h3 className="lp-time-label">{t(TIME_GROUPS.yesterday)}</h3>
+                {yesterdayChats.map((chat) => chatRow(chat.id, chat))}
+              </div>
+            )}
+            {earlierChats.length > 0 && (
+              <div className="lp-time-group" key="earlier">
+                <button
+                  type="button"
+                  className="lp-time-label lp-time-toggle"
+                  aria-expanded={earlierExpanded}
+                  onClick={() => setEarlierOpen((open) => !open)}
+                >
+                  {earlierExpanded ? (
+                    <FiChevronDown aria-hidden="true" />
+                  ) : (
+                    <FiChevronRight aria-hidden="true" />
+                  )}
+                  <span>{t(TIME_GROUPS.earlier)}</span>
+                  <span className="lp-time-count">{earlierChats.length}</span>
+                </button>
+                {earlierExpanded &&
+                  earlierChats.map((chat) => chatRow(chat.id, chat))}
+              </div>
+            )}
             {shownTasks.length > 0 && (
               <h3 className="lp-time-label">{t("Tasks")}</h3>
             )}
@@ -855,9 +968,10 @@ export function TaskSidebar({
                 {r.owner.taskId === taskId && conversations}
               </div>
             ))}
-            {shownChats.length === 0 &&
+            {shownPinned.length === 0 &&
+              shownChats.length === 0 &&
               shownTasks.length === 0 &&
-              (pastChats.length > 0 || history.length > 0) && (
+              hasFilterable && (
                 <p className="panel-hint" role="status">
                   {t(
                     "No listed conversation matches. Pages not loaded are not searched.",

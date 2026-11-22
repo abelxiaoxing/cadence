@@ -7289,7 +7289,12 @@ function decodeChatSummary(v) {
     ...has("live") ? ["live"] : [],
     ...has("archived") ? ["archived"] : []
   ]);
-  const live = has("live") ? closed(o.live, ["commandId", "epoch"]) : null;
+  const liveHasStartedAt = has("live") && o.live !== null && typeof o.live === "object" && Object.hasOwn(o.live, "startedAt");
+  const live = has("live") ? closed(o.live, [
+    "commandId",
+    "epoch",
+    ...liveHasStartedAt ? ["startedAt"] : []
+  ]) : null;
   if (has("archived") && o.archived !== true)
     throw new ContractError("invalid");
   return {
@@ -7303,7 +7308,8 @@ function decodeChatSummary(v) {
     ...live ? {
       live: {
         commandId: decodeId(live.commandId),
-        epoch: decodeId(live.epoch)
+        epoch: decodeId(live.epoch),
+        ...liveHasStartedAt ? { startedAt: integer(live.startedAt, 0) } : {}
       }
     } : {},
     ...has("archived") ? { archived: true } : {}
@@ -15782,7 +15788,11 @@ class ConversationRecords {
         status: live2.state.status,
         updatedAt: live2.accepted.at,
         origin: "webui",
-        live: { commandId: live2.commandId, epoch: live2.epoch },
+        live: {
+          commandId: live2.commandId,
+          epoch: live2.epoch,
+          startedAt: live2.accepted.at
+        },
         ...hidden
       };
     }
@@ -15802,7 +15812,13 @@ class ConversationRecords {
       status,
       updatedAt: Math.max(Math.trunc(listed.mtimeMs), live2?.accepted.at ?? 0),
       origin: s.webui ? "webui" : "terminal",
-      ...live2 ? { live: { commandId: live2.commandId, epoch: live2.epoch } } : {},
+      ...live2 ? {
+        live: {
+          commandId: live2.commandId,
+          epoch: live2.epoch,
+          startedAt: live2.accepted.at
+        }
+      } : {},
       ...hidden
     };
   }
@@ -18045,7 +18061,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "deff8c3062f8e6711e523a853378934d26db74ded470cba88a54956fcbcb60eb",
+    contractHash: "357ec2a35ad5176d65a389498be689f7d453e9b48c3e998e5a0d171bc49e4feb",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -37440,7 +37456,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.2",
-  build: "717f94f14f53be3ea9244eb7afcfdd23c18ad3c9b490a30e57aea72b26bfd312",
+  build: "fb0852d081bd45dbd3eb938b49acf5f69c7c481c47b64aeaa753e4ba9d0ee01d",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -41035,7 +41051,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "deff8c3062f8e6711e523a853378934d26db74ded470cba88a54956fcbcb60eb";
+  const embedded = "357ec2a35ad5176d65a389498be689f7d453e9b48c3e998e5a0d171bc49e4feb";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

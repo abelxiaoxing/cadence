@@ -206,17 +206,27 @@ it("conversation rows are a title and a time; origin is the icon's name and a st
       conversationId={chats[1].id}
     />,
   );
-  // Active and dated rows share one history section; only the latter
-  // participate in date grouping/the filter.
-  const [running, history] = html.split("Conversation history");
-  expect(running).toContain("Live reply");
-  expect(running).not.toContain("lp-time-label");
+  // Running conversations stay inside Conversation history at the top of Today,
+  // never floating above the history heading. Earlier is collapsed by default.
+  const [above, history] = html.split("Conversation history");
+  expect(above).not.toContain("Live reply");
   expect(history.match(/class="lp-time-label">[^<]+</g)).toEqual([
     'class="lp-time-label">Today<',
     'class="lp-time-label">Yesterday<',
-    'class="lp-time-label">Earlier<',
   ]);
+  expect(history).toContain(
+    'class="lp-time-label lp-time-toggle" aria-expanded="false"',
+  );
+  expect(history).toContain(
+    '<span>Earlier</span><span class="lp-time-count">2</span>',
+  );
+  // Older rows beyond Today and Yesterday are folded until expanded or filtered.
+  expect(history).not.toContain("Cadence idle");
+  expect(history).not.toContain("Undated");
   expect(history).toContain('aria-label="Filter conversations…"');
+  expect(history.indexOf('title="Live reply"')).toBeLessThan(
+    history.indexOf('title="Done today"'),
+  );
   // The open conversation is marked for assistive technology, not only tinted.
   expect(history).toMatch(
     /class="session-item active" aria-current="true" title="Done today"/,
@@ -228,31 +238,27 @@ it("conversation rows are a title and a time; origin is the icon's name and a st
   expect(html).not.toContain(">completed<");
   expect(html).not.toContain("Ordinary");
   expect(html).not.toContain("Ready for conversation");
-  // Where it started is the icon's accessible name.
+  // Where it started is the icon's accessible name (Live reply + Done today).
   expect(
     history.match(/role="img" aria-label="Started in the WebUI"/g),
-  ).toHaveLength(3);
+  ).toHaveLength(2);
   expect(history).toMatch(
     /role="img" aria-label="Started in the terminal" title="Started in the terminal">.*Broke yesterday/,
   );
-  // A state that is not plain completion is said in words.
-  expect(running).toContain(
-    'class="status-dot busy history-activity-mark" role="img" aria-label="Working"',
+  // A running row carries its distinct emerald running styling and trailing mark.
+  const liveRow = history.match(
+    /<button\b[^>]*title="Live reply"[^>]*>.*?<\/button>/s,
+  )?.[0];
+  expect(liveRow).toContain('class="session-item running"');
+  expect(liveRow).toContain(
+    'class="status-dot live history-activity-mark" role="img" aria-label="Working"',
   );
-  expect(running).not.toContain("session-time");
+  expect(liveRow).not.toContain("session-time");
   expect(html.match(/<section class="lp-section /g)).toHaveLength(1);
   expect(history).toContain(
     '<span class="session-sub session-state failed">failed</span>',
   );
-  expect(history).toContain(
-    '<span class="session-sub session-state unknown">unknown</span>',
-  );
   expect(history).toContain(">22:00</time>");
-  expect(history).toContain(">1 Nov</time>");
-  // An unrecorded time shows none rather than 1970.
-  expect(history).toMatch(
-    /Undated<\/span><span class="session-sub session-state unknown">unknown<\/span><\/span><\/button>/,
-  );
 });
 const summary = (
   title: string,
@@ -261,7 +267,7 @@ const summary = (
   id: id(),
   title,
   status,
-  updatedAt: 1000,
+  updatedAt: Date.now(),
   leaf: null,
   origin: "webui",
 });
@@ -349,7 +355,10 @@ it("pins one session until its last independent reply or linked run leaves the r
       html.indexOf('title="Earlier discussion"'),
     );
     expect(html).toContain(
-      'class="session-item active" aria-current="true" title="Pinned session"><span class="status-dot busy',
+      'class="session-item active running" aria-current="true" title="Pinned session"',
+    );
+    expect(html).toContain(
+      'class="status-dot live history-activity-mark" role="img" aria-label="Working"',
     );
   }
   const settled = draw([], []);
@@ -378,32 +387,37 @@ it("pins a direct owner's reply by roster membership until settlement, independe
       chatActivityKnown,
       conversationId: reply.id,
     }).split('<header class="lp-section-header"');
-  const row =
+  const liveRow =
+    'class="session-item active running" aria-current="true" title="Direct reply"';
+  const staleRow =
+    'class="session-item active stale-running" aria-current="true" title="Direct reply"';
+  const idleRow =
     'class="session-item active" aria-current="true" title="Direct reply"';
-  const [running, firstPage] = draw([reply]);
-  const [closing, secondPage] = draw([settling]);
-  for (const [prefix, page] of [
-    [running, firstPage],
-    [closing, secondPage],
+  const [aboveFirst, firstHistory] = draw([reply]);
+  const [aboveSecond, secondHistory] = draw([settling]);
+  for (const [above, history] of [
+    [aboveFirst, firstHistory],
+    [aboveSecond, secondHistory],
   ]) {
-    expect(prefix).toContain(row);
-    expect(prefix).toContain('aria-label="Working"');
-    expect(prefix).not.toContain('class="session-actions"');
-    expect(page).not.toContain(reply.title);
+    expect(above).not.toContain(reply.title);
+    expect(history).toContain(liveRow);
+    expect(history).toContain('aria-label="Working"');
+    expect(history).not.toContain('class="session-actions"');
+    expect(history.match(/title="Direct reply"/g)).toHaveLength(1);
   }
   const outcome = 'class="session-sub session-state failed">failed</span>';
-  expect(closing).toContain(outcome);
-  const [released, lastPage] = draw([]);
-  expect(released).not.toContain(reply.title);
-  expect(lastPage).toContain(row);
-  expect(lastPage).not.toContain("history-activity-mark");
+  expect(secondHistory).toContain(outcome);
+  const [aboveLast, lastHistory] = draw([]);
+  expect(aboveLast).not.toContain(reply.title);
+  expect(lastHistory).toContain(idleRow);
+  expect(lastHistory).not.toContain("history-activity-mark");
   // A failed read retains the last roster, or the page's live hint if no
   // roster has arrived yet. Neither is a fresh observation.
-  for (const [stale] of [
+  for (const [, stale] of [
     draw([settling], false),
     draw(undefined, false, settling),
   ]) {
-    expect(stale).toContain(row);
+    expect(stale).toContain(staleRow);
     expect(stale).toContain('aria-label="Stale observation"');
     expect(stale).toContain(outcome);
   }
@@ -498,26 +512,31 @@ it("joins shared terminal reports to their project's history without consuming u
       },
     });
   };
-  const [outside, pinned, history] = draw([terminal, second], true, [
+  const [outside, above, history] = draw([terminal, second], true, [
     flow,
     otherFlow,
   ]).split(
     /<section class="lp-section grow"|<header class="lp-section-header"/,
   );
-  expect(pinned.match(/class="session-title">Mineral notes</g)).toHaveLength(1);
-  expect(history).not.toContain(listed.title);
-  expect(pinned).toContain(`aria-label="Details · ${listed.title} (4)"`);
+  expect(above).not.toContain(listed.title);
+  expect(history.match(/class="session-title">Mineral notes</g)).toHaveLength(
+    1,
+  );
+  expect(history.indexOf(`title="${listed.title}"`)).toBeLessThan(
+    history.indexOf(`title="${idle.title}"`),
+  );
+  expect(history).toContain(`aria-label="Details · ${listed.title} (4)"`);
   for (const a of [terminal, second])
-    expect(pinned).toContain(`${a.leaf} · ${a.instance} · ${a.id}`);
-  expect(pinned).toContain(
+    expect(history).toContain(`${a.leaf} · ${a.instance} · ${a.id}`);
+  expect(history).toContain(
     `aria-label="Cancel workflow — request stop · ${flow.goal} · ${flow.id}">`,
   );
-  expect(pinned).toContain(
+  expect(history).toContain(
     `aria-label="Cancel workflow — request stop · ${otherFlow.goal} · ${otherFlow.id}" disabled`,
   );
-  expect(pinned.match(/class="conversation-stop"/g)).toHaveLength(2);
-  expect(pinned).toContain('title="Conversation unwritten"');
-  expect(pinned).not.toContain('aria-label="Rename Conversation unwritten');
+  expect(history.match(/class="conversation-stop"/g)).toHaveLength(2);
+  expect(history).toContain('title="Conversation unwritten"');
+  expect(history).not.toContain('aria-label="Rename Conversation unwritten');
   expect(outside).not.toMatch(/Owner workflow|Owner turn/);
   expect(outside.match(/Terminal turn \(observe only\)/g)).toHaveLength(3);
   expect(outside).toContain("/other");
@@ -526,7 +545,10 @@ it("joins shared terminal reports to their project's history without consuming u
   const stale = draw([{ ...second, freshness: "unknown" }], false, [], true);
   expect(stale).toContain("Missing work is not known to have finished");
   expect(stale).toContain(
-    `title="${listed.title}"><span class="status-dot busy history-activity-mark" role="img" aria-label="Stale observation"`,
+    `class="session-item stale-running" title="${listed.title}"`,
+  );
+  expect(stale).toContain(
+    'class="status-dot busy history-activity-mark" role="img" aria-label="Stale observation"',
   );
   expect(stale).toContain('class="lp-count">Not observed');
   expect(
@@ -589,24 +611,24 @@ it("promotes the session from owner discovery alone; only matching viewer runs a
     );
   const reports = [report(a), report(b)];
   for (const roster of [undefined, [a], [b, a]]) {
-    const [outside, pinned, history] = draw(reports, roster);
+    const [outside, above, history] = draw(reports, roster);
     expect(outside.match(/Owner workflow/g)).toHaveLength(1);
     expect(outside).toContain("/elsewhere");
-    expect(pinned.match(/class="session-title">Gem log</g)).toHaveLength(1);
-    expect(pinned.match(/class="history-run"/g)).toHaveLength(2);
-    expect(pinned).toContain('aria-label="Working"');
-    expect(history).not.toContain(listed.title);
+    expect(above).not.toContain(listed.title);
+    expect(history.match(/class="session-title">Gem log</g)).toHaveLength(1);
+    expect(history.match(/class="history-run"/g)).toHaveLength(2);
+    expect(history).toContain('aria-label="Working"');
     for (const r of [a, b]) {
       if (roster?.includes(r)) {
-        expect(pinned).toContain(
+        expect(history).toContain(
           `aria-label="Cancel workflow — request stop · Inspect · ${r.id}"${r === a ? ' disabled=""' : ">"}`,
         );
       } else {
-        expect(pinned).toContain(` · ${r.epoch} · ${r.id}"`);
-        expect(pinned).toContain(`${r.id.slice(0, 8)}</span>`);
+        expect(history).toContain(` · ${r.epoch} · ${r.id}"`);
+        expect(history).toContain(`${r.id.slice(0, 8)}</span>`);
       }
     }
-    expect(pinned.match(/class="conversation-stop"/g) ?? []).toHaveLength(
+    expect(history.match(/class="conversation-stop"/g) ?? []).toHaveLength(
       roster?.length ?? 0,
     );
   }
@@ -614,12 +636,12 @@ it("promotes the session from owner discovery alone; only matching viewer runs a
   // detail. Matching viewer evidence replaces only that exact observation.
   const orphans = reports.map((r) => ({ ...r, sessionId: null }));
   for (const roster of [undefined, [a], [a, b]]) {
-    const [outside, prefix, history] = draw(orphans, roster, false);
+    const [outside, above, history] = draw(orphans, roster, false);
     expect(outside.match(/Owner workflow/g)).toHaveLength(1);
     expect(outside).toContain("/elsewhere");
+    expect(above).not.toContain("conversation-row");
     expect(history).toContain(listed.title);
-    expect(prefix).not.toContain("conversation-row");
-    const details = prefix.match(
+    const details = history.match(
       /<details class="history-unlinked">(.*?)<\/details>/,
     )?.[1];
     expect(details).toContain("Unattributed work · 2");
@@ -637,13 +659,15 @@ it("promotes the session from owner discovery alone; only matching viewer runs a
     );
   }
   // Its viewer no longer lists any run, but gateway still observes one.
-  const [, last, history] = draw([reports[1]], []);
-  expect(last).toContain(listed.title);
-  expect(last).toContain(b.id);
-  expect(history).not.toContain(listed.title);
-  const [, done, past] = draw([], []);
-  expect(done).not.toContain(listed.title);
+  const [, aboveLast, lastHistory] = draw([reports[1]], []);
+  expect(aboveLast).not.toContain(listed.title);
+  expect(lastHistory).toContain(listed.title);
+  expect(lastHistory).toContain(b.id);
+  expect(lastHistory).toContain('class="session-item running"');
+  const [, aboveDone, past] = draw([], []);
+  expect(aboveDone).not.toContain(listed.title);
   expect(past).toContain(listed.title);
+  expect(past).not.toContain('class="session-item running"');
 });
 it("replaces only the exact unattributed owner turn when its viewer session appears", () => {
   const project = "/notes";
@@ -848,8 +872,84 @@ it("the initial conversation shell renders without a selected snapshot or task",
   expect(html).not.toContain(">History details</button>");
   // A conversation's inspector has Files and its session's Branches; Files is
   // the one shown until Branches is chosen.
-  expect(html).toMatch(
-    /class="rp-tab" aria-pressed="true"><svg.*?<\/svg>Files<\/button><button type="button" class="rp-tab" aria-pressed="false"><svg.*?<\/svg>Branches<\/button>/,
-  );
+  expect(
+    html.match(
+      /class="rp-tab" aria-pressed="true"><svg.*?<\/svg>Files<\/button><button type="button" class="rp-tab" aria-pressed="false"><svg.*?<\/svg>Branches<\/button>/,
+    ),
+  ).not.toBeNull();
   expect(html).not.toContain("branches-panel");
+});
+
+it("ranks multiple concurrent running conversations newest-started first without reordering when write clocks or phases change", () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 10, 10, 15, 30));
+  const earliest = {
+    ...summary("Started first", "running"),
+    id: "ffffffff-0000-4000-8000-000000000001",
+    updatedAt: new Date(2026, 10, 10, 15, 29).getTime(),
+    live: {
+      commandId: id(),
+      epoch: id(),
+      startedAt: new Date(2026, 10, 10, 15, 0).getTime(),
+    },
+  };
+  const middle = {
+    ...summary("Started second", "completed"),
+    id: "88888888-0000-4000-8000-000000000002",
+    updatedAt: new Date(2026, 10, 10, 15, 10).getTime(),
+  };
+  const latest = {
+    ...summary("Started third", "running"),
+    id: "11111111-0000-4000-8000-000000000003",
+    updatedAt: new Date(2026, 10, 10, 15, 15).getTime(),
+    live: {
+      commandId: id(),
+      epoch: id(),
+      startedAt: new Date(2026, 10, 10, 15, 20).getTime(),
+    },
+  };
+  const flow: WorkflowRun = {
+    ...workflow("Middle workflow"),
+    diagnostics: {
+      acceptedAt: new Date(2026, 10, 10, 15, 10).getTime(),
+      acquiredAt: null,
+      settledAt: null,
+      owner: {
+        version: "0",
+        build: "test",
+        entry: "cli",
+        pid: 1,
+        node: "22",
+        platform: "linux",
+        startedAt: 1,
+      },
+    },
+  };
+  const idle = {
+    ...summary("Completed today", "completed"),
+    updatedAt: new Date(2026, 10, 10, 15, 25).getTime(),
+  };
+  const draw = (phase: WorkflowRun["phase"], bumpFirstMs = 0) =>
+    historyView({
+      chats: [earliest, idle, middle, latest],
+      activeChats: [
+        { ...earliest, updatedAt: earliest.updatedAt + bumpFirstMs },
+        latest,
+      ],
+      workflows: [{ ...flow, phase }],
+      workflowLinks: [{ runId: flow.id, conversationId: middle.id }],
+    });
+  const first = draw("implementing");
+  const titles = [
+    ...first.matchAll(/class="session-title">([^<]+)<\/span>/g),
+  ].map((m) => m[1]);
+  // Newest started first (latest -> middle workflow -> earliest), all before idle today.
+  expect(titles.filter((name) => name !== flow.goal)).toEqual([
+    "Started third",
+    "Started second",
+    "Started first",
+    "Completed today",
+  ]);
+  // Updating write clock or workflow phase keeps the exact same order and markup.
+  expect(draw("verifying", 120_000)).toBe(first);
 });

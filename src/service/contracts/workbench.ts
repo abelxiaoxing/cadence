@@ -633,7 +633,7 @@ export interface ChatSummary {
   origin: "terminal" | "webui";
   cadence?: boolean;
   /** The browser reply in progress, which Stop interrupts. */
-  live?: { commandId: string; epoch: string };
+  live?: { commandId: string; epoch: string; startedAt?: number };
   /** Present only for a conversation the history list leaves out. */
   archived?: true;
 }
@@ -1488,7 +1488,18 @@ export function decodeChatSummary(v: unknown): ChatSummary {
     ...(has("live") ? ["live"] : []),
     ...(has("archived") ? ["archived"] : []),
   ]);
-  const live = has("live") ? closed(o.live, ["commandId", "epoch"]) : null;
+  const liveHasStartedAt =
+    has("live") &&
+    o.live !== null &&
+    typeof o.live === "object" &&
+    Object.hasOwn(o.live, "startedAt");
+  const live = has("live")
+    ? closed(o.live, [
+        "commandId",
+        "epoch",
+        ...(liveHasStartedAt ? ["startedAt"] : []),
+      ])
+    : null;
   if (has("archived") && o.archived !== true)
     throw new ContractError("invalid");
   return {
@@ -1504,6 +1515,9 @@ export function decodeChatSummary(v: unknown): ChatSummary {
           live: {
             commandId: decodeId(live.commandId),
             epoch: decodeId(live.epoch),
+            ...(liveHasStartedAt
+              ? { startedAt: integer(live.startedAt, 0) }
+              : {}),
           },
         }
       : {}),

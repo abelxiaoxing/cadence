@@ -54,6 +54,7 @@ import {
 import { FileChangeCard } from "../../web/src/components/workspace/FileChangeCard";
 import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
 import { RetainedStepResult } from "../../web/src/components/workspace/RetainedStepResult";
+import { TaskSidebar } from "../../web/src/components/workspace/TaskSidebar";
 import { useStepDetail } from "../../web/src/components/workspace/turn-source";
 import { WaitingMessages } from "../../web/src/components/workspace/WaitingMessages";
 import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAgentView";
@@ -3384,4 +3385,148 @@ it("delays passive reading chrome for READING_GRACE_MS and avoids previewModels 
   });
   expect(workspace.modelCatalog.mock.lastCall?.[2]).toBe("0:0");
   expect(workspace.modelCatalog.mock.lastCall?.[3]).toBeUndefined();
+});
+
+it("TaskSidebar collapses Earlier by default, filters running rows and auto-expands Earlier on search, and shows a live pill when collapsed", () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 10, 10, 12));
+  const client = new ServiceClient(transport());
+  const runningChat = {
+    id: crypto.randomUUID(),
+    title: "Refactor optical sidebar",
+    leaf: "leaf",
+    status: "running" as const,
+    updatedAt: new Date(2026, 10, 10, 11, 55).getTime(),
+    origin: "webui" as const,
+    live: {
+      commandId: crypto.randomUUID(),
+      epoch: crypto.randomUUID(),
+      startedAt: new Date(2026, 10, 10, 11, 55).getTime(),
+    },
+  };
+  const todayChat = {
+    id: crypto.randomUUID(),
+    title: "Today note",
+    leaf: "leaf",
+    status: "completed" as const,
+    updatedAt: new Date(2026, 10, 10, 9, 5).getTime(),
+    origin: "webui" as const,
+  };
+  const earlierChat = {
+    id: crypto.randomUUID(),
+    title: "Legacy archive audit",
+    leaf: "leaf",
+    status: "completed" as const,
+    updatedAt: new Date(2026, 10, 1, 9).getTime(),
+    origin: "webui" as const,
+  };
+  const draw = () => {
+    const tree = render(() =>
+      TaskSidebar({
+        client,
+        taskId: null,
+        scope: null,
+        runs: [],
+        canCancel: false,
+        canceling: new Set(),
+        onCancel: workspace.no,
+        onTask: workspace.no,
+        onScope: workspace.no,
+        chats: [runningChat, todayChat, earlierChat],
+        activeChats: [runningChat],
+        activeRuns: {
+          status: "complete",
+          runs: [],
+          epoch: crypto.randomUUID(),
+          workspaceId: crypto.randomUUID(),
+          storeId: crypto.randomUUID(),
+        },
+      }),
+    );
+    commit();
+    return tree;
+  };
+  const buttons = (tree: ReactNode) =>
+    elements<ComponentProps<"button">>(tree, "button");
+  const inputs = (tree: ReactNode) =>
+    elements<ComponentProps<"input">>(tree, "input");
+  const spans = (tree: ReactNode) =>
+    elements<ComponentProps<"span">>(tree, "span");
+  const rowTitles = (tree: ReactNode) =>
+    elements<ComponentProps<"div">>(tree, "div")
+      .filter((el) => el.props.className === "history-entry")
+      .map((el) => {
+        const items = Array.isArray(el.props.children)
+          ? el.props.children
+          : [el.props.children];
+        const row = items[0] as ReactElement<{ chat?: { title?: string } }>;
+        return row?.props?.chat?.title ?? "";
+      });
+
+  // Initial: running + today shown; Earlier collapsed with toggle count.
+  const initial = draw();
+  expect(rowTitles(initial)).toEqual([
+    "Refactor optical sidebar",
+    "Today note",
+  ]);
+  const earlierToggle = required(
+    buttons(initial).find((b) => b.props.className?.includes("lp-time-toggle")),
+  );
+  expect(earlierToggle.props["aria-expanded"]).toBe(false);
+  expect(
+    spans(initial).some((s) => s.props.className?.includes("lp-live-pill")),
+  ).toBe(false);
+
+  // Expanding Earlier reveals older history rows.
+  earlierToggle.props.onClick?.({} as never);
+  const expanded = draw();
+  expect(
+    buttons(expanded).find((b) => b.props.className?.includes("lp-time-toggle"))
+      ?.props["aria-expanded"],
+  ).toBe(true);
+  expect(rowTitles(expanded)).toEqual([
+    "Refactor optical sidebar",
+    "Today note",
+    "Legacy archive audit",
+  ]);
+
+  // Collapse Earlier again, then type a filter matching only Earlier:
+  // running rows participate in filtering and Earlier auto-expands!
+  buttons(expanded)
+    .find((b) => b.props.className?.includes("lp-time-toggle"))
+    ?.props.onClick?.({} as never);
+  const recollapsed = draw();
+  expect(rowTitles(recollapsed)).toEqual([
+    "Refactor optical sidebar",
+    "Today note",
+  ]);
+  const search = required(
+    inputs(recollapsed).find((i) => i.props.type === "search"),
+  );
+  search.props.onChange?.({ target: { value: "audit" } } as never);
+  const filteredEarlier = draw();
+  expect(rowTitles(filteredEarlier)).toEqual(["Legacy archive audit"]);
+  expect(
+    buttons(filteredEarlier).find((b) =>
+      b.props.className?.includes("lp-time-toggle"),
+    )?.props["aria-expanded"],
+  ).toBe(true);
+
+  // Filtering for the running chat matches it cleanly too.
+  inputs(filteredEarlier)
+    .find((i) => i.props.type === "search")
+    ?.props.onChange?.({ target: { value: "optical" } } as never);
+  const filteredRunning = draw();
+  expect(rowTitles(filteredRunning)).toEqual(["Refactor optical sidebar"]);
+
+  // Collapsing Conversation history shows the compact running pill in the header.
+  buttons(filteredRunning)
+    .find((b) => b.props.className === "lp-section-heading")
+    ?.props.onClick?.({} as never);
+  const collapsedSection = draw();
+  const pill = spans(collapsedSection).find((s) =>
+    s.props.className?.includes("lp-live-pill"),
+  );
+  expect(pill).toBeDefined();
+  expect(pill?.props["aria-label"]).toBe("{count} running");
 });

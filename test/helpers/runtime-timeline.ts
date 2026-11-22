@@ -232,7 +232,9 @@ export function timelineResults(
       status,
       updatedAt: 0,
       origin: "terminal",
-      ...(!ended ? { live: { commandId: ids.command, epoch: ids.epoch } } : {}),
+      ...(!ended
+        ? { live: { commandId: ids.command, epoch: ids.epoch, startedAt: 1 } }
+        : {}),
     },
     leaf,
     continues: true,
@@ -534,7 +536,7 @@ export function independentResults(
         updatedAt: 0,
         origin: "terminal",
         ...(!point.settled
-          ? { live: { commandId: ids.command, epoch: ids.epoch } }
+          ? { live: { commandId: ids.command, epoch: ids.epoch, startedAt: 1 } }
           : {}),
       },
       leaf,

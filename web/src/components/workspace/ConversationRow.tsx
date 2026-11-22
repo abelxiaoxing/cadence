@@ -142,6 +142,7 @@ export function ConversationRow({
   state = "",
   tone = "",
   activityLabel,
+  activityState,
   onOpen,
   row,
   unavailable = "",
@@ -157,6 +158,8 @@ export function ConversationRow({
   state?: string;
   tone?: string;
   activityLabel?: string;
+  /** Distinguishes confirmed live activity from a stale observation. */
+  activityState?: "live" | "stale";
   onOpen(): void;
   row?: RowState;
   unavailable?: string;
@@ -295,23 +298,22 @@ export function ConversationRow({
         </span>
       </form>
     );
+  const liveState = activityState ?? (activityLabel ? "live" : undefined);
   return (
     <div className={`conversation-row${onArchive ? " has-actions" : ""}`}>
       <button
         type="button"
-        className={`session-item${selected ? " active" : ""}`}
+        className={`session-item${selected ? " active" : ""}${
+          liveState === "live"
+            ? " running"
+            : liveState === "stale"
+              ? " stale-running"
+              : ""
+        }`}
         aria-current={selected ? "true" : undefined}
         onClick={onOpen}
         title={chat.title}
       >
-        {activityLabel && (
-          <span
-            className="status-dot busy history-activity-mark"
-            role="img"
-            aria-label={activityLabel}
-            title={activityLabel}
-          />
-        )}
         {icon}
         <span className="session-info">
           <span className="session-title">{chat.title}</span>
@@ -319,7 +321,14 @@ export function ConversationRow({
             <span className={`session-sub session-state ${tone}`}>{state}</span>
           )}
         </span>
-        {!activityLabel &&
+        {activityLabel ? (
+          <span
+            className={`status-dot ${liveState === "stale" ? "busy" : "live"} history-activity-mark`}
+            role="img"
+            aria-label={activityLabel}
+            title={activityLabel}
+          />
+        ) : (
           chat.updatedAt !== undefined &&
           chat.updatedAt > 0 && (
             <time
@@ -329,7 +338,8 @@ export function ConversationRow({
             >
               {rowTime(chat.updatedAt, tag)}
             </time>
-          )}
+          )
+        )}
       </button>
       {onArchive && (
         <span className="session-actions">

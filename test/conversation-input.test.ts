@@ -436,7 +436,11 @@ it("two sessions run independently even while a workflow holds exclusive checkou
   expect(state()).toMatchObject({ status: "starting", user: null });
   await auth.entered;
   expect(state()).toMatchObject({ status: "starting" });
-  const live = { commandId, epoch: f.epoch };
+  const live = {
+    commandId,
+    epoch: f.epoch,
+    startedAt: f.records.accepted(commandId)?.at,
+  };
   expect(
     decodeWorkbenchResult(
       await f.workbench.read({ kind: "conversation-active" }),
