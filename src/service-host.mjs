@@ -10453,17 +10453,17 @@ class PiSessions {
     }
     return listed;
   }
-  session(id) {
-    const listed = this.find(id);
-    if (!listed)
+  session(id, listed) {
+    const found = listed === undefined ? this.find(id) : listed;
+    if (!found)
       return;
-    let parsed = this.open.get(listed.path);
-    this.open.delete(listed.path);
-    parsed ??= new ParsedSession(listed.path);
+    let parsed = this.open.get(found.path);
+    this.open.delete(found.path);
+    parsed ??= new ParsedSession(found.path);
     parsed.refresh();
     if (parsed.header?.id !== id)
       throw new ContractError("corrupt-selected");
-    this.open.set(listed.path, parsed);
+    this.open.set(found.path, parsed);
     if (this.open.size > OPEN_SESSIONS)
       this.open.delete(this.open.keys().next().value);
     return parsed;
@@ -15768,9 +15768,9 @@ class ConversationRecords {
       })
     } : null;
   }
-  summary(id, live2, archived = this.archived(id)) {
+  summary(id, live2, archived = this.archived(id), found) {
     this.assertSupported(id);
-    const listed = this.sessions.find(id);
+    const listed = found === undefined ? this.sessions.find(id) : found;
     const hidden = archived ? { archived: true } : {};
     if (!listed) {
       if (!live2)
@@ -15790,7 +15790,7 @@ class ConversationRecords {
     const secrets = this.readSecrets();
     let status = live2?.state.status ?? s.stop?.status ?? "completed";
     if (!live2 && this.index(id).commands.length) {
-      const session = this.sessions.session(id);
+      const session = this.sessions.session(id, listed);
       const user = session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
       const recorded = user ? this.overlay(id, session).get(user) : undefined;
       status = this.attempt(id, s.leaf)?.status ?? recorded?.status ?? status;
@@ -15818,7 +15818,7 @@ class ConversationRecords {
     }
     const page = listed.slice(start, start + PAGE);
     const entries3 = page.flatMap((l) => {
-      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id), archived);
+      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id), archived, l);
       return summary ? [summary] : [];
     });
     const last = page.at(-1);
@@ -15838,9 +15838,9 @@ class ConversationRecords {
       })
     };
   }
-  branch(id, leaf, exact) {
+  branch(id, leaf, exact, found) {
     this.assertSupported(id);
-    const session = this.sessions.session(id);
+    const session = this.sessions.session(id, found);
     const running = this.liveFor(id);
     let parts;
     try {
@@ -15948,10 +15948,12 @@ class ConversationRecords {
   }
   conversation(id, leaf, known) {
     this.o.assertCurrent();
-    const view = this.branch(id, leaf, false);
-    const running = view.live ?? this.liveFor(id);
-    const summary = this.summary(id, running);
+    this.assertSupported(id);
     const listed = this.sessions.find(id);
+    const found = listed ?? null;
+    const view = this.branch(id, leaf, false, found);
+    const running = view.live ?? this.liveFor(id);
+    const summary = this.summary(id, running, undefined, found);
     const context = this.context(view);
     const cache = view.session?.cache;
     const pending = running ? this.pending(running, view.session) : [];
@@ -37438,7 +37440,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.2",
-  build: "36c1e3e4360b2fa500a149daedf911a1dac8f887fce3dffb5c3aae39778ed054",
+  build: "717f94f14f53be3ea9244eb7afcfdd23c18ad3c9b490a30e57aea72b26bfd312",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

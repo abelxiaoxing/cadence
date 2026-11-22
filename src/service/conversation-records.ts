@@ -472,9 +472,10 @@ export class ConversationRecords {
     id: string,
     live: LiveTurn | undefined,
     archived = this.archived(id),
+    found?: ReturnType<PiSessions["find"]> | null,
   ): ChatSummary | null {
     this.assertSupported(id);
-    const listed = this.sessions.find(id);
+    const listed = found === undefined ? this.sessions.find(id) : found;
     const hidden = archived ? { archived: true as const } : {};
     if (!listed) {
       if (!live) return null;
@@ -496,7 +497,7 @@ export class ConversationRecords {
     // Pi's stop reason is model evidence, not the owner's native/auth/storage
     // settlement. Match only the displayed branch's user, never another branch.
     if (!live && this.index(id).commands.length) {
-      const session = this.sessions.session(id);
+      const session = this.sessions.session(id, listed);
       const user = session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
       const recorded = user ? this.overlay(id, session).get(user) : undefined;
       status = this.attempt(id, s.leaf)?.status ?? recorded?.status ?? status;
@@ -547,6 +548,7 @@ export class ConversationRecords {
         l.summary.id,
         this.liveFor(l.summary.id),
         archived,
+        l,
       );
       return summary ? [summary] : [];
     });
@@ -579,6 +581,7 @@ export class ConversationRecords {
     id: string,
     leaf: string | null,
     exact: boolean,
+    found?: ReturnType<PiSessions["find"]> | null,
   ): {
     session: ParsedSession | undefined;
     leaf: string | null;
@@ -589,7 +592,7 @@ export class ConversationRecords {
     parts: Parts | undefined;
   } {
     this.assertSupported(id);
-    const session = this.sessions.session(id);
+    const session = this.sessions.session(id, found);
     const running = this.liveFor(id);
     let parts: Parts | undefined;
     try {
@@ -761,10 +764,14 @@ export class ConversationRecords {
     known: string | null,
   ): WorkbenchResult {
     this.o.assertCurrent();
-    const view = this.branch(id, leaf, false);
-    const running = view.live ?? this.liveFor(id);
-    const summary = this.summary(id, running);
+    this.assertSupported(id);
+    // Resolve the session entry once per read so an unstarted conversation ID
+    // does not trigger repeated full directory scans inside the same request.
     const listed = this.sessions.find(id);
+    const found = listed ?? null;
+    const view = this.branch(id, leaf, false, found);
+    const running = view.live ?? this.liveFor(id);
+    const summary = this.summary(id, running, undefined, found);
     const context = this.context(view);
     const cache = view.session?.cache;
     const pending = running ? this.pending(running, view.session) : [];

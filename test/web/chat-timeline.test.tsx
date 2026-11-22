@@ -41,7 +41,10 @@ import {
 } from "../../web/src/components/workspace/ChatSteps";
 import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
 import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
-import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
+import {
+  ChatWorkspace,
+  READING_GRACE_MS,
+} from "../../web/src/components/workspace/ChatWorkspace";
 import {
   DesignBar,
   DesignDialog,
@@ -144,6 +147,7 @@ const workspace = vi.hoisted(() => ({
   design: undefined as ReturnType<typeof newDesign> | undefined,
   refreshMode: vi.fn(),
   modeError: "",
+  modelCatalog: vi.fn(),
   t: (key: string) => key,
 }));
 vi.mock("../../web/src/client/use-conversation", async (original) => {
@@ -211,7 +215,10 @@ vi.mock("../../web/src/client/conversation-tree", async (original) => ({
   }),
 }));
 vi.mock("../../web/src/client/use-model-catalog", () => ({
-  useModelCatalog: () => ({ loading: false, reread: workspace.no }),
+  useModelCatalog: (...args: unknown[]) => {
+    workspace.modelCatalog(...args);
+    return { loading: false, reread: workspace.no, isCurrent: () => true };
+  },
 }));
 vi.mock("../../web/src/client/use-workflow-runs", () => ({
   useWorkflowRuns: () => ({ runs: workspace.runs, unreadable: new Set() }),
@@ -3161,4 +3168,220 @@ it("expanding a long trace restores keyed steps, not their payloads; a focused s
   expect(view({ ...updated, renderId: "other-user" }).head.open).toBe(false);
   merged.head.onToggle();
   expect(view(updated).rowKeys).toEqual(["block:bad"]);
+});
+
+it("useConversation starts the initial head read on the first commit while still fencing pre-commit navigation", async () => {
+  vi.useFakeTimers();
+  const reads: string[] = [];
+  const client: Parameters<typeof useConversation>[0] = {
+    workbenchRead: async (request) => {
+      reads.push(request.kind);
+      return {
+        kind: "ok",
+        value: {
+          kind: "conversation",
+          summary: null,
+          leaf: null,
+          continues: true,
+          turns: 0,
+          branches: 0,
+          runs: [],
+          attempt: null,
+        },
+      };
+    },
+  };
+  const first = render(() => useConversation(client, "fast-chat", true, null));
+  first.choose("ignored-before-commit");
+  commit();
+  expect(reads).toEqual(["conversation"]);
+  await vi.advanceTimersByTimeAsync(0);
+  const loaded = render(() => useConversation(client, "fast-chat", true, null));
+  expect(loaded.summary).toBeNull();
+  expect(loaded.pinned).toBe(false);
+});
+
+it("useWorkbench adjusts a positive poll interval without aborting or restarting the active read", async () => {
+  vi.useFakeTimers();
+  const requests: {
+    signal?: AbortSignal;
+    resolve: (reply: Reply<WorkbenchResult>) => void;
+  }[] = [];
+  const client = {
+    workbenchRead: vi.fn(
+      (_request: unknown, signal?: AbortSignal) =>
+        new Promise((resolve) => {
+          requests.push({ signal, resolve });
+        }),
+    ),
+  } as unknown as Parameters<typeof useWorkbench>[0];
+  const request = {
+    kind: "cadence-conversation" as const,
+    id: crypto.randomUUID(),
+  };
+  render(() => useWorkbench(client, request, 1000));
+  commit();
+  expect(requests).toHaveLength(1);
+  // Switching from 1s to 10s idle backoff keeps the in-flight read alive.
+  render(() => useWorkbench(client, request, 10000));
+  commit();
+  expect(requests).toHaveLength(1);
+  expect(requests[0].signal?.aborted).toBe(false);
+  requests[0].resolve({
+    kind: "ok",
+    value: {
+      kind: "cadence-conversation",
+      state: {
+        id: request.id,
+        revision: 0,
+        enabled: false,
+        head: null,
+        proposal: null,
+        runs: [],
+      },
+    },
+  });
+  await settle();
+  await vi.advanceTimersByTimeAsync(9999);
+  expect(requests).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(requests).toHaveLength(2);
+});
+
+it("delays passive reading chrome for READING_GRACE_MS and avoids previewModels while a live owner is already ready", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  workspace.modelCatalog.mockClear();
+  const pendingReads: {
+    kind: string;
+    resolve: (reply: Reply<WorkbenchResult>) => void;
+  }[] = [];
+  const client = new ServiceClient(
+    transport({
+      workbenchRead: (request) =>
+        new Promise((resolve) => {
+          pendingReads.push({ kind: request.kind, resolve });
+        }),
+    }),
+  );
+  const previewModels = vi.fn();
+  const epoch = crypto.randomUUID();
+  const draw = (freshNew: boolean) => {
+    const tree = render(() =>
+      ChatWorkspace({
+        client,
+        id: "grace-chat",
+        workspaceId: "workspace",
+        initialCwd: "/fixture",
+        freshNew,
+        enabled: true,
+        actionsReady: true,
+        modelAvailability: { status: "ready", epoch, attachmentVersion: 1 },
+        previewModels,
+        onModelChanged: workspace.no,
+        onChanged: workspace.no,
+        onReferenceUsed: workspace.no,
+      }),
+    );
+    commit();
+    return tree;
+  };
+  const headerOf = (tree: ReactNode) =>
+    required(elements<ComponentProps<"header">>(tree, "header")[0]);
+  const readingShells = (tree: ReactNode) =>
+    elements<ComponentProps<"div">>(tree, "div").filter(
+      (el) => el.props.className === "chat-reading-shell",
+    );
+  const composerOf = (tree: ReactNode) =>
+    required(
+      elements<ComponentProps<typeof ChatComposer>>(tree, ChatComposer)[0],
+    );
+
+  // Existing/URL conversation: before READING_GRACE_MS, no reading bar or status flash.
+  const early = draw(false);
+  expect(headerOf(early).props["data-reading" as never]).toBeUndefined();
+  expect(readingShells(early)).toHaveLength(0);
+  expect(composerOf(early).props.status).toBeUndefined();
+  // Live ready owner must not hand previewModels to useModelCatalog during contextRead.
+  expect(workspace.modelCatalog.mock.lastCall?.[3]).toBeUndefined();
+  // After READING_GRACE_MS while still reading, header scanline and reading shell appear.
+  await vi.advanceTimersByTimeAsync(READING_GRACE_MS);
+  const slow = draw(false);
+  expect(headerOf(slow).props["data-reading" as never]).toBe("");
+  expect(readingShells(slow)).toHaveLength(1);
+  expect(composerOf(slow).props.status).toContain("Sending is unavailable");
+  // Resolve all reads: reading chrome clears immediately.
+  for (const req of pendingReads) {
+    if (req.kind === "conversation")
+      req.resolve({
+        kind: "ok",
+        value: {
+          kind: "conversation",
+          summary: null,
+          leaf: null,
+          continues: true,
+          turns: 0,
+          branches: 0,
+          runs: [],
+          attempt: null,
+        },
+      });
+    else if (req.kind === "conversation-context")
+      req.resolve({
+        kind: "ok",
+        value: {
+          kind: "conversation-context",
+          context: {
+            id: "grace-chat",
+            cwd: "/fixture",
+            revision: 0,
+            model: null,
+          },
+        },
+      });
+    else if (req.kind === "cadence-conversation")
+      req.resolve({
+        kind: "ok",
+        value: {
+          kind: "cadence-conversation",
+          state: {
+            id: "grace-chat",
+            revision: 0,
+            enabled: false,
+            head: null,
+            proposal: null,
+            runs: [],
+          },
+        },
+      });
+  }
+  await vi.advanceTimersByTimeAsync(0);
+  const settled = draw(false);
+  expect(headerOf(settled).props["data-reading" as never]).toBeUndefined();
+  expect(readingShells(settled)).toHaveLength(0);
+  expect(composerOf(settled).props.status).toBeUndefined();
+
+  // On a freshNew conversation with a ready owner, models start ready in parallel
+  // (refresh key uses revision 0) without waiting on contextRead or calling previewModels.
+  for (const cell of hooks.cells) cell.cleanup?.();
+  hooks.cursor = 0;
+  hooks.cells = [];
+  hooks.effects.clear();
+  workspace.modelCatalog.mockClear();
+  draw(true);
+  expect(workspace.modelCatalog.mock.lastCall?.[1]).toEqual({
+    status: "ready",
+    epoch,
+    attachmentVersion: 1,
+  });
+  expect(workspace.modelCatalog.mock.lastCall?.[2]).toBe("0:0");
+  expect(workspace.modelCatalog.mock.lastCall?.[3]).toBeUndefined();
 });

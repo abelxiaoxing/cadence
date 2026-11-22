@@ -172,6 +172,11 @@ export function App({
   const [chatId, setChatId] = useState<string | null>(() =>
     initial ? null : (chatFromLocation() ?? crypto.randomUUID()),
   );
+  // Tracks a conversation ID minted by an explicit "New conversation" click in
+  // this tab (never URL/history/refresh navigation), so entry renders directly
+  // in the centered new-conversation layout while background reads verify it.
+  const [freshChatId, setFreshChatId] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState(0);
   const activitySelection = activityRoute(activityHash, chatId ?? "");
   // A workflow subagent (or run) shown in the main area over the current view.
   const [agent, setAgent] = useState<WorkflowAgent | null>(null);
@@ -551,9 +556,28 @@ export function App({
     };
   }, [departView]);
   const selectChat = (selected?: string) => {
+    const nextCwd = workingFolder ?? initialCwd;
+    // Clicking "New conversation" while already on an empty new conversation in
+    // the same folder simply focuses the editor instead of remounting.
+    if (
+      !selected &&
+      chatId &&
+      !taskId &&
+      !agent &&
+      activity?.empty &&
+      (!currentChatLocation || currentChatLocation.cwd === nextCwd)
+    ) {
+      closeDrawer();
+      setFocusRequest((count) => count + 1);
+      return;
+    }
     setActivityHash("");
     const id = selected ?? crypto.randomUUID();
-    if (!selected) setNewConversationCwd(workingFolder ?? initialCwd);
+    setFreshChatId(selected ? null : id);
+    if (!selected) {
+      setNewConversationCwd(nextCwd);
+      setFocusRequest((count) => count + 1);
+    }
     setAgent(null);
     if (id !== chatId) setReference(undefined);
     departView();
@@ -572,7 +596,7 @@ export function App({
     // Selecting the conversation already open keeps the branch it shows.
     const leaf = id === chatId ? activityRoute(location.hash, id).leaf : null;
     history.replaceState(
-      { cadenceCwd: workingFolder ?? initialCwd, cadenceConversationId: id },
+      { cadenceCwd: nextCwd, cadenceConversationId: id },
       "",
       `${location.pathname}${location.search}${branchHash(`#chat=${id}`, leaf)}`,
     );
@@ -586,6 +610,7 @@ export function App({
       );
   }, [chatId]);
   const selectTask = (id: string, title?: string) => {
+    setFreshChatId(null);
     setAgent(null);
     setChatId(null);
     setRightTab("task");
@@ -603,6 +628,7 @@ export function App({
   };
   useEffect(() => {
     const navigate = () => {
+      setFreshChatId(null);
       const target = readHistoryUrl();
       if (!target) {
         const chat = chatFromLocation();
@@ -1411,6 +1437,13 @@ export function App({
                 key={`${project?.id ?? draftNamespace}:${chatId}:${activitySelection.leaf ?? ""}`}
                 client={api.client}
                 id={chatId}
+                freshNew={
+                  !!chatId &&
+                  freshChatId === chatId &&
+                  !activitySelection.selected &&
+                  !activitySelection.leaf
+                }
+                focusRequest={focusRequest}
                 activitySelected={activitySelection.selected}
                 initialLeaf={activitySelection.leaf}
                 initialCwd={initialCwd}

@@ -2741,3 +2741,41 @@ it("one explicit prepared Send uses only its own newly confirmed viewer, and its
   expect(command).toHaveBeenCalledOnce();
   expect(prepare).toHaveBeenCalledOnce();
 });
+
+it("clicking New conversation enters the centered new view immediately without flashing reading notices, and repeating it on an empty new conversation keeps the same session", async () => {
+  const f = openedChat(true);
+  vi.stubGlobal("location", window.location);
+  await f.settle();
+  const initialId = sidebar.conversationId;
+  sidebar.onNewConversation?.();
+  // Simulates React remounting ChatWorkspace on the new key (empty draft).
+  chatCells.length = 0;
+  // First render after clicking New conversation (before its reads settle) is
+  // already in the centered new-conversation state with no reading flash.
+  const firstFrame = f.draw();
+  const createdId = sidebar.conversationId;
+  expect(createdId).toBeTruthy();
+  expect(createdId).not.toBe(initialId);
+  expect(chatProps?.freshNew).toBe(true);
+  expect(firstFrame.html).toContain('data-entry="new"');
+  expect(firstFrame.html).toContain("<h2>New conversation</h2>");
+  expect(firstFrame.html).not.toContain("Reading this conversation…");
+  expect(firstFrame.html).not.toContain(
+    "Sending is unavailable until the current context is observed.",
+  );
+  await f.settle();
+  const settledReads = f.calls.filter((kind) => kind === "conversation").length;
+  const focusBefore = chatProps?.focusRequest ?? 0;
+  // Clicking New conversation again while already on this empty new chat keeps
+  // the exact same conversation ID without remounting or re-reading, and asks
+  // the mounted editor to focus.
+  sidebar.onNewConversation?.();
+  const repeated = f.draw();
+  expect(sidebar.conversationId).toBe(createdId);
+  expect(chatProps?.focusRequest).toBe(focusBefore + 1);
+  expect(repeated.html).toContain('data-entry="new"');
+  expect(f.calls.filter((kind) => kind === "conversation")).toHaveLength(
+    settledReads,
+  );
+  expect(prepare).not.toHaveBeenCalled();
+});

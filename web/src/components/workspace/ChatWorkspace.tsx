@@ -64,6 +64,7 @@ import {
 } from "../../client/conversation-inputs";
 import {
   type ConversationView,
+  IDLE_MS,
   type LoadedTurn,
   unsettled,
 } from "../../client/conversation-reader";
@@ -155,6 +156,9 @@ import {
 } from "./WorkflowPanel";
 
 const NO_ACTIVE_RUNS: readonly string[] = [];
+/** Wait briefly before revealing passive reading placeholders so fast local
+ * switches settle cleanly without a one-frame text flash. */
+export const READING_GRACE_MS = 180;
 const NATIVE_ANCHORING =
   typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
 
@@ -206,6 +210,8 @@ export interface ConversationActivity {
   /** Turns on the branch shown. */
   turns: number;
   replyClock: ReplyClock;
+  /** True while this conversation is an untouched empty new conversation. */
+  empty?: boolean;
   /** The branch's context size as of its last completed model response;
    * absent when the head read states none. */
   context?: ContextUsage;
@@ -291,6 +297,8 @@ export function ChatWorkspace({
   workspaceId,
   initialCwd,
   initialLeaf = null,
+  freshNew = false,
+  focusRequest = 0,
   activitySelected = false,
   onLocation,
   onActivity,
@@ -328,6 +336,10 @@ export function ChatWorkspace({
   workspaceId: string;
   initialCwd?: string;
   initialLeaf?: string | null;
+  /** Explicitly minted by clicking New conversation in this tab (never URL/history). */
+  freshNew?: boolean;
+  /** Incremented when an explicit New conversation click asks to focus the editor. */
+  focusRequest?: number;
   activitySelected?: boolean;
   onLocation?(location: ConversationLocation): void;
   onActivity?(activity: ConversationActivity): void;
@@ -554,12 +566,16 @@ export function ChatWorkspace({
     }),
     [client, readSelected, access],
   );
+  // Once a fresh empty conversation is confirmed clean, back off context/mode
+  // polls to the same idle cadence as the head reader until activity begins.
+  const [idlePoll, setIdlePoll] = useState(false);
+  const pollInterval = idlePoll ? IDLE_MS : 1000;
   const contextRead = useWorkbench(
     reader,
     available && initialCwd
       ? { kind: "conversation-context", location: { id, cwd: initialCwd } }
       : null,
-    1000,
+    pollInterval,
   );
   const context =
     contextRead.value?.kind === "conversation-context"
@@ -591,9 +607,15 @@ export function ChatWorkspace({
     }),
     [client, actionsReady, locationCwd, viewer, id],
   );
+  // On a freshly minted new conversation with an already-ready owner, fetch
+  // live models in parallel with contextRead and avoid spawning an offline
+  // preview child while the live owner is merely completing a routine read.
+  const readyForFreshModels =
+    freshNew && available && !contextRead.error && !!locationCwd;
   const availability: ModelAvailability = preparing
     ? { status: "preparing" }
-    : modelAvailability.status === "ready" && (!available || !contextKnown)
+    : modelAvailability.status === "ready" &&
+        (!available || (!contextKnown && !readyForFreshModels))
       ? { status: contextRead.error ? "unavailable" : "connecting" }
       : modelAvailability;
   const latestAvailability = useRef(availability);
@@ -601,8 +623,10 @@ export function ChatWorkspace({
   const modelRead = useModelCatalog(
     modelClient,
     availability,
-    `${modelReads}:${context?.revision ?? "unobserved"}`,
-    previewModels,
+    `${modelReads}:${context?.revision ?? (readyForFreshModels ? 0 : "unobserved")}`,
+    modelAvailability.status === "ready" && available && !contextRead.error
+      ? undefined
+      : previewModels,
   );
   const clearModelWait = () => {
     waitingSend.current = null;
@@ -669,7 +693,7 @@ export function ChatWorkspace({
   const workflow = useWorkbench(
     reader,
     available ? { kind: "cadence-conversation", id } : null,
-    1000,
+    pollInterval,
   );
   const [editedState, setEditedState] =
     useState<
@@ -733,11 +757,6 @@ export function ChatWorkspace({
     armed: nextCadence,
     known: cadenceKnown,
   };
-  const modeState = composerMode(modeFacts);
-  const modeHint =
-    modeState === "leaving" && phraseExit
-      ? "Your next message exits Cadence mode."
-      : modeHints[modeState];
   const canSend =
     enabled &&
     !(activitySelected && !conversation.summary) &&
@@ -795,17 +814,6 @@ export function ChatWorkspace({
     // Readonly: the header shows a new name once the head read states it.
     if (observe) observeConversation();
   }, [observe, observeConversation]);
-  const onActivityRef = useRef(onActivity);
-  onActivityRef.current = onActivity;
-  useLayoutEffect(() => {
-    onActivityRef.current?.({
-      id,
-      turns: conversation.count,
-      replyClock,
-      ...(usage ? { context: usage } : {}),
-      ...(cache ? { cache } : {}),
-    });
-  }, [id, conversation.count, replyClock, usage, cache]);
   const newest = turns.at(-1);
   const newestLive = unsettled(newest?.header.status);
   // One tree read for the branch shown feeds the version pagers, the question
@@ -1061,6 +1069,15 @@ export function ChatWorkspace({
   const textarea = useRef<HTMLTextAreaElement>(null),
     scroll = useRef<HTMLDivElement>(null),
     lastTop = useRef(0);
+  const focusState = useRef({ request: focusRequest, auto: false });
+  useEffect(() => {
+    const requested = focusRequest !== focusState.current.request;
+    focusState.current.request = focusRequest;
+    if (hidden) return;
+    const initial = freshNew && !focusState.current.auto;
+    if (initial) focusState.current.auto = true;
+    if (initial || requested) textarea.current?.focus({ preventScroll: true });
+  }, [freshNew, focusRequest, hidden]);
   const stick = useRef(true),
     [away, setAway] = useState(false);
   // A scroll event for our own write can arrive after the row has grown
@@ -1369,6 +1386,19 @@ export function ChatWorkspace({
     !conversation.error &&
     !hasRecord &&
     !activitySelected;
+  // An explicitly clicked "New conversation" (never URL/history navigation)
+  // presents the centered welcome layout immediately while background reads
+  // verify it; any read error or record retires this fast path at once.
+  const freshEntry =
+    freshNew &&
+    available &&
+    !received &&
+    !hasRecord &&
+    !activitySelected &&
+    !conversation.error &&
+    !contextRead.error &&
+    !workflow.error &&
+    !state?.notice;
   // Keep an already-observed first draft in place across preparation or a
   // failed read. Never infer a new conversation from an unread history.
   const wasEmpty = useRef(false);
@@ -1379,7 +1409,81 @@ export function ChatWorkspace({
     !received &&
     !hasRecord &&
     !activitySelected &&
-    (observedEmpty || wasEmpty.current);
+    (observedEmpty || wasEmpty.current || freshEntry);
+  const emptyConversation =
+    centerEntry &&
+    !pending &&
+    !received &&
+    !hasRecord &&
+    draft === "" &&
+    imageDraft.files.length === 0;
+  const onActivityRef = useRef(onActivity);
+  onActivityRef.current = onActivity;
+  useLayoutEffect(() => {
+    onActivityRef.current?.({
+      id,
+      turns: conversation.count,
+      replyClock,
+      ...(emptyConversation ? { empty: true } : {}),
+      ...(usage ? { context: usage } : {}),
+      ...(cache ? { cache } : {}),
+    });
+  }, [id, conversation.count, replyClock, emptyConversation, usage, cache]);
+  const canIdlePoll =
+    observedEmpty &&
+    contextKnown &&
+    cadenceKnown &&
+    !cadence &&
+    !busy &&
+    !pending &&
+    !preparing &&
+    !approving &&
+    !revalidating;
+  const prevIdlePoll = useRef(false);
+  useEffect(() => {
+    const leavingIdle = prevIdlePoll.current && !canIdlePoll && hasRecord;
+    prevIdlePoll.current = canIdlePoll;
+    setIdlePoll(canIdlePoll);
+    if (leavingIdle) {
+      contextRead.refresh();
+      workflow.refresh();
+    }
+  }, [canIdlePoll, hasRecord, contextRead.refresh, workflow.refresh]);
+  const waitingInitialRead =
+    available &&
+    !conversation.error &&
+    !contextRead.error &&
+    !workflow.error &&
+    (!observed ||
+      !contextKnown ||
+      !modeObserved ||
+      (turns.length === 0 && conversation.count > 0));
+  const [readingShown, setReadingShown] = useState(false);
+  useEffect(() => {
+    if (!waitingInitialRead) {
+      setReadingShown(false);
+      return;
+    }
+    const timer = setTimeout(() => setReadingShown(true), READING_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [waitingInitialRead]);
+  const slowReading = readingShown && waitingInitialRead;
+  const showTranscriptReading =
+    readingShown &&
+    available &&
+    !conversation.error &&
+    !centerEntry &&
+    (!observed || (turns.length === 0 && conversation.count > 0));
+  // Freshly minted new conversations start in ordinary mode visually so the
+  // toolbar toggle does not flash "unavailable" during the initial read;
+  // Send still strictly requires observed mode/context confirmation.
+  const displayModeFacts =
+    freshEntry && !cadenceKnown ? { ...modeFacts, known: true } : modeFacts;
+  const displayModeState = composerMode(displayModeFacts);
+  const displayModeHint =
+    displayModeState === "leaving" && phraseExit
+      ? "Your next message exits Cadence mode."
+      : modeHints[displayModeState];
   // Animate from the editor's actual last position, not a guessed viewport
   // midpoint. Layout itself stays final (including the scroll/follow area).
   const dock = useRef<HTMLDivElement>(null);
@@ -2534,6 +2638,7 @@ export function ChatWorkspace({
     >
       <header
         className="conversation-header"
+        data-reading={slowReading ? "" : undefined}
         title={
           headError && observed
             ? t(
@@ -2572,7 +2677,9 @@ export function ChatWorkspace({
             {!cadenceKnown
               ? workflow.error
                 ? t("Cadence state unavailable")
-                : ""
+                : freshEntry
+                  ? t("Ordinary")
+                  : ""
               : cadence
                 ? t("Cadence on")
                 : t("Ordinary")}
@@ -2707,13 +2814,18 @@ export function ChatWorkspace({
               )}
             </p>
           )}
-          {available &&
-            !conversation.error &&
-            (!observed || (turns.length === 0 && conversation.count > 0)) && (
-              <p className="inspector-note chat-reading" role="status">
+          {showTranscriptReading && (
+            <div className="chat-reading-shell" role="status">
+              <div className="chat-reading-skeleton" aria-hidden="true">
+                <span className="chat-reading-bar user" />
+                <span className="chat-reading-bar reply long" />
+                <span className="chat-reading-bar reply short" />
+              </div>
+              <p className="inspector-note chat-reading">
                 {t("Reading this conversation…")}
               </p>
-            )}
+            </div>
+          )}
           {turns.length > 0 && earlier && (
             <div className="chat-earlier" role="status">
               {conversation.loadingEarlier && t("Reading earlier messages…")}
@@ -2876,7 +2988,7 @@ export function ChatWorkspace({
       {centerEntry && (
         <ChatWelcome
           onStart={
-            observedEmpty &&
+            (observedEmpty || freshEntry) &&
             draft === "" &&
             !imageDraft.files.length &&
             !busy &&
@@ -2919,19 +3031,25 @@ export function ChatWorkspace({
                       ? t("Choose a model; your message is sent right after.")
                       : busy
                         ? t("Sending…")
-                        : t(
-                            "Sending is unavailable until the current context is observed. Your draft stays here.",
-                          )
+                        : waitingInitialRead && !readingShown
+                          ? undefined
+                          : t(
+                              "Sending is unavailable until the current context is observed. Your draft stays here.",
+                            )
           }
           cadence={{
-            ...modeFacts,
-            disabledReason: !cadenceKnown
+            ...displayModeFacts,
+            disabledReason: !displayModeFacts.known
               ? t("Cadence state unavailable")
               : running
                 ? t("Wait for the current reply before changing mode.")
                 : waitingReason,
             disabled:
-              !cadenceKnown || !!running || busy || !!pending || awaitingModel,
+              !displayModeFacts.known ||
+              !!running ||
+              busy ||
+              !!pending ||
+              awaitingModel,
             onClick: () => {
               if (slashCadence) {
                 setPendingMode(null);
@@ -2995,8 +3113,8 @@ export function ChatWorkspace({
           hint={
             liveRun && canInput && !inputBlock && draft.trim()
               ? t("Enter steers this reply · Alt+Enter queues behind it")
-              : modeHint
-                ? t(modeHint)
+              : displayModeHint
+                ? t(displayModeHint)
                 : ""
           }
           running={!!running}

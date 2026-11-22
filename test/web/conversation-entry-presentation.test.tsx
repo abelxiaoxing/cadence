@@ -20,6 +20,8 @@ const f = vi.hoisted(() => ({
   keyDown: undefined as ((event: unknown) => void) | undefined,
   start: undefined as ((text: string) => void) | undefined,
   summary: null as ChatSummary | null | undefined,
+  contextLoaded: true,
+  modeLoaded: true,
   cadence: false,
   error: "",
   no: () => {},
@@ -104,27 +106,38 @@ vi.mock("../../web/src/client/use-workbench", async (load) => ({
     refresh: f.no,
     value:
       r?.kind === "conversation-context"
-        ? {
-            kind: r.kind,
-            context: { id: "chat", cwd: "/fixture", revision: 0, model: null },
-          }
-        : {
-            kind: "cadence-conversation",
-            state: {
-              id: "chat",
-              enabled: f.cadence,
-              revision: 0,
-              head: null,
-              runs: [],
-              proposal: null,
-            },
-          },
+        ? f.contextLoaded
+          ? {
+              kind: r.kind,
+              context: {
+                id: "chat",
+                cwd: "/fixture",
+                revision: 0,
+                model: null,
+              },
+            }
+          : undefined
+        : f.modeLoaded
+          ? {
+              kind: "cadence-conversation",
+              state: {
+                id: "chat",
+                enabled: f.cadence,
+                revision: 0,
+                head: null,
+                runs: [],
+                proposal: null,
+              },
+            }
+          : undefined,
   }),
 }));
 afterEach(() => {
   f.cursor = -1;
   f.cells = [];
   f.summary = null;
+  f.contextLoaded = true;
+  f.modeLoaded = true;
   f.cadence = false;
   f.error = "";
 });
@@ -167,7 +180,13 @@ function workspace(wire = transport()) {
       ...preview,
     },
   });
-  function Probe({ actionsReady }: { actionsReady: boolean }) {
+  function Probe({
+    actionsReady,
+    freshNew,
+  }: {
+    actionsReady: boolean;
+    freshNew: boolean;
+  }) {
     f.cursor = 0;
     try {
       return ChatWorkspace({
@@ -175,6 +194,7 @@ function workspace(wire = transport()) {
         id: "chat",
         workspaceId: "workspace",
         initialCwd: "/fixture",
+        freshNew,
         enabled: true,
         actionsReady,
         viewer: {
@@ -192,11 +212,15 @@ function workspace(wire = transport()) {
       f.cursor = -1;
     }
   }
-  const draw = (actionsReady = true, locale: "en" | "zh" = "en") => {
+  const draw = (
+    actionsReady = true,
+    locale: "en" | "zh" = "en",
+    freshNew = false,
+  ) => {
     f.start = undefined;
     const html = renderToStaticMarkup(
       <LocaleProvider initial={locale}>
-        <Probe actionsReady={actionsReady} />
+        <Probe actionsReady={actionsReady} freshNew={freshNew} />
       </LocaleProvider>,
     );
     if (!f.composer) throw Error("composer missing");
@@ -560,4 +584,37 @@ it("mode toggle defers entering and exiting Cadence until explicit Send, and /ca
     kind: "cadence-exit",
     revision: 0,
   });
+});
+
+it("freshNew opens directly in the centered new-conversation layout without flashing reading notices, while keeping Send strictly gated and failing honestly on error", () => {
+  const w = workspace();
+  f.summary = undefined;
+  f.contextLoaded = false;
+  f.modeLoaded = false;
+  // Non-fresh unobserved view stays unobserved without an immediate reading flash.
+  const unobserved = w.draw(true, "zh", false);
+  expect(unobserved.html).toContain('data-entry="unobserved"');
+  expect(unobserved.html).not.toContain("chat-welcome");
+  expect(unobserved.html).not.toContain("正在读取对话…");
+  expect(unobserved.html).not.toContain("读取当前上下文后才能发送");
+  expect(unobserved.input.canSend).toBe(false);
+  // Explicit New conversation click (freshNew) enters the centered welcome view
+  // immediately without flashing reading notices or an unavailable mode toggle.
+  const fresh = w.draw(true, "zh", true);
+  expect(fresh.html).toContain('data-entry="new"');
+  expect(fresh.html).toContain("<h2>新对话</h2>");
+  expect(fresh.html).toContain("entry-starters");
+  expect(fresh.html).toContain('class="mode-toggle off"');
+  expect(fresh.html).not.toContain("正在读取对话…");
+  expect(fresh.html).not.toContain("读取当前上下文后才能发送");
+  expect(fresh.input.canSend).toBe(false);
+  fresh.input.onDraft("Too early");
+  fresh.input.onSend();
+  expect(w.command).not.toHaveBeenCalled();
+  // Real read error retires freshNew immediately and surfaces the honest status.
+  f.error = "unavailable";
+  const failed = w.draw(true, "zh", true);
+  expect(failed.html).not.toContain('data-entry="new"');
+  expect(failed.html).not.toContain("entry-starters");
+  expect(failed.html).toContain("读取当前上下文后才能发送");
 });

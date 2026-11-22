@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ServiceClient } from "../../../src/service-client.ts";
 import {
   ConversationReader,
@@ -36,17 +36,22 @@ export function useConversation(
   );
   const latest = useRef(scope);
   latest.current = scope;
+  const active = useRef({ readable, attachment });
+  active.current = { readable, attachment };
   const [state, setState] = useState<{
     scope: typeof scope;
     reader: ConversationReader;
     view: ConversationView;
   }>();
-  useEffect(() => {
+  // Start the reader in the very first commit so the initial head fetch leaves
+  // immediately instead of waiting for a second render pass after paint.
+  useLayoutEffect(() => {
     const next = new ConversationReader(client, id, () => {
       if (latest.current === scope)
         setState({ scope, reader: next, view: next.view() });
     });
     next.choose(initialLeaf);
+    next.setActive(active.current.readable, active.current.attachment);
     setState({ scope, reader: next, view: next.view() });
     return () => next.close();
   }, [client, id, initialLeaf, scope]);
