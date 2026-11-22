@@ -453,7 +453,7 @@ function rowPixels(kind, target, other, state) {
 }
 
 const projectHeader = ".chat-workspace:not([hidden]) > .conversation-header";
-const projectShell = `.app:has(${projectHeader})`;
+const projectShell = ".app:has(.chat-workspace:not([hidden])[data-entry])";
 const sessionRow = (name) =>
   `.conversation-row .session-item[title="Optical · ${name}"]`;
 const query = (selector) =>
@@ -592,7 +592,7 @@ async function selectRows(
     release();
   }
   await wait(
-    `location.pathname + location.search + location.hash === ${JSON.stringify(chat("empty"))} && ${query(`${projectHeader} h2`)}?.textContent === 'New conversation' && ${query(`${projectShell} .chat-welcome`)} && ${query(sessionRow("reading"))} && ${query(sessionRow("design"))}`,
+    `location.pathname + location.search + location.hash === ${JSON.stringify(chat("empty"))} && ${query(`${projectShell} .chat-workspace[data-entry="new"]`)} && !${query(projectHeader)} && ${query(`${projectShell} .chat-welcome`)} && ${query(sessionRow("reading"))} && ${query(sessionRow("design"))}`,
   );
   entry.ready = await run(drawerSnapshot, entry.target, projectHeader);
   const expanded = (toggle) =>

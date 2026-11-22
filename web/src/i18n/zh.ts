@@ -419,7 +419,6 @@ export const zh = {
   Discussing: "对话中",
   "Awaiting plan approval": "等待批准计划",
   "Cadence conversation": "Cadence 对话",
-  "Cadence on": "Cadence 已开启",
   "Exit Cadence": "退出 Cadence",
   "Message, or /cadence to enter continuous Cadence mode…":
     "输入消息，或输入 /cadence 进入持续 Cadence 模式…",
@@ -552,7 +551,6 @@ export const zh = {
   "Choose a folder on the service host. Opening reuses or starts that project's independent service; current work keeps running.":
     "选择服务所在主机上的文件夹。打开时将复用或启动该项目的独立服务，当前工作会继续运行。",
   "New conversation": "新对话",
-  Ordinary: "普通对话",
   "Ordinary conversation": "普通对话",
   "Cadence task": "Cadence 任务",
   "Conversation mode": "对话模式",

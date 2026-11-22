@@ -3296,7 +3296,13 @@ it("delays passive reading chrome for READING_GRACE_MS and avoids previewModels 
     return tree;
   };
   const headerOf = (tree: ReactNode) =>
-    required(elements<ComponentProps<"header">>(tree, "header")[0]);
+    elements<ComponentProps<"header">>(tree, "header")[0];
+  const messagesWrapOf = (tree: ReactNode) =>
+    required(
+      elements<ComponentProps<"div">>(tree, "div").find(
+        (el) => el.props.className === "chat-messages-wrap",
+      ),
+    );
   const readingShells = (tree: ReactNode) =>
     elements<ComponentProps<"div">>(tree, "div").filter(
       (el) => el.props.className === "chat-reading-shell",
@@ -3309,21 +3315,21 @@ it("delays passive reading chrome for READING_GRACE_MS and avoids previewModels 
   // Existing/URL conversation: before READING_GRACE_MS, no reading bar or status flash,
   // and Cadence button stays visually quiet while disabled until observed.
   const early = draw(false);
-  expect(headerOf(early).props["data-reading" as never]).toBeUndefined();
+  expect(messagesWrapOf(early).props["data-reading" as never]).toBeUndefined();
   expect(readingShells(early)).toHaveLength(0);
   expect(composerOf(early).props.status).toBeUndefined();
   expect(composerOf(early).props.cadence.known).toBe(true);
   expect(composerOf(early).props.cadence.disabled).toBe(true);
   // Live ready owner must not hand previewModels to useModelCatalog during contextRead.
   expect(workspace.modelCatalog.mock.lastCall?.[3]).toBeUndefined();
-  // After READING_GRACE_MS while still reading, header scanline and reading shell appear.
+  // After READING_GRACE_MS while still reading, scanline and reading shell appear.
   await vi.advanceTimersByTimeAsync(READING_GRACE_MS);
   const slow = draw(false);
-  expect(headerOf(slow).props["data-reading" as never]).toBe("");
+  expect(messagesWrapOf(slow).props["data-reading" as never]).toBe("");
   expect(readingShells(slow)).toHaveLength(1);
   expect(composerOf(slow).props.status).toContain("Sending is unavailable");
   expect(composerOf(slow).props.cadence.known).toBe(false);
-  // Resolve all reads: reading chrome clears immediately.
+  // Resolve all reads: reading chrome clears immediately and the empty welcome drops its header.
   for (const req of pendingReads) {
     if (req.kind === "conversation")
       req.resolve({
@@ -3370,7 +3376,10 @@ it("delays passive reading chrome for READING_GRACE_MS and avoids previewModels 
   }
   await vi.advanceTimersByTimeAsync(0);
   const settled = draw(false);
-  expect(headerOf(settled).props["data-reading" as never]).toBeUndefined();
+  expect(headerOf(settled)).toBeUndefined();
+  expect(
+    messagesWrapOf(settled).props["data-reading" as never],
+  ).toBeUndefined();
   expect(readingShells(settled)).toHaveLength(0);
   expect(composerOf(settled).props.status).toBeUndefined();
 

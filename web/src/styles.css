@@ -5034,8 +5034,8 @@ button.file-item:hover:not(:disabled),
   flex-wrap: wrap;
   gap: 6px;
 }
-/* One slim line: the title, then a quiet mode/origin note, the branch
- * controls and whatever the conversation is doing. Only the title gives way. */
+/* One slim line: the title, plus optional plan, branch and status controls.
+ * Only the title gives way. */
 .chat-workspace > .conversation-header {
   display: flex;
   align-items: center;
@@ -5065,8 +5065,8 @@ button.file-item:hover:not(:disabled),
   font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* Phones keep the title: the composer's Cadence control names the mode and
-   * the sidebar row where the conversation started. */
+  /* Phones keep the title: the composer's Cadence control also names an
+   * unavailable mode. */
   @media (max-width: 640px) {
     display: none;
   }

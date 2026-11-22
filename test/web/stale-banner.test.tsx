@@ -2758,7 +2758,8 @@ it("clicking New conversation enters the centered new view immediately without f
   expect(createdId).not.toBe(initialId);
   expect(chatProps?.freshNew).toBe(true);
   expect(firstFrame.html).toContain('data-entry="new"');
-  expect(firstFrame.html).toContain("<h2>New conversation</h2>");
+  expect(firstFrame.html).not.toContain('class="conversation-header"');
+  expect(firstFrame.html).toContain("What would you like to work on?");
   expect(firstFrame.html).not.toContain("Reading this conversation…");
   expect(firstFrame.html).not.toContain(
     "Sending is unavailable until the current context is observed.",
