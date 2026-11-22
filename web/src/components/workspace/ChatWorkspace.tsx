@@ -2704,6 +2704,14 @@ export function ChatWorkspace({
     ) : (
       (designBar ?? strip)
     );
+  const showHeader = !centerEntry;
+  const modeUnavailable = !cadenceKnown && !!workflow.error;
+  const hasBranchControls =
+    modeUnavailable ||
+    status === "starting" ||
+    !!summary?.archived ||
+    (!!onOpenBranches && (conversation.branches > 1 || pinned)) ||
+    pinned;
   return (
     <section
       className="chat-workspace"
@@ -2725,118 +2733,109 @@ export function ChatWorkspace({
             : t("Ordinary conversation")
       }
     >
-      <header
-        className="conversation-header"
-        data-reading={slowReading ? "" : undefined}
-        title={
-          headError && observed
-            ? t(
-                "Conversation state is not current. Previously read content may be shown; this does not mean work has stopped.",
-              )
-            : undefined
-        }
-      >
-        <div className="conversation-heading">
-          <FiMessageSquare aria-hidden="true" />
-          <h2>
-            {summary?.title ??
-              (activitySelected
-                ? t("Discovered session")
-                : centerEntry
-                  ? t("New conversation")
+      {showHeader && (
+        <header
+          className="conversation-header"
+          title={
+            headError && observed
+              ? t(
+                  "Conversation state is not current. Previously read content may be shown; this does not mean work has stopped.",
+                )
+              : undefined
+          }
+        >
+          <div className="conversation-heading">
+            <FiMessageSquare aria-hidden="true" />
+            <h2>
+              {summary?.title ??
+                (activitySelected
+                  ? t("Discovered session")
                   : t("Conversation"))}
-          </h2>
-        </div>
-        {proposal && (
-          <button
-            className="current-plan-trigger"
-            type="button"
-            aria-controls={planOpen ? planPanelId : undefined}
-            aria-expanded={planOpen}
-            title={proposal.plan.goal}
-            onClick={() => setReview({ binding, open: !planOpen })}
-          >
-            <FiFileText aria-hidden="true" />
-            {t(planOpen ? "Hide current plan" : "View current plan")}
-          </button>
-        )}
-        <div className="conversation-branch">
-          {/* One quiet line: the mode, then where the session started. */}
-          <span className="conversation-meta">
-            {!cadenceKnown
-              ? workflow.error
-                ? t("Cadence state unavailable")
-                : freshEntry
-                  ? t("Ordinary")
-                  : ""
-              : cadence
-                ? t("Cadence on")
-                : t("Ordinary")}
-            {summary &&
-              ` · ${
-                summary.origin === "terminal"
-                  ? t("Started in the terminal")
-                  : t("Started in the WebUI")
-              }`}
-          </span>
-          {status === "starting" && (
-            <span className="ep-state starting">{tx(status)}</span>
-          )}
-          {/* Read by link while the history leaves it out; shown on phones too. */}
-          {summary?.archived && (
-            <span className="conversation-badge">{t("Archived")}</span>
-          )}
-          {/* The session forks: its tree is the inspector's Branches tab. */}
-          {onOpenBranches && (conversation.branches > 1 || pinned) && (
+            </h2>
+          </div>
+          {proposal && (
             <button
+              className="current-plan-trigger"
               type="button"
-              className="ghost"
-              aria-label={t("Branches ({count})", {
-                count: conversation.branches,
-              })}
-              title={t("Branches ({count})", { count: conversation.branches })}
-              onClick={onOpenBranches}
+              aria-controls={planOpen ? planPanelId : undefined}
+              aria-expanded={planOpen}
+              title={proposal.plan.goal}
+              onClick={() => setReview({ binding, open: !planOpen })}
             >
-              <FiGitBranch aria-hidden="true" />
-              {conversation.branches}
+              <FiFileText aria-hidden="true" />
+              {t(planOpen ? "Hide current plan" : "View current plan")}
             </button>
           )}
-          {pinned && (
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => chooseBranch(null)}
-            >
-              {t("Show the latest")}
-            </button>
+          {hasBranchControls && (
+            <div className="conversation-branch">
+              {modeUnavailable && (
+                <span className="conversation-meta">
+                  {t("Cadence state unavailable")}
+                </span>
+              )}
+              {status === "starting" && (
+                <span className="ep-state starting">{tx(status)}</span>
+              )}
+              {/* Read by link while the history leaves it out; shown on phones too. */}
+              {summary?.archived && (
+                <span className="conversation-badge">{t("Archived")}</span>
+              )}
+              {/* The session forks: its tree is the inspector's Branches tab. */}
+              {onOpenBranches && (conversation.branches > 1 || pinned) && (
+                <button
+                  type="button"
+                  className="ghost"
+                  aria-label={t("Branches ({count})", {
+                    count: conversation.branches,
+                  })}
+                  title={t("Branches ({count})", {
+                    count: conversation.branches,
+                  })}
+                  onClick={onOpenBranches}
+                >
+                  <FiGitBranch aria-hidden="true" />
+                  {conversation.branches}
+                </button>
+              )}
+              {pinned && (
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => chooseBranch(null)}
+                >
+                  {t("Show the latest")}
+                </button>
+              )}
+            </div>
           )}
-          {!hidden &&
-            observed &&
-            available &&
-            !conversation.error &&
-            (!summary || summary.id === id) && (
-              <ConversationFeedback
-                key={`${id}:${conversation.pinned ? conversation.leaf : "latest"}`}
-                receipt={received}
-                semantic={
-                  cadenceKnown
-                    ? JSON.stringify([
-                        summary?.status,
-                        conversation.count,
-                        lastTurn?.activity?.kind,
-                        cadence,
-                        proposal?.id,
-                      ])
-                    : undefined
-                }
-              />
-            )}
-        </div>
-      </header>
+        </header>
+      )}
       <div
         className="chat-messages-wrap"
+        data-reading={slowReading ? "" : undefined}
         data-reviewing={planOpen || undefined}
       >
+        {!hidden &&
+          observed &&
+          available &&
+          !conversation.error &&
+          (!summary || summary.id === id) && (
+            <ConversationFeedback
+              key={`${id}:${conversation.pinned ? conversation.leaf : "latest"}`}
+              receipt={received}
+              semantic={
+                cadenceKnown
+                  ? JSON.stringify([
+                      summary?.status,
+                      conversation.count,
+                      lastTurn?.activity?.kind,
+                      cadence,
+                      proposal?.id,
+                    ])
+                  : undefined
+              }
+            />
+          )}
         {planOpen && proposal && (
           <div className="current-plan-panel" id={planPanelId}>
             <PlanCard

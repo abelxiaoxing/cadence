@@ -690,7 +690,7 @@ function watchFeedback() {
       });
     prior = text;
   });
-  observer.observe(ws.querySelector(".conversation-header"), {
+  observer.observe(ws.querySelector(".chat-messages-wrap"), {
     subtree: true,
     childList: true,
     characterData: true,
@@ -1290,7 +1290,9 @@ async function observeEntry(p, s, row, shot) {
       fresh.greeting.height > 0 &&
       fresh.form.top >= fresh.greeting.bottom,
   );
-  const mid = (fresh.header.bottom + fresh.workspace.bottom) / 2;
+  const mid =
+    ((fresh.header?.bottom ?? fresh.workspace.top) + fresh.workspace.bottom) /
+    2;
   assert.ok(
     Math.abs((fresh.welcome.top + fresh.form.bottom) / 2 - mid) <
       fresh.workspace.height * 0.09,

@@ -22,6 +22,7 @@ const f = vi.hoisted(() => ({
   summary: null as ChatSummary | null | undefined,
   contextLoaded: true,
   modeLoaded: true,
+  modeError: "",
   cadence: false,
   error: "",
   no: () => {},
@@ -104,6 +105,10 @@ vi.mock("../../web/src/client/use-workbench", async (load) => ({
   ...(await load<typeof import("../../web/src/client/use-workbench")>()),
   useWorkbench: (_: unknown, r: { kind: string } | null) => ({
     refresh: f.no,
+    error:
+      r?.kind === "cadence-conversation" && f.modeError
+        ? f.modeError
+        : undefined,
     value:
       r?.kind === "conversation-context"
         ? f.contextLoaded
@@ -117,7 +122,7 @@ vi.mock("../../web/src/client/use-workbench", async (load) => ({
               },
             }
           : undefined
-        : f.modeLoaded
+        : f.modeLoaded && !f.modeError
           ? {
               kind: "cadence-conversation",
               state: {
@@ -138,6 +143,7 @@ afterEach(() => {
   f.summary = null;
   f.contextLoaded = true;
   f.modeLoaded = true;
+  f.modeError = "";
   f.cadence = false;
   f.error = "";
 });
@@ -609,10 +615,13 @@ it("freshNew opens directly in the centered new-conversation layout without flas
   expect(unobserved.html).not.toContain("读取当前上下文后才能发送");
   expect(unobserved.input.canSend).toBe(false);
   // Explicit New conversation click (freshNew) enters the centered welcome view
-  // immediately without flashing reading notices or an unavailable mode toggle.
+  // immediately without flashing reading notices, an unavailable mode toggle,
+  // or a redundant "New conversation" / "Ordinary" header bar.
   const fresh = w.draw(true, "zh", true);
   expect(fresh.html).toContain('data-entry="new"');
-  expect(fresh.html).toContain("<h2>新对话</h2>");
+  expect(fresh.html).not.toContain('class="conversation-header"');
+  expect(fresh.html).not.toContain("新对话");
+  expect(fresh.html).not.toContain("普通对话");
   expect(fresh.html).toContain("entry-starters");
   expect(fresh.html).toContain('class="mode-toggle off"');
   expect(fresh.html).not.toContain("正在读取对话…");
@@ -627,6 +636,52 @@ it("freshNew opens directly in the centered new-conversation layout without flas
   expect(failed.html).not.toContain('data-entry="new"');
   expect(failed.html).not.toContain("entry-starters");
   expect(failed.html).toContain("读取当前上下文后才能发送");
+});
+
+it("omits the header on an empty new conversation while keeping feedback mounted, and drops redundant mode/origin notes on existing conversations", () => {
+  const w = workspace();
+  // Observed empty new conversation: no header bar, no "New conversation"/"Ordinary"
+  // text, but ConversationFeedback stays mounted inside chat-messages-wrap.
+  const emptyZh = w.draw(true, "zh");
+  expect(emptyZh.html).toContain('data-entry="new"');
+  expect(emptyZh.html).not.toContain('class="conversation-header"');
+  expect(emptyZh.html).not.toContain("新对话");
+  expect(emptyZh.html).toContain('class="conversation-feedback"');
+  expect(emptyZh.html).toContain('aria-label="普通对话"');
+  expect(emptyZh.html).not.toContain(">普通对话<");
+
+  // Existing WebUI and terminal conversations (ordinary and Cadence) keep only
+  // the real title and functional controls, never mode/origin meta lines.
+  for (const origin of ["webui", "terminal"] as const) {
+    for (const cadence of [false, true]) {
+      f.cadence = cadence;
+      f.summary = {
+        id: "chat",
+        title: `Topic ${origin} ${cadence ? "cadence" : "ordinary"}`,
+        origin,
+        leaf: null,
+        updatedAt: 1,
+        status: "completed",
+      };
+      const zh = w.draw(true, "zh").html;
+      expect(zh).toContain('class="conversation-header"');
+      expect(zh).toContain(`<h2>${f.summary.title}</h2>`);
+      expect(zh).not.toContain('class="conversation-branch"');
+      expect(zh).not.toContain('class="conversation-meta"');
+      expect(zh).not.toContain("Cadence 已开启");
+      expect(zh).not.toContain("在 WebUI 中开始");
+      expect(zh).not.toContain("在终端中开始");
+      expect(zh).not.toContain(">普通对话<");
+    }
+  }
+
+  // Genuine mode read failure still surfaces the abnormal unavailable notice.
+  f.modeError = "unavailable";
+  const degraded = w.draw(true, "zh").html;
+  expect(degraded).toContain('class="conversation-branch"');
+  expect(degraded).toContain(
+    '<span class="conversation-meta">Cadence 状态未确认</span>',
+  );
 });
 
 it("lingering pending mode reconciles with server state and can be cancelled during a running reply to unlock steer/queue", () => {

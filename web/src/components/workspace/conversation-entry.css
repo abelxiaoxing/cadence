@@ -32,12 +32,13 @@
   font-size: 12px;
 }
 
-/* Precision optical header scanline: only shown after the grace period when a
+/* Precision optical scanline: only shown after the grace period when a
  * conversation read is genuinely taking time. Zero layout height. */
-.chat-workspace[data-entry] > .conversation-header[data-reading]::after {
+.chat-workspace[data-entry] > .chat-messages-wrap[data-reading]::before {
   content: "";
   position: absolute;
-  inset: auto 0 -1px 0;
+  inset: 0 0 auto 0;
+  z-index: 2;
   height: 1.5px;
   pointer-events: none;
   background: linear-gradient(
@@ -50,8 +51,13 @@
   );
   opacity: 0.72;
 }
+.chat-workspace[data-entry]
+  > .conversation-header
+  + .chat-messages-wrap[data-reading]::before {
+  top: -1px;
+}
 @media (forced-colors: active) {
-  .chat-workspace[data-entry] > .conversation-header[data-reading]::after {
+  .chat-workspace[data-entry] > .chat-messages-wrap[data-reading]::before {
     background: Highlight;
     opacity: 1;
   }
@@ -120,7 +126,7 @@
   .chat-workspace[data-entry="history"] > .chat-messages-wrap {
     animation: optical-rise 140ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
   }
-  .chat-workspace[data-entry] > .conversation-header[data-reading]::after {
+  .chat-workspace[data-entry] > .chat-messages-wrap[data-reading]::before {
     background-size: 44% 100%;
     background-repeat: no-repeat;
     animation: prism-scan 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
@@ -243,7 +249,8 @@
   color: var(--accent-text);
   font-size: 12px;
 }
-.chat-messages-wrap[data-reviewing] > :not(.current-plan-panel) {
+.chat-messages-wrap[data-reviewing]
+  > :not(.current-plan-panel, .conversation-feedback) {
   visibility: hidden;
 }
 .current-plan-panel {
@@ -266,7 +273,7 @@
 .conversation-feedback {
   position: absolute;
   inset-inline-end: var(--chat-inset);
-  top: 100%;
+  top: 0;
   z-index: 2;
   pointer-events: none;
 }
@@ -276,9 +283,6 @@
   background: var(--bg-elev);
   color: var(--accent-text);
   font-size: 11px;
-}
-.chat-workspace[data-entry] > .conversation-header {
-  position: relative;
 }
 @media (prefers-reduced-motion: no-preference) {
   .app[data-feedback-event] .brand-logo svg {
