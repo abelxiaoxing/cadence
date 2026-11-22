@@ -383,7 +383,8 @@ A previewed file is shown verbatim through the Markdown code renderer: numbered 
 The composer's Cadence control names off, armed for the next Send, confirmed on and unobserved states distinctly, including on phones; arming is neither a confirmed mode change nor plan approval.
 Beside Send it shows **Ordinary send** until armed.
 Off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
-In an observed new conversation the welcome and composer share the center.
+In an observed new conversation the welcome and composer share the center; clicking **New conversation** in the sidebar enters that centered layout immediately and focuses the editor while background reads verify the freshly minted session ID (retiring immediately to the real error/history view if any read fails or finds records, and backing off idle context/mode polling once confirmed empty; clicking **New conversation** again while already on an untouched empty conversation focuses the editor without remounting).
+Passive reading placeholders and the initial unobserved-context composer notice wait a brief grace period (`READING_GRACE_MS`, 180ms) before showing the header reading bar and reading silhouettes so fast local switches settle cleanly without a flash; real read failures surface immediately, and Send still requires confirmed context, head and mode observations.
 The two starters fill an empty draft only; existing records use the dock immediately and a confirmed first receipt moves the same editor there without replaying the command.
 The model and thinking level stay visible on the closed picker.
 The composer (`ChatComposer.tsx`) edits the conversation's draft and holds no message state: its text area grows with the text up to a bound, and a keyboard-operable handle on its top edge sets a fixed height remembered in that browser.

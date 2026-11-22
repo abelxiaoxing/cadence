@@ -25,6 +25,12 @@ export function useWorkbench(
   );
   const latest = useRef(scope);
   latest.current = scope;
+  // Adjusting a positive poll cadence (e.g. idle backoff) applies to the next
+  // timer without aborting an in-flight read; toggling polling on/off still
+  // runs a fresh pass so a settling stream gets its final read.
+  const cadence = useRef(interval);
+  cadence.current = interval;
+  const polling = interval > 0;
   const [revision, setRevision] = useState(0);
   const next = useRef(0);
   const retire = useRef<() => void>(undefined);
@@ -72,8 +78,11 @@ export function useWorkbench(
               error: reply.error.code,
             },
       );
-      const delay =
-        interval || (access && reply.kind === "error" ? observationRetryMs : 0);
+      const delay = polling
+        ? cadence.current
+        : access && reply.kind === "error"
+          ? observationRetryMs
+          : 0;
       if (delay) timer = setTimeout(() => void load(), delay);
     };
     void load();
@@ -82,7 +91,7 @@ export function useWorkbench(
       unsubscribe?.();
       stop();
     };
-  }, [client, key, revision, interval, access, scope, allocation]);
+  }, [client, key, revision, polling, access, scope, allocation]);
   const refresh = useCallback(() => {
     if (latest.current !== scope || access?.signal.aborted) return;
     retire.current?.();

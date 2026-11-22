@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { ContractError } from "../src/service/contracts/core.ts";
 import { decodeWorkbenchResult } from "../src/service/contracts/workbench.ts";
 import {
@@ -2247,3 +2247,27 @@ it.each(
     );
   },
 );
+
+it("reading an unstarted conversation scans Pi sessions only once per request", () => {
+  const f = fixture();
+  writeSession(f, [
+    { role: "user", content: [{ type: "text", text: "Existing" }] },
+  ]);
+  const listSpy = vi.spyOn(f.records.sessions, "list");
+  const findSpy = vi.spyOn(f.records.sessions, "find");
+  const freshId = randomUUID();
+  const head = decodeWorkbenchResult(
+    f.records.conversation(freshId, null, null),
+  );
+  expect(head).toMatchObject({
+    kind: "conversation",
+    summary: null,
+    leaf: null,
+    turns: 0,
+    branches: 0,
+    runs: [],
+    attempt: null,
+  });
+  expect(findSpy).toHaveBeenCalledTimes(1);
+  expect(listSpy).toHaveBeenCalledTimes(1);
+});

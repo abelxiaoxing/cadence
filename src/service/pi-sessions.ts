@@ -1588,15 +1588,15 @@ export class PiSessions {
   }
 
   /** The parsed session, brought up to date with what Pi has appended. */
-  session(id: string): ParsedSession | undefined {
-    const listed = this.find(id);
-    if (!listed) return undefined;
-    let parsed = this.open.get(listed.path);
-    this.open.delete(listed.path);
-    parsed ??= new ParsedSession(listed.path);
+  session(id: string, listed?: Listed | null): ParsedSession | undefined {
+    const found = listed === undefined ? this.find(id) : listed;
+    if (!found) return undefined;
+    let parsed = this.open.get(found.path);
+    this.open.delete(found.path);
+    parsed ??= new ParsedSession(found.path);
     parsed.refresh();
     if (parsed.header?.id !== id) throw new ContractError("corrupt-selected");
-    this.open.set(listed.path, parsed);
+    this.open.set(found.path, parsed);
     if (this.open.size > OPEN_SESSIONS)
       this.open.delete(this.open.keys().next().value as string);
     return parsed;

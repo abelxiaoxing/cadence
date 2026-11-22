@@ -32,6 +32,166 @@
   font-size: 12px;
 }
 
+/* Precision optical header scanline: only shown after the grace period when a
+ * conversation read is genuinely taking time. Zero layout height. */
+.chat-workspace[data-entry] > .conversation-header[data-reading]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px 0;
+  height: 1.5px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--prism-a) 30%,
+    var(--accent) 50%,
+    var(--prism-b) 70%,
+    transparent 100%
+  );
+  opacity: 0.72;
+}
+@media (forced-colors: active) {
+  .chat-workspace[data-entry] > .conversation-header[data-reading]::after {
+    background: Highlight;
+    opacity: 1;
+  }
+}
+
+/* Restrained low-contrast reading silhouettes for slow history reads (>180ms). */
+.chat-reading-shell {
+  max-width: var(--reading-width);
+  margin: 28px auto 0;
+  padding: 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.chat-reading-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chat-reading-bar {
+  display: block;
+  height: 11px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--glow-03) 0%,
+    var(--glow-12) 50%,
+    var(--glow-03) 100%
+  );
+  background-size: 220% 100%;
+}
+.chat-reading-bar.user {
+  align-self: flex-end;
+  width: min(38%, 220px);
+  height: 32px;
+  border-radius: 14px;
+  border: 1px solid var(--border-soft);
+}
+.chat-reading-bar.reply.long {
+  width: min(76%, 540px);
+}
+.chat-reading-bar.reply.short {
+  width: min(52%, 360px);
+}
+.chat-reading-shell > .chat-reading {
+  margin: 4px 0 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Optical focus entrance for a fresh new conversation: plays once on entry,
+   * settles completely still without idle motion or layout shift. */
+  .chat-workspace[data-entry="new"] > .chat-welcome > .empty-logo {
+    animation: optical-focus 240ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+  .chat-workspace[data-entry="new"] > .chat-welcome > h2 {
+    animation: optical-rise 200ms cubic-bezier(0.22, 1, 0.36, 1) 25ms backwards;
+  }
+  .chat-workspace[data-entry="new"] > .chat-welcome > .entry-starters {
+    animation: optical-rise 200ms cubic-bezier(0.22, 1, 0.36, 1) 55ms backwards;
+  }
+  .chat-workspace[data-entry="new"] .chat-composer:not([data-flow])::before {
+    animation: prism-ignite 340ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+  /* Crisp backwards-only reveal when switching into a loaded transcript:
+   * leaves no lingering transform once settled (preserving sticky/scroll). */
+  .chat-workspace[data-entry="history"] > .chat-messages-wrap {
+    animation: optical-rise 140ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+  .chat-workspace[data-entry] > .conversation-header[data-reading]::after {
+    background-size: 44% 100%;
+    background-repeat: no-repeat;
+    animation: prism-scan 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+  .chat-reading-bar {
+    animation: reading-sweep 1.6s ease-in-out infinite;
+  }
+  .chat-reading-shell {
+    animation: optical-rise 160ms ease-out backwards;
+  }
+  @keyframes optical-focus {
+    0% {
+      opacity: 0;
+      transform: scale(0.92);
+      box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--prism-a) 38%, transparent),
+        0 0 26px color-mix(in srgb, var(--accent) 22%, transparent),
+        0 16px 36px var(--shadow-2);
+    }
+    55% {
+      opacity: 1;
+      box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--prism-a) 26%, transparent),
+        0 0 18px color-mix(in srgb, var(--prism-b) 16%, transparent),
+        0 16px 36px var(--shadow-2);
+    }
+    100% {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes optical-rise {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes prism-ignite {
+    0% {
+      opacity: 0;
+      transform: scaleX(0.16);
+    }
+    45% {
+      opacity: 1;
+    }
+    100% {
+      transform: scaleX(1);
+    }
+  }
+  @keyframes prism-scan {
+    from {
+      background-position: -60% 0;
+    }
+    to {
+      background-position: 160% 0;
+    }
+  }
+  @keyframes reading-sweep {
+    0% {
+      background-position: 110% 0;
+    }
+    100% {
+      background-position: -110% 0;
+    }
+  }
+}
+
 /* Keep the two model facts visible in the closed control. A long model can
  * take a second line instead of truncating the reasoning setting with it. */
 .composer-toolbar > .model-picker {
