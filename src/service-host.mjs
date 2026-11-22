@@ -9653,6 +9653,15 @@ function parseLine(text2, pos) {
   const id = own2(o, "id"), parentId = own2(o, "parentId"), timestamp2 = own2(o, "timestamp");
   if (typeof type !== "string" || typeof id !== "string" || !id || id.length > 64 || !/^[A-Za-z0-9_-]+$/.test(id) || !(parentId === null || typeof parentId === "string"))
     return;
+  let entryRole;
+  if (type === "message") {
+    const m = own2(o, "message");
+    const r = m && typeof m === "object" && !Array.isArray(m) ? own2(m, "role") : undefined;
+    entryRole = typeof r === "string" ? r : null;
+  }
+  const display = type === "custom_message" ? own2(o, "display") === true : undefined;
+  const rawCustomType = type === "custom" ? own2(o, "customType") : undefined;
+  const customType = type === "custom" ? typeof rawCustomType === "string" ? rawCustomType : null : undefined;
   return {
     kind: "entry",
     entry: {
@@ -9661,6 +9670,9 @@ function parseLine(text2, pos) {
       parentId,
       timestamp: typeof timestamp2 === "string" ? timestamp2 : "",
       pos,
+      ...entryRole !== undefined ? { role: entryRole } : {},
+      ...display !== undefined ? { display } : {},
+      ...customType !== undefined ? { customType } : {},
       raw: o
     }
   };
@@ -9712,6 +9724,10 @@ var message = (entry) => {
   return m && typeof m === "object" && !Array.isArray(m) ? m : undefined;
 };
 var role2 = (entry) => {
+  if (entry.type !== "message")
+    return;
+  if (entry.role !== undefined)
+    return entry.role ?? undefined;
   const m = message(entry);
   return m ? own2(m, "role") : undefined;
 };
@@ -9792,15 +9808,19 @@ function stopStatus(m) {
 }
 function replyStatus(entries2) {
   for (let i = entries2.length - 1;i >= 0; i--) {
+    if (role2(entries2[i]) !== "assistant")
+      continue;
     const m = message(entries2[i]);
-    if (m && own2(m, "role") === "assistant")
+    if (m)
       return stopStatus(m).status;
   }
   return "completed";
 }
 function reportedUsage(entry) {
+  if (role2(entry) !== "assistant")
+    return;
   const m = message(entry);
-  if (!m || own2(m, "role") !== "assistant")
+  if (!m)
     return;
   const reason = own2(m, "stopReason"), usage = own2(m, "usage");
   if (reason === "aborted" || reason === "error" || !usage || typeof usage !== "object")
@@ -9878,7 +9898,7 @@ function fold(summary, line) {
   }
 }
 function commandMarker(entry) {
-  if (entry.type !== "custom" || own2(entry.raw, "customType") !== BROWSER_COMMAND_ENTRY)
+  if (entry.type !== "custom" || (entry.customType !== undefined ? entry.customType : own2(entry.raw, "customType")) !== BROWSER_COMMAND_ENTRY)
     return;
   const value = own2(entry.raw, "data");
   const d = closed(value, [
@@ -10248,7 +10268,7 @@ function shown(entry) {
   if (entry.type === "message")
     return ["user", "assistant", "toolResult", "bashExecution"].includes(role2(entry));
   if (entry.type === "custom_message")
-    return own2(entry.raw, "display") === true;
+    return entry.display ?? own2(entry.raw, "display") === true;
   return entry.type === "compaction" || entry.type === "branch_summary";
 }
 var clip = (value, bytes) => clipText(value, bytes);
@@ -15671,6 +15691,7 @@ var META_BYTES = 64 * 1024;
 var PAGE = 50;
 var INDEXED_COMMANDS = 64;
 var COMMAND_STATES = 512;
+var SUMMARY_STATUSES = 512;
 var INTERRUPTED = "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.";
 var NOT_DELIVERED = "Not delivered: the reply ended before this message reached the model. Nothing was replayed; send it again.";
 var UNOBSERVED = "Not observed: the session could not be read when the reply ended, so whether this message was delivered was not recorded. Nothing was replayed.";
@@ -15759,6 +15780,7 @@ class ConversationRecords {
   inputs;
   knownSecrets;
   states = new Map;
+  summaryStatuses = new Map;
   constructor(o) {
     this.o = o;
     this.root = join24(o.coordination.directory, "conversation-commands-v1");
@@ -15964,7 +15986,13 @@ class ConversationRecords {
       })
     } : null;
   }
-  summary(id, live2, archived = this.archived(id), found) {
+  hasLiveInput(id) {
+    for (const input of this.inputs.values())
+      if (input.accepted.session === id)
+        return true;
+    return false;
+  }
+  summary(id, live2, archived = this.archived(id), found, secrets) {
     this.assertSupported(id);
     const listed = found === undefined ? this.sessions.find(id) : found;
     const hidden = archived ? { archived: true } : {};
@@ -15973,7 +16001,7 @@ class ConversationRecords {
         return null;
       return {
         id,
-        title: sanitizeText(live2.title, this.readSecrets()) || "Conversation",
+        title: sanitizeText(live2.title, secrets ?? this.readSecrets()) || "Conversation",
         leaf: null,
         status: live2.state.status,
         updatedAt: live2.accepted.at,
@@ -15987,17 +16015,82 @@ class ConversationRecords {
       };
     }
     const s = listed.summary;
-    const secrets = this.readSecrets();
+    const redaction = secrets ?? this.readSecrets();
     let status = live2?.state.status ?? s.stop?.status ?? "completed";
-    if (!live2 && this.index(id).commands.length) {
-      const session = this.sessions.session(id, listed);
-      const user = session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
-      const recorded = user ? this.overlay(id, session).get(user) : undefined;
-      status = this.attempt(id, s.leaf)?.status ?? recorded?.status ?? status;
+    if (!live2) {
+      const indexPath2 = this.indexPath(id);
+      const indexKey = observedFile(indexPath2);
+      if (indexKey === "absent") {
+        this.summaryStatuses.delete(id);
+      } else {
+        const listedKey = `${listed.path}\x00${listed.ino}\x00${listed.size}\x00${listed.end}\x00${s.leaf ?? ""}\x00${s.stop?.status ?? ""}`;
+        const liveInput = this.hasLiveInput(id);
+        const cached = !liveInput ? this.summaryStatuses.get(id) : undefined;
+        if (cached && cached.listedKey === listedKey && cached.indexKey === indexKey && cached.watched.every(([path, key2]) => observedFile(path) === key2)) {
+          status = cached.status;
+        } else {
+          const commands = this.index(id).commands;
+          const watched = new Map;
+          if (commands.length) {
+            const session = this.sessions.session(id, listed);
+            const user = session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
+            let recordedStatus;
+            if (user) {
+              for (const commandId of commands) {
+                if (this.active.has(commandId) || this.inputs.has(commandId))
+                  continue;
+                const statePath = this.path(commandId, "state.json");
+                const st = this.state(commandId);
+                watched.set(statePath, observedFile(statePath));
+                let entryUser = st.user;
+                if (entryUser === null && st.status === "unknown" && session) {
+                  const acceptedPath = this.path(commandId, "accepted.json");
+                  const accepted = this.accepted(commandId);
+                  watched.set(acceptedPath, observedFile(acceptedPath));
+                  entryUser = accepted ? this.userEntry(session, commandId, accepted) : null;
+                }
+                if (entryUser === user)
+                  recordedStatus = st.status;
+              }
+            }
+            let attemptStatus;
+            const latest = commands.at(-1);
+            if (latest !== undefined) {
+              const latestAcceptedPath = this.path(latest, "accepted.json");
+              watched.set(latestAcceptedPath, observedFile(latestAcceptedPath));
+              const run = this.runOf(latest);
+              if (run) {
+                if (run.commandId !== latest) {
+                  const runAcceptedPath = this.path(run.commandId, "accepted.json");
+                  watched.set(runAcceptedPath, observedFile(runAcceptedPath));
+                }
+                if (!this.active.has(run.commandId)) {
+                  const runStatePath = this.path(run.commandId, "state.json");
+                  const st = this.state(run.commandId);
+                  watched.set(runStatePath, observedFile(runStatePath));
+                  if (st.user === null && run.accepted.parent === s.leaf && (st.status !== "unknown" || !session?.commandEntries(run.commandId, run.accepted.parent, run.accepted.offset).length))
+                    attemptStatus = st.status;
+                }
+              }
+            }
+            status = attemptStatus ?? recordedStatus ?? status;
+          }
+          if (!liveInput) {
+            if (this.summaryStatuses.size >= SUMMARY_STATUSES)
+              this.summaryStatuses.clear();
+            this.summaryStatuses.set(id, {
+              listedKey,
+              indexKey,
+              watched: [...watched],
+              status
+            });
+          }
+        }
+      }
     }
     return {
       id,
-      title: text([...sanitizeText(summaryTitle(s), secrets)].slice(0, CONVERSATION_NAME_CHARS).join("") || "Conversation", 512, true),
+      title: text([...sanitizeText(summaryTitle(s), redaction)].slice(0, CONVERSATION_NAME_CHARS).join("") || "Conversation", 512, true),
       leaf: s.leaf,
       status,
       updatedAt: Math.max(Math.trunc(listed.mtimeMs), live2?.accepted.at ?? 0),
@@ -16023,8 +16116,9 @@ class ConversationRecords {
         start = listed.length;
     }
     const page = listed.slice(start, start + PAGE);
+    const secrets = page.length ? this.readSecrets() : [];
     const entries3 = page.flatMap((l) => {
-      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id), archived, l);
+      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id), archived, l, secrets);
       return summary ? [summary] : [];
     });
     const last = page.at(-1);
@@ -16036,10 +16130,11 @@ class ConversationRecords {
   }
   activeConversations() {
     this.o.assertCurrent();
+    const secrets = this.active.size ? this.readSecrets() : [];
     return {
       kind: "conversation-active",
       entries: [...this.active.values()].flatMap((live2) => {
-        const summary = this.summary(live2.accepted.session, live2);
+        const summary = this.summary(live2.accepted.session, live2, undefined, undefined, secrets);
         return summary ? [summary] : [];
       })
     };
@@ -16079,15 +16174,15 @@ class ConversationRecords {
       inputs: [{ commandId, accepted }]
     }).find((part) => part.commandId === commandId)?.entries[0].id) ?? null;
   }
-  pending(live2, session) {
-    const secrets = this.readSecrets();
+  pending(live2, session, secrets) {
+    const redaction = secrets ?? this.readSecrets();
     return live2.inputs.filter((input) => !input.withdrawn && !session?.delivered(input.commandId)).slice(0, WAITING_INPUTS).map((input) => ({
       commandId: input.commandId,
       mode: input.accepted.command.mode,
-      text: clipText(sanitizeText(input.accepted.command.text, secrets), PENDING_TEXT_BYTES)
+      text: clipText(sanitizeText(input.accepted.command.text, redaction), PENDING_TEXT_BYTES)
     }));
   }
-  undelivered(id, view) {
+  undelivered(id, view, secrets) {
     const run = this.recordedRun(id);
     if (!run?.inputs.length || this.active.has(run.commandId))
       return [];
@@ -16102,20 +16197,20 @@ class ConversationRecords {
     const newest = parts.at(-1)?.entries[0].id;
     if (newest === undefined ? view.leaf !== run.accepted.parent : view.turns.at(-1)?.[0]?.id !== newest)
       return [];
-    const secrets = this.readSecrets();
+    const redaction = secrets ?? this.readSecrets();
     return run.inputs.flatMap(({ commandId, accepted }) => {
       const state = this.state(commandId);
       return state.user !== null || state.notice === WITHDRAWN || parts.some((part) => part.commandId === commandId) ? [] : [
         {
           commandId,
-          text: clipText(sanitizeText(accepted.command.text, secrets), UNDELIVERED_TEXT_BYTES),
+          text: clipText(sanitizeText(accepted.command.text, redaction), UNDELIVERED_TEXT_BYTES),
           status: state.status,
-          notice: sanitizeText(state.notice, secrets)
+          notice: sanitizeText(state.notice, redaction)
         }
       ];
     }).slice(0, WAITING_INPUTS);
   }
-  attempt(id, leaf) {
+  attempt(id, leaf, secrets) {
     const latest = this.index(id).commands.at(-1);
     const run = latest === undefined ? undefined : this.runOf(latest);
     if (!run || this.active.has(run.commandId))
@@ -16129,14 +16224,15 @@ class ConversationRecords {
       if (session?.commandEntries(commandId, accepted.parent, accepted.offset).length)
         return null;
     }
+    const redaction = secrets ?? this.readSecrets();
     return {
       commandId,
-      text: sanitizeText(accepted.command.text, this.readSecrets()),
+      text: sanitizeText(accepted.command.text, redaction),
       status: state.status,
-      notice: sanitizeText(state.notice, this.readSecrets())
+      notice: sanitizeText(state.notice, redaction)
     };
   }
-  context(view) {
+  context(view, secrets) {
     if (!view.session)
       return;
     if (view.live && !view.parts)
@@ -16145,11 +16241,11 @@ class ConversationRecords {
     const usage = view.session.usage(leaf);
     if (!usage)
       return;
-    const secrets = this.readSecrets();
+    const redaction = secrets ?? this.readSecrets();
     return {
       tokens: usage.tokens,
-      provider: clipText(sanitizeText(usage.provider, secrets), 128),
-      model: clipText(sanitizeText(usage.model, secrets), 256)
+      provider: clipText(sanitizeText(usage.provider, redaction), 128),
+      model: clipText(sanitizeText(usage.model, redaction), 256)
     };
   }
   conversation(id, leaf, known) {
@@ -16159,11 +16255,13 @@ class ConversationRecords {
     const found = listed ?? null;
     const view = this.branch(id, leaf, false, found);
     const running = view.live ?? this.liveFor(id);
-    const summary = this.summary(id, running, undefined, found);
-    const context = this.context(view);
+    let cachedSecrets;
+    const secrets = () => cachedSecrets ??= this.readSecrets();
+    const summary = this.summary(id, running, undefined, found, found || running ? secrets() : undefined);
+    const context = view.session ? this.context(view, secrets()) : undefined;
     const cache = view.session?.cache;
-    const pending = running ? this.pending(running, view.session) : [];
-    const undelivered = running ? [] : this.undelivered(id, view);
+    const pending = running ? this.pending(running, view.session, secrets()) : [];
+    const undelivered = running ? [] : this.undelivered(id, view, cachedSecrets);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
@@ -16177,7 +16275,7 @@ class ConversationRecords {
       turns: summary ? view.turns.length + (view.live ? 1 : 0) : 0,
       branches: view.session?.leaves() ?? 0,
       runs: listed?.summary.runs ?? [],
-      attempt: view.live ? null : this.attempt(id, view.leaf)
+      attempt: view.live ? null : this.attempt(id, view.leaf, cachedSecrets)
     };
   }
   image(request2) {
@@ -16382,6 +16480,7 @@ class ConversationRecords {
   closeReads() {
     this.sessions.close();
     this.states.clear();
+    this.summaryStatuses.clear();
   }
 }
 
@@ -16466,9 +16565,7 @@ class ConversationContexts {
     this.current(cwd);
     return cwd;
   }
-  snapshot(location) {
-    this.o.owner.lease.assert();
-    const { context } = this.records.read(location);
+  snapshotOf(context) {
     const selected2 = context.model ? this.o.models.retainedSelection(context.model) : null;
     const owner = this.o.choice.snapshot().version;
     return {
@@ -16482,13 +16579,21 @@ class ConversationContexts {
       }
     };
   }
-  catalog(location) {
-    const before = this.snapshot(location);
+  snapshot(location) {
+    this.o.owner.lease.assert();
     const { context } = this.records.read(location);
+    return this.snapshotOf(context);
+  }
+  catalog(location) {
+    this.o.owner.lease.assert();
+    const { context, file } = this.records.read(location);
+    const before = this.snapshotOf(context);
     const catalog = this.o.models.catalog();
     if (before.selected)
       this.o.models.assertCurrent(before.selected, "installed");
-    if (canonicalJson(before) !== canonicalJson(this.snapshot(location)))
+    this.o.owner.lease.assert();
+    this.o.coordination.files.assert(this.records.path(context.id), file, BYTES);
+    if (canonicalJson(before) !== canonicalJson(this.snapshotOf(context)))
       throw new ContractError("stale");
     let remembered = context.model;
     if (!remembered && this.o.agentDir)
@@ -16503,7 +16608,7 @@ class ConversationContexts {
     const input = decodeConversationLocation(location);
     const { context, file } = this.records.read(input);
     this.current(input.cwd);
-    const before = this.snapshot(input);
+    const before = this.snapshotOf(context);
     if (context.cwd !== input.cwd || canonicalJson(expected) !== canonicalJson(before.version))
       throw new ContractError("stale");
     const model2 = decodeModelSelector(value);
@@ -16533,13 +16638,15 @@ class ConversationContexts {
       if (remember2 && this.o.agentDir)
         new CadencePreferences(this.o.agentDir).save(model2);
     } catch {}
-    return this.snapshot(input);
+    this.o.owner.lease.assert();
+    return this.snapshotOf(next ?? context);
   }
   restore(location, expected, intended) {
-    const before = this.snapshot(location);
+    this.o.owner.lease.assert();
+    const { context } = this.records.read(location);
+    const before = this.snapshotOf(context);
     if (expected && canonicalJson(expected) !== canonicalJson(before.version))
       throw new ContractError("stale");
-    const { context } = this.records.read(location);
     if (context.model && intended && canonicalJson(context.model) !== canonicalJson(intended))
       throw new ContractError("stale");
     if (before.selected)
@@ -38240,7 +38347,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.3",
-  build: "421432a3d2825470ae854c6d1b8024a6d55e583278e43822c0adec7417b4ca04",
+  build: "28f1ce3917aff4173267d649765f27458e54fb2f4ca3b8975e75e534c007cdd1",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

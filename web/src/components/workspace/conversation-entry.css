@@ -281,16 +281,12 @@
   position: relative;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .app:has(.chat-workspace:not([hidden]) .conversation-feedback[data-event])
-    .brand-logo
-    svg {
+  .app[data-feedback-event] .brand-logo svg {
     animation: entry-received 680ms ease-out;
   }
   /* A second visible notice needs a fresh animation, even if the first
    * finished before its status text expired. Alternate the crystal's tilt. */
-  .app:has(.chat-workspace:not([hidden]) .conversation-feedback[data-replay])
-    .brand-logo
-    svg {
+  .app[data-feedback-replay] .brand-logo svg {
     animation-name: entry-received-again;
   }
   @keyframes entry-received {

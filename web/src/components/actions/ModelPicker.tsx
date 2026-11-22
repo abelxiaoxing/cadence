@@ -82,6 +82,7 @@ export function ModelPicker({
   read,
   lastModel,
   draftModel,
+  pendingModel,
   onPreviewChoice,
   locked,
   lockReason,
@@ -99,6 +100,8 @@ export function ModelPicker({
   lastModel?: ModelSelector | null;
   /** Local intent, not an installed owner selection. */
   draftModel?: ModelSelector | null;
+  /** Purely visual placeholder from the same owner during a brief initial switch; never selectable or authoritative. */
+  pendingModel?: ModelSelector | null;
   onPreviewChoice?(choice: ModelSelector): void;
   /** This conversation's reply is live; the owner refuses a change now. */
   locked: boolean;
@@ -283,18 +286,29 @@ export function ModelPicker({
                 : catalogError
                   ? t("Model list unavailable")
                   : t("Choose a model");
-  const shown = current ?? history;
+  const visualPlaceholder =
+    !current &&
+    !history &&
+    !catalog &&
+    !catalogError &&
+    pendingModel &&
+    (loading || availability.status === "connecting")
+      ? pendingModel
+      : null;
+  const shown = current ?? history ?? visualPlaceholder;
   const buttonText = current
     ? label(current)
     : history
       ? t("Last used: {model}", { model: label(history) })
-      : statusText;
+      : visualPlaceholder
+        ? label(visualPlaceholder)
+        : statusText;
   return (
     <div className="model-picker" ref={root}>
       <button
         ref={trigger}
         type="button"
-        className={`model-trigger${(current && !selected) || history ? " remembered" : ""}${catalog && !current ? " empty" : ""}`}
+        className={`model-trigger${(current && !selected) || history || visualPlaceholder ? " remembered" : ""}${catalog && !current ? " empty" : ""}`}
         aria-label={t("Model: {model}", { model: buttonText })}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -325,7 +339,7 @@ export function ModelPicker({
           {current?.model ??
             (history
               ? t("Last used: {model}", { model: history.model })
-              : statusText)}
+              : (visualPlaceholder?.model ?? statusText))}
         </span>
         <span className="model-trigger-level" title={t("Thinking")}>
           {t("Thinking")} · {shown ? t(LEVEL_LABELS[shown.thinking]) : "—"}

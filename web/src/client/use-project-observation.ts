@@ -14,8 +14,8 @@ import {
   observationRetryMs,
   refusedAccess,
 } from "./observation-read";
-
 import type { ObservationAccess } from "./observer";
+import { onPageVisible, pageHidden } from "./visibility";
 
 interface ProjectRead {
   value: ProjectObservation;
@@ -56,6 +56,7 @@ export function useProjectObservation(
   const [state, setState] = useState<{
     id?: string;
     value?: ProjectObservation;
+    serialized?: string;
     association?: ProjectRead["association"];
     error?: string;
     revision?: number;
@@ -67,8 +68,10 @@ export function useProjectObservation(
     const abort = new AbortController();
     const current = () => !abort.signal.aborted && serial.current === version;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let paused = false;
     const stop = () => {
       abort.abort();
+      paused = false;
       clearTimeout(timer);
     };
     const unsubscribe = access.subscribe(stop);
@@ -78,17 +81,33 @@ export function useProjectObservation(
         access.refuse("project", error);
         return;
       }
-      setState((previous) => ({
-        id,
-        revision,
-        selectedEpoch,
-        ...projectObservationResult(
+      setState((previous) => {
+        const result = projectObservationResult(
           previous.id === id ? previous.value : undefined,
           read,
           error,
-        ),
-      }));
-      timer = setTimeout(() => void load(), observationRetryMs);
+        );
+        const serialized =
+          result.value === undefined ? undefined : JSON.stringify(result.value);
+        if (
+          previous.id === id &&
+          previous.revision === revision &&
+          previous.selectedEpoch === selectedEpoch &&
+          previous.association === result.association &&
+          previous.error === result.error &&
+          previous.serialized === serialized
+        )
+          return previous;
+        return {
+          id,
+          revision,
+          selectedEpoch,
+          serialized,
+          ...result,
+        };
+      });
+      if (pageHidden()) paused = true;
+      else timer = setTimeout(() => void load(), observationRetryMs);
     };
     const load = async () => {
       if (!current()) return;
@@ -112,8 +131,14 @@ export function useProjectObservation(
         );
       }
     };
+    const unsubscribeVisible = onPageVisible(() => {
+      if (!paused || !current()) return;
+      paused = false;
+      void load();
+    });
     void load();
     return () => {
+      unsubscribeVisible();
       unsubscribe();
       stop();
     };

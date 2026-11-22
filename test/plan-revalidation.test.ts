@@ -95,6 +95,18 @@ function fixture() {
         return selected;
       }),
       assertCurrent() {},
+      catalog: () => ({
+        entries: [
+          {
+            provider: model.provider,
+            model: model.model,
+            api: model.api,
+            reasoning: true,
+            thinking: [{ level: model.thinking, selectable: true }],
+          },
+        ],
+        degraded: [],
+      }),
       workerSettings: () => structuredClone(runtime),
     };
     const options = {
@@ -456,4 +468,12 @@ it("unavailable selected model never substitutes a default, and a newly sensitiv
     "forbidden",
   );
   expect(live.control.records.state(f.location.id)).toEqual(f.state);
+});
+
+it("ConversationContexts.catalog() reads the conversation context record only once per request", () => {
+  const f = fixture();
+  const readSpy = vi.spyOn(f.contexts.records, "read");
+  const catalog = f.contexts.catalog(f.location);
+  expect(catalog.entries.length).toBeGreaterThan(0);
+  expect(readSpy).toHaveBeenCalledTimes(1);
 });

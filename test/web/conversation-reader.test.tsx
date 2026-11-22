@@ -1141,3 +1141,21 @@ it("independent detail reads reject same-part stale versions, equal-body wrong i
     reader.close();
   }
 });
+
+it("unchanged idle polls do not notify subscribers again", async () => {
+  vi.useFakeTimers();
+  const o = owner([settled()]);
+  const notify = vi.fn();
+  const reader = new ConversationReader(o.client, id, notify);
+  reader.setActive(true);
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reader.view().turns).toHaveLength(1);
+    const initialCalls = notify.mock.calls.length;
+    expect(initialCalls).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(IDLE_MS * 3);
+    expect(notify).toHaveBeenCalledTimes(initialCalls);
+  } finally {
+    reader.close();
+  }
+});

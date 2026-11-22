@@ -3306,11 +3306,14 @@ it("delays passive reading chrome for READING_GRACE_MS and avoids previewModels 
       elements<ComponentProps<typeof ChatComposer>>(tree, ChatComposer)[0],
     );
 
-  // Existing/URL conversation: before READING_GRACE_MS, no reading bar or status flash.
+  // Existing/URL conversation: before READING_GRACE_MS, no reading bar or status flash,
+  // and Cadence button stays visually quiet while disabled until observed.
   const early = draw(false);
   expect(headerOf(early).props["data-reading" as never]).toBeUndefined();
   expect(readingShells(early)).toHaveLength(0);
   expect(composerOf(early).props.status).toBeUndefined();
+  expect(composerOf(early).props.cadence.known).toBe(true);
+  expect(composerOf(early).props.cadence.disabled).toBe(true);
   // Live ready owner must not hand previewModels to useModelCatalog during contextRead.
   expect(workspace.modelCatalog.mock.lastCall?.[3]).toBeUndefined();
   // After READING_GRACE_MS while still reading, header scanline and reading shell appear.
@@ -3319,6 +3322,7 @@ it("delays passive reading chrome for READING_GRACE_MS and avoids previewModels 
   expect(headerOf(slow).props["data-reading" as never]).toBe("");
   expect(readingShells(slow)).toHaveLength(1);
   expect(composerOf(slow).props.status).toContain("Sending is unavailable");
+  expect(composerOf(slow).props.cadence.known).toBe(false);
   // Resolve all reads: reading chrome clears immediately.
   for (const req of pendingReads) {
     if (req.kind === "conversation")
@@ -3372,12 +3376,14 @@ it("delays passive reading chrome for READING_GRACE_MS and avoids previewModels 
 
   // On a freshNew conversation with a ready owner, models start ready in parallel
   // (refresh key uses revision 0) without waiting on contextRead or calling previewModels.
+  // Even past READING_GRACE_MS, an empty new conversation never flashes composer-status,
+  // while keeping Send gated and revealing the status as soon as a draft is entered.
   for (const cell of hooks.cells) cell.cleanup?.();
   hooks.cursor = 0;
   hooks.cells = [];
   hooks.effects.clear();
   workspace.modelCatalog.mockClear();
-  draw(true);
+  const freshEarly = draw(true);
   expect(workspace.modelCatalog.mock.lastCall?.[1]).toEqual({
     status: "ready",
     epoch,
@@ -3385,6 +3391,18 @@ it("delays passive reading chrome for READING_GRACE_MS and avoids previewModels 
   });
   expect(workspace.modelCatalog.mock.lastCall?.[2]).toBe("0:0");
   expect(workspace.modelCatalog.mock.lastCall?.[3]).toBeUndefined();
+  expect(composerOf(freshEarly).props.status).toBeUndefined();
+  expect(composerOf(freshEarly).props.canSend).toBe(false);
+  await vi.advanceTimersByTimeAsync(READING_GRACE_MS);
+  const freshSlowEmpty = draw(true);
+  expect(composerOf(freshSlowEmpty).props.status).toBeUndefined();
+  expect(composerOf(freshSlowEmpty).props.canSend).toBe(false);
+  composerOf(freshSlowEmpty).props.onDraft("hello");
+  const freshSlowDraft = draw(true);
+  expect(composerOf(freshSlowDraft).props.status).toContain(
+    "Sending is unavailable",
+  );
+  expect(composerOf(freshSlowDraft).props.canSend).toBe(false);
 });
 
 it("TaskSidebar collapses Earlier by default, filters running rows and auto-expands Earlier on search, and shows a live pill when collapsed", () => {

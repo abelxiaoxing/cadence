@@ -29,7 +29,11 @@ import type {
   ProjectEntry,
 } from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
-import { canonicalJson, compareSequence } from "../../src/service-contract.ts";
+import {
+  canonicalJson,
+  compareSequence,
+  type ModelSelector,
+} from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import type { PreparationProgress } from "./client/conversation-send";
 import type { FolderDraft } from "./client/folder-draft";
@@ -451,6 +455,14 @@ export function App({
     (!project || projectObserved) && reported?.id === chatId
       ? reported
       : undefined;
+  const modelScope = `${project?.id ?? "direct"}:${executionEpoch ?? workspace.epoch ?? ""}`;
+  const lastModel = useRef<{ scope: string; model: ModelSelector } | null>(
+    null,
+  );
+  if (!conversationAvailable || lastModel.current?.scope !== modelScope)
+    lastModel.current = null;
+  if (activity?.model && conversationAvailable)
+    lastModel.current = { scope: modelScope, model: activity.model };
   const latency = useLatency();
   useEffect(() => {
     if (currentChatLocation && chatFromLocation() === currentChatLocation.id)
@@ -1480,6 +1492,7 @@ export function App({
                 }
                 modelAvailability={modelAvailability}
                 previewModels={signInRequired ? undefined : previewModels}
+                fallbackModel={lastModel.current?.model ?? null}
                 initialDraft={
                   initialDraft?.conversationId === chatId
                     ? initialDraft
@@ -1707,8 +1720,15 @@ export function App({
             />
           ) : filesTab ? (
             <FilesPanel
-              key={fileLocation?.cwd ?? "owner"}
+              key={fileLocation?.cwd ?? workingFolder ?? "owner"}
               location={fileLocation}
+              switching={
+                conversationAvailable &&
+                !!chatId &&
+                !currentChatLocation &&
+                !chatIssues?.context &&
+                (!activity || !!activity.reading)
+              }
               client={api.client}
               enabled={conversationAvailable && !!fileLocation}
               observed={`${execution.readiness}:${execution.value?.epoch ?? ""}`}
@@ -1799,9 +1819,15 @@ export function App({
                 {activity.turns}
               </StatusItem>
             )}
-            {chatId && (
-              <ReplyStatus clock={activity?.replyClock ?? "unavailable"} />
-            )}
+            {chatId &&
+              !(
+                conversationAvailable &&
+                (!activity
+                  ? !!draftNamespace && (!project || projectObserved)
+                  : !!activity.reading)
+              ) && (
+                <ReplyStatus clock={activity?.replyClock ?? "unavailable"} />
+              )}
             {roster?.status === "complete" && activeRuns.length > 0 && (
               <StatusItem tone="warn">
                 {t(

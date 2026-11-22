@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkflowRun } from "../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../types";
+import { onPageVisible, pageHidden } from "./visibility";
 
 const LIVE = ["queued", "running"];
 /** Reads in flight at once, newest first. Unobserved attempts retry less often. */
@@ -31,13 +32,14 @@ export function useWorkflowRuns(
     [client, conversationId],
   );
   const [observation, setObservation] = useState<
-    typeof empty & { scope: typeof records }
+    typeof empty & { scope: typeof records; signature?: string }
   >();
-  const refresh = useRef<() => void>(undefined);
+  const refreshRef = useRef<() => void>(undefined);
   const key = JSON.stringify([...new Set(ids)]);
   useEffect(() => {
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let paused = false;
     const listed = JSON.parse(key) as string[];
     const wanted = new Set(listed);
     const { byId } = records;
@@ -55,13 +57,25 @@ export function useWorkflowRuns(
           error ??= record.error;
         } else if (record === null) unreadable.add(id);
       }
-      setObservation({
-        scope: records,
-        runs,
-        error,
-        unreadable,
-        incomplete: listed.some((id) => !byId.has(id)),
-      });
+      const incomplete = listed.some((id) => !byId.has(id));
+      const signature = JSON.stringify([
+        error ?? null,
+        incomplete,
+        [...unreadable],
+        [...runs],
+      ]);
+      setObservation((previous) =>
+        previous?.scope === records && previous.signature === signature
+          ? previous
+          : {
+              scope: records,
+              runs,
+              error,
+              unreadable,
+              incomplete,
+              signature,
+            },
+      );
       return runs;
     };
     const read = async (id: string) => {
@@ -96,6 +110,7 @@ export function useWorkflowRuns(
     let requested = false;
     const poll = async () => {
       clearTimeout(timer);
+      paused = false;
       if (reading) {
         requested = true;
         return;
@@ -120,21 +135,45 @@ export function useWorkflowRuns(
       if (requested) {
         requested = false;
         void poll();
-      } else if ([...runs.values()].some((run) => LIVE.includes(run.status)))
-        timer = setTimeout(() => void poll(), 1000);
-      else if (missed.size)
-        timer = setTimeout(() => void poll(), UNREAD_RETRY_MS);
+      } else {
+        const delay = [...runs.values()].some((run) =>
+          LIVE.includes(run.status),
+        )
+          ? 1000
+          : missed.size
+            ? UNREAD_RETRY_MS
+            : 0;
+        if (delay) {
+          if (pageHidden()) paused = true;
+          else timer = setTimeout(() => void poll(), delay);
+        }
+      }
     };
-    refresh.current = poll;
+    const unsubscribeVisible = onPageVisible(() => {
+      if (!paused || abort.signal.aborted) return;
+      paused = false;
+      void poll();
+    });
+    refreshRef.current = poll;
     void poll();
     return () => {
-      refresh.current = undefined;
+      unsubscribeVisible();
+      refreshRef.current = undefined;
       abort.abort();
+      paused = false;
       clearTimeout(timer);
     };
   }, [key, records]);
-  return {
-    ...(observation?.scope === records ? observation : empty),
-    refresh: () => refresh.current?.(),
-  };
+  const refresh = useCallback(() => refreshRef.current?.(), []);
+  const current = observation?.scope === records ? observation : empty;
+  return useMemo(
+    () => ({
+      runs: current.runs,
+      unreadable: current.unreadable,
+      incomplete: current.incomplete,
+      error: current.error,
+      refresh,
+    }),
+    [current, refresh],
+  );
 }

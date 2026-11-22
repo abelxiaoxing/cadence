@@ -19,6 +19,7 @@ import type {
 import { STEP_READ } from "../../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../../src/service-client.ts";
 import { readImage } from "./images";
+import { onPageVisible, pageHidden } from "./visibility";
 
 /** A turn as the transcript renders it. */
 export interface TurnSource {
@@ -139,17 +140,26 @@ export class ConversationReader {
   private again = false;
   private closed = false;
   private active = false;
+  private paused = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private readonly stopVisible: () => void;
   private selection = new AbortController();
   private reads = 0;
   private readonly queue: (() => void)[] = [];
   private snapshot: ConversationView;
+  private snapshotMeta = "";
   constructor(
     private readonly client: Pick<ServiceClient, "workbenchRead">,
     private readonly id: string,
     private readonly notify: () => void,
   ) {
     this.snapshot = this.compose();
+    this.snapshotMeta = this.viewMeta(this.snapshot);
+    this.stopVisible = onPageVisible(() => {
+      if (!this.paused || this.closed || !this.active) return;
+      this.paused = false;
+      void this.tick();
+    });
   }
   view(): ConversationView {
     return this.snapshot;
@@ -169,12 +179,14 @@ export class ConversationReader {
   }
   private retireSync(): void {
     clearTimeout(this.timer);
+    this.paused = false;
     this.inFlight?.abort();
     this.inFlight = undefined;
     this.again = false;
   }
   close(): void {
     this.closed = true;
+    this.stopVisible();
     this.retireSync();
     this.selection.abort();
   }
@@ -236,9 +248,39 @@ export class ConversationReader {
     this.publish();
     void this.tick();
   };
+  private viewMeta(view: ConversationView): string {
+    return JSON.stringify([
+      view.summary === undefined ? "u" : view.summary,
+      view.leaf,
+      view.pinned,
+      view.branches,
+      view.runs,
+      view.attempt,
+      view.pending,
+      view.undelivered,
+      view.commands,
+      view.context ?? null,
+      view.cache ?? null,
+      view.count,
+      view.earlier,
+      view.loadingEarlier,
+      view.error,
+    ]);
+  }
   private publish(): void {
     if (this.closed) return;
-    this.snapshot = this.compose();
+    const next = this.compose();
+    const meta = this.viewMeta(next);
+    const prev = this.snapshot;
+    if (
+      prev.observation === next.observation &&
+      this.snapshotMeta === meta &&
+      prev.turns.length === next.turns.length &&
+      prev.turns.every((turn, index) => turn === next.turns[index])
+    )
+      return;
+    this.snapshot = next;
+    this.snapshotMeta = meta;
     this.notify();
   }
   private compose(): ConversationView {
@@ -305,7 +347,9 @@ export class ConversationReader {
       this.error === "stale" ||
       unsettled(this.summary?.status) ||
       [...this.turns.values()].some((turn) => unsettled(turn.header.status));
-    this.timer = setTimeout(() => void this.tick(), live ? LIVE_MS : IDLE_MS);
+    if (pageHidden()) this.paused = true;
+    else
+      this.timer = setTimeout(() => void this.tick(), live ? LIVE_MS : IDLE_MS);
   }
   private async sync(
     signal: AbortSignal,

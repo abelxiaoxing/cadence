@@ -63,6 +63,7 @@ const PAGE = 50;
 /** Recent browser command overlays, not a session lifetime admission limit. */
 export const INDEXED_COMMANDS = 64;
 const COMMAND_STATES = 512;
+const SUMMARY_STATUSES = 512;
 const INTERRUPTED =
   "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.";
 /** How a message sent into a running reply is recorded when that reply's
@@ -199,6 +200,15 @@ export class ConversationRecords {
   private readonly states = new Map<
     string,
     { key: string; state: CommandState }
+  >();
+  private readonly summaryStatuses = new Map<
+    string,
+    {
+      listedKey: string;
+      indexKey: string;
+      watched: readonly [string, string][];
+      status: ChatStatus;
+    }
   >();
   constructor(
     private readonly o: {
@@ -468,11 +478,17 @@ export class ConversationRecords {
         }
       : null;
   }
+  private hasLiveInput(id: string): boolean {
+    for (const input of this.inputs.values())
+      if (input.accepted.session === id) return true;
+    return false;
+  }
   summary(
     id: string,
     live: LiveTurn | undefined,
     archived = this.archived(id),
     found?: ReturnType<PiSessions["find"]> | null,
+    secrets?: readonly string[],
   ): ChatSummary | null {
     this.assertSupported(id);
     const listed = found === undefined ? this.sessions.find(id) : found;
@@ -481,7 +497,9 @@ export class ConversationRecords {
       if (!live) return null;
       return {
         id,
-        title: sanitizeText(live.title, this.readSecrets()) || "Conversation",
+        title:
+          sanitizeText(live.title, secrets ?? this.readSecrets()) ||
+          "Conversation",
         leaf: null,
         status: live.state.status,
         updatedAt: live.accepted.at,
@@ -495,21 +513,105 @@ export class ConversationRecords {
       };
     }
     const s = listed.summary;
-    const secrets = this.readSecrets();
+    const redaction = secrets ?? this.readSecrets();
     let status: ChatStatus =
       live?.state.status ?? s.stop?.status ?? "completed";
     // Pi's stop reason is model evidence, not the owner's native/auth/storage
     // settlement. Match only the displayed branch's user, never another branch.
-    if (!live && this.index(id).commands.length) {
-      const session = this.sessions.session(id, listed);
-      const user = session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
-      const recorded = user ? this.overlay(id, session).get(user) : undefined;
-      status = this.attempt(id, s.leaf)?.status ?? recorded?.status ?? status;
+    if (!live) {
+      const indexPath = this.indexPath(id);
+      const indexKey = observedFile(indexPath);
+      if (indexKey === "absent") {
+        this.summaryStatuses.delete(id);
+      } else {
+        const listedKey = `${listed.path}\0${listed.ino}\0${listed.size}\0${listed.end}\0${s.leaf ?? ""}\0${s.stop?.status ?? ""}`;
+        const liveInput = this.hasLiveInput(id);
+        const cached = !liveInput ? this.summaryStatuses.get(id) : undefined;
+        if (
+          cached &&
+          cached.listedKey === listedKey &&
+          cached.indexKey === indexKey &&
+          cached.watched.every(([path, key]) => observedFile(path) === key)
+        ) {
+          status = cached.status;
+        } else {
+          const commands = this.index(id).commands;
+          const watched = new Map<string, string>();
+          if (commands.length) {
+            const session = this.sessions.session(id, listed);
+            const user =
+              session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
+            let recordedStatus: ChatStatus | undefined;
+            if (user) {
+              for (const commandId of commands) {
+                if (this.active.has(commandId) || this.inputs.has(commandId))
+                  continue;
+                const statePath = this.path(commandId, "state.json");
+                const st = this.state(commandId);
+                watched.set(statePath, observedFile(statePath));
+                let entryUser = st.user;
+                if (entryUser === null && st.status === "unknown" && session) {
+                  const acceptedPath = this.path(commandId, "accepted.json");
+                  const accepted = this.accepted(commandId);
+                  watched.set(acceptedPath, observedFile(acceptedPath));
+                  entryUser = accepted
+                    ? this.userEntry(session, commandId, accepted)
+                    : null;
+                }
+                if (entryUser === user) recordedStatus = st.status;
+              }
+            }
+            let attemptStatus: ChatStatus | undefined;
+            const latest = commands.at(-1);
+            if (latest !== undefined) {
+              const latestAcceptedPath = this.path(latest, "accepted.json");
+              watched.set(latestAcceptedPath, observedFile(latestAcceptedPath));
+              const run = this.runOf(latest);
+              if (run) {
+                if (run.commandId !== latest) {
+                  const runAcceptedPath = this.path(
+                    run.commandId,
+                    "accepted.json",
+                  );
+                  watched.set(runAcceptedPath, observedFile(runAcceptedPath));
+                }
+                if (!this.active.has(run.commandId)) {
+                  const runStatePath = this.path(run.commandId, "state.json");
+                  const st = this.state(run.commandId);
+                  watched.set(runStatePath, observedFile(runStatePath));
+                  if (
+                    st.user === null &&
+                    run.accepted.parent === s.leaf &&
+                    (st.status !== "unknown" ||
+                      !session?.commandEntries(
+                        run.commandId,
+                        run.accepted.parent,
+                        run.accepted.offset,
+                      ).length)
+                  )
+                    attemptStatus = st.status;
+                }
+              }
+            }
+            status = attemptStatus ?? recordedStatus ?? status;
+          }
+          if (!liveInput) {
+            if (this.summaryStatuses.size >= SUMMARY_STATUSES)
+              this.summaryStatuses.clear();
+            this.summaryStatuses.set(id, {
+              listedKey,
+              indexKey,
+              watched: [...watched],
+              status,
+            });
+          }
+        }
+      }
     }
     return {
       id,
       title: text(
-        [...sanitizeText(summaryTitle(s), secrets)]
+        [...sanitizeText(summaryTitle(s), redaction)]
           .slice(0, CONVERSATION_NAME_CHARS)
           .join("") || "Conversation",
         512,
@@ -553,12 +655,14 @@ export class ConversationRecords {
       if (start < 0) start = listed.length;
     }
     const page = listed.slice(start, start + PAGE);
+    const secrets = page.length ? this.readSecrets() : [];
     const entries = page.flatMap((l) => {
       const summary = this.summary(
         l.summary.id,
         this.liveFor(l.summary.id),
         archived,
         l,
+        secrets,
       );
       return summary ? [summary] : [];
     });
@@ -574,10 +678,17 @@ export class ConversationRecords {
   }
   activeConversations(): WorkbenchResult & { kind: "conversation-active" } {
     this.o.assertCurrent();
+    const secrets = this.active.size ? this.readSecrets() : [];
     return {
       kind: "conversation-active",
       entries: [...this.active.values()].flatMap((live) => {
-        const summary = this.summary(live.accepted.session, live);
+        const summary = this.summary(
+          live.accepted.session,
+          live,
+          undefined,
+          undefined,
+          secrets,
+        );
         return summary ? [summary] : [];
       }),
     };
@@ -663,8 +774,9 @@ export class ConversationRecords {
   private pending(
     live: LiveTurn,
     session: ParsedSession | undefined,
+    secrets?: readonly string[],
   ): ChatPending[] {
-    const secrets = this.readSecrets();
+    const redaction = secrets ?? this.readSecrets();
     return live.inputs
       .filter(
         (input) => !input.withdrawn && !session?.delivered(input.commandId),
@@ -674,7 +786,7 @@ export class ConversationRecords {
         commandId: input.commandId,
         mode: input.accepted.command.mode,
         text: clipText(
-          sanitizeText(input.accepted.command.text, secrets),
+          sanitizeText(input.accepted.command.text, redaction),
           PENDING_TEXT_BYTES,
         ),
       }));
@@ -684,6 +796,7 @@ export class ConversationRecords {
   private undelivered(
     id: string,
     view: ReturnType<ConversationRecords["branch"]>,
+    secrets?: readonly string[],
   ): ChatAttempt[] {
     const run = this.recordedRun(id);
     if (!run?.inputs.length || this.active.has(run.commandId)) return [];
@@ -702,7 +815,7 @@ export class ConversationRecords {
         : view.turns.at(-1)?.[0]?.id !== newest
     )
       return [];
-    const secrets = this.readSecrets();
+    const redaction = secrets ?? this.readSecrets();
     return run.inputs
       .flatMap(({ commandId, accepted }) => {
         const state = this.state(commandId);
@@ -714,11 +827,11 @@ export class ConversationRecords {
               {
                 commandId,
                 text: clipText(
-                  sanitizeText(accepted.command.text, secrets),
+                  sanitizeText(accepted.command.text, redaction),
                   UNDELIVERED_TEXT_BYTES,
                 ),
                 status: state.status,
-                notice: sanitizeText(state.notice, secrets),
+                notice: sanitizeText(state.notice, redaction),
               },
             ];
       })
@@ -726,7 +839,11 @@ export class ConversationRecords {
   }
   /** The newest run's own message when it left nothing in the session. A
    * message sent into that run is reported as undelivered instead. */
-  attempt(id: string, leaf: string | null): ChatAttempt | null {
+  attempt(
+    id: string,
+    leaf: string | null,
+    secrets?: readonly string[],
+  ): ChatAttempt | null {
     const latest = this.index(id).commands.at(-1);
     const run = latest === undefined ? undefined : this.runOf(latest);
     if (!run || this.active.has(run.commandId)) return null;
@@ -742,17 +859,19 @@ export class ConversationRecords {
       )
         return null;
     }
+    const redaction = secrets ?? this.readSecrets();
     return {
       commandId,
-      text: sanitizeText(accepted.command.text, this.readSecrets()),
+      text: sanitizeText(accepted.command.text, redaction),
       status: state.status,
-      notice: sanitizeText(state.notice, this.readSecrets()),
+      notice: sanitizeText(state.notice, redaction),
     };
   }
   /** The branch's context size; a live turn counts what Pi wrote for it so
    * far, so the figure follows each model response. */
   private context(
     view: ReturnType<ConversationRecords["branch"]>,
+    secrets?: readonly string[],
   ): ChatContext | undefined {
     if (!view.session) return undefined;
     // The turn read reports an unusable record of a live run; the head
@@ -761,11 +880,11 @@ export class ConversationRecords {
     const leaf = view.parts?.at(-1)?.entries.at(-1)?.id ?? view.leaf;
     const usage = view.session.usage(leaf);
     if (!usage) return undefined;
-    const secrets = this.readSecrets();
+    const redaction = secrets ?? this.readSecrets();
     return {
       tokens: usage.tokens,
-      provider: clipText(sanitizeText(usage.provider, secrets), 128),
-      model: clipText(sanitizeText(usage.model, secrets), 256),
+      provider: clipText(sanitizeText(usage.provider, redaction), 128),
+      model: clipText(sanitizeText(usage.model, redaction), 256),
     };
   }
   conversation(
@@ -781,11 +900,23 @@ export class ConversationRecords {
     const found = listed ?? null;
     const view = this.branch(id, leaf, false, found);
     const running = view.live ?? this.liveFor(id);
-    const summary = this.summary(id, running, undefined, found);
-    const context = this.context(view);
+    let cachedSecrets: readonly string[] | undefined;
+    const secrets = () => (cachedSecrets ??= this.readSecrets());
+    const summary = this.summary(
+      id,
+      running,
+      undefined,
+      found,
+      found || running ? secrets() : undefined,
+    );
+    const context = view.session ? this.context(view, secrets()) : undefined;
     const cache = view.session?.cache;
-    const pending = running ? this.pending(running, view.session) : [];
-    const undelivered = running ? [] : this.undelivered(id, view);
+    const pending = running
+      ? this.pending(running, view.session, secrets())
+      : [];
+    const undelivered = running
+      ? []
+      : this.undelivered(id, view, cachedSecrets);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
@@ -804,7 +935,7 @@ export class ConversationRecords {
       turns: summary ? view.turns.length + (view.live ? 1 : 0) : 0,
       branches: view.session?.leaves() ?? 0,
       runs: listed?.summary.runs ?? [],
-      attempt: view.live ? null : this.attempt(id, view.leaf),
+      attempt: view.live ? null : this.attempt(id, view.leaf, cachedSecrets),
     };
   }
   image(
@@ -1074,5 +1205,6 @@ export class ConversationRecords {
   closeReads(): void {
     this.sessions.close();
     this.states.clear();
+    this.summaryStatuses.clear();
   }
 }

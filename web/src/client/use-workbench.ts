@@ -8,6 +8,7 @@ import type { ServiceClient } from "../../../src/service-client.ts";
 import { publicError } from "../../../src/service-contract.ts";
 import { observationRetryMs, refusedAccess } from "./observation-read";
 import type { ObservationAccess } from "./observer";
+import { onPageVisible, pageHidden } from "./visibility";
 
 /** Readonly polling only; never replays a command after loss, navigation or reconnect. */
 export function useWorkbench(
@@ -38,14 +39,17 @@ export function useWorkbench(
     scope: typeof scope;
     revision: number;
     value?: WorkbenchResult;
+    serialized?: string;
     error?: string;
   }>();
   useEffect(() => {
     if (key === "null" || access?.signal.aborted || allocation?.aborted) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let paused = false;
     const stop = () => {
       abort.abort();
+      paused = false;
       clearTimeout(timer);
     };
     retire.current = stop;
@@ -68,25 +72,54 @@ export function useWorkbench(
         access.refuse("viewer", reply.error.code);
         return;
       }
-      setState((previous) =>
-        reply.kind === "ok"
-          ? { scope, revision, value: reply.value }
-          : {
-              scope,
-              revision,
-              value: previous?.scope === scope ? previous.value : undefined,
-              error: reply.error.code,
-            },
-      );
+      setState((previous) => {
+        if (reply.kind === "ok") {
+          const serialized = JSON.stringify(reply.value);
+          if (
+            previous?.scope === scope &&
+            previous.revision === revision &&
+            previous.error === undefined &&
+            previous.serialized === serialized
+          )
+            return previous;
+          return { scope, revision, value: reply.value, serialized };
+        }
+        const value = previous?.scope === scope ? previous.value : undefined;
+        const serialized =
+          previous?.scope === scope ? previous.serialized : undefined;
+        if (
+          previous?.scope === scope &&
+          previous.revision === revision &&
+          previous.error === reply.error.code &&
+          previous.value === value
+        )
+          return previous;
+        return {
+          scope,
+          revision,
+          value,
+          serialized,
+          error: reply.error.code,
+        };
+      });
       const delay = polling
         ? cadence.current
         : access && reply.kind === "error"
           ? observationRetryMs
           : 0;
-      if (delay) timer = setTimeout(() => void load(), delay);
+      if (delay) {
+        if (pageHidden()) paused = true;
+        else timer = setTimeout(() => void load(), delay);
+      }
     };
+    const unsubscribeVisible = onPageVisible(() => {
+      if (!paused || abort.signal.aborted) return;
+      paused = false;
+      void load();
+    });
     void load();
     return () => {
+      unsubscribeVisible();
       allocation?.removeEventListener("abort", stop);
       unsubscribe?.();
       stop();

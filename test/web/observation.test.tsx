@@ -1022,3 +1022,13 @@ it("the final detach denial during scope change stops the queued acquisition", a
   expect(s.sockets).toHaveLength(1);
   expect(s.writes).toEqual(["/api/v1/detach"]);
 });
+
+it("ordinary chat mode does not emit unchanged states on every 1s timer tick", async () => {
+  const s = await setup();
+  vi.useFakeTimers();
+  s.select(null);
+  await vi.waitFor(() => expect(s.state()?.readCurrent).toBe(true));
+  const settledCount = s.states.length;
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(s.states.length).toBe(settledCount);
+});

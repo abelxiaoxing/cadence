@@ -134,6 +134,12 @@ export interface SessionEntry {
   timestamp: string;
   /** Byte offset of the line: the order in which it was appended. */
   pos: number;
+  /** Message role captured while indexing so branch/turn walks avoid body reads. */
+  role?: string | null;
+  /** Custom-message display flag captured while indexing. */
+  display?: boolean;
+  /** Custom-entry kind captured while indexing. */
+  customType?: string | null;
   raw: Record<string, unknown>;
 }
 interface Header {
@@ -187,6 +193,24 @@ function parseLine(text: string, pos: number): Line | undefined {
     !(parentId === null || typeof parentId === "string")
   )
     return undefined;
+  let entryRole: string | null | undefined;
+  if (type === "message") {
+    const m = own(o, "message");
+    const r =
+      m && typeof m === "object" && !Array.isArray(m)
+        ? own(m as Record<string, unknown>, "role")
+        : undefined;
+    entryRole = typeof r === "string" ? r : null;
+  }
+  const display =
+    type === "custom_message" ? own(o, "display") === true : undefined;
+  const rawCustomType = type === "custom" ? own(o, "customType") : undefined;
+  const customType =
+    type === "custom"
+      ? typeof rawCustomType === "string"
+        ? rawCustomType
+        : null
+      : undefined;
   return {
     kind: "entry",
     entry: {
@@ -195,6 +219,9 @@ function parseLine(text: string, pos: number): Line | undefined {
       parentId,
       timestamp: typeof timestamp === "string" ? timestamp : "",
       pos,
+      ...(entryRole !== undefined ? { role: entryRole } : {}),
+      ...(display !== undefined ? { display } : {}),
+      ...(customType !== undefined ? { customType } : {}),
       raw: o,
     },
   };
@@ -275,6 +302,8 @@ const message = (entry: SessionEntry): Record<string, unknown> | undefined => {
     : undefined;
 };
 const role = (entry: SessionEntry): unknown => {
+  if (entry.type !== "message") return undefined;
+  if (entry.role !== undefined) return entry.role ?? undefined;
   const m = message(entry);
   return m ? own(m, "role") : undefined;
 };
@@ -379,8 +408,9 @@ function stopStatus(m: Record<string, unknown>): {
  * status, as a built turn states it. */
 export function replyStatus(entries: readonly SessionEntry[]): ChatStatus {
   for (let i = entries.length - 1; i >= 0; i--) {
+    if (role(entries[i]) !== "assistant") continue;
     const m = message(entries[i]);
-    if (m && own(m, "role") === "assistant") return stopStatus(m).status;
+    if (m) return stopStatus(m).status;
   }
   return "completed";
 }
@@ -395,8 +425,9 @@ export interface BranchUsage {
 /** The tokens an assistant message reported, as Pi counts a valid usage: the
  * reply neither failed nor was aborted, and its total is above zero. */
 function reportedUsage(entry: SessionEntry): BranchUsage | undefined {
+  if (role(entry) !== "assistant") return undefined;
   const m = message(entry);
-  if (!m || own(m, "role") !== "assistant") return undefined;
+  if (!m) return undefined;
   const reason = own(m, "stopReason"),
     usage = own(m, "usage");
   if (
@@ -523,7 +554,9 @@ function fold(summary: SessionSummary, line: Line): void {
 function commandMarker(entry: SessionEntry) {
   if (
     entry.type !== "custom" ||
-    own(entry.raw, "customType") !== BROWSER_COMMAND_ENTRY
+    (entry.customType !== undefined
+      ? entry.customType
+      : own(entry.raw, "customType")) !== BROWSER_COMMAND_ENTRY
   )
     return undefined;
   const value = own(entry.raw, "data");
@@ -1041,7 +1074,7 @@ function shown(entry: SessionEntry): boolean {
       role(entry) as string,
     );
   if (entry.type === "custom_message")
-    return own(entry.raw, "display") === true;
+    return entry.display ?? own(entry.raw, "display") === true;
   return entry.type === "compaction" || entry.type === "branch_summary";
 }
 

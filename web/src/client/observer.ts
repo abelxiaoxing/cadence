@@ -8,6 +8,7 @@ import type { Scope, WorkspaceBootstrap } from "../types";
 import type { BrowserClient } from "./browser";
 import { refusedAccess } from "./observation-read";
 import { reloadIfBuildChanged } from "./project-route";
+import { onPageVisible, pageHidden } from "./visibility";
 
 export interface ViewerState {
   workspace?: WorkspaceBootstrap;
@@ -154,13 +155,14 @@ export class WorkspaceObserver {
       attachmentVersion: 0,
     };
     this.latest = state;
+    let lastPublished: ViewerState | undefined;
     const current = () => !disposed && version === this.version;
     const matchesOwner = (data: { epoch: string; storeId: string }) =>
       data.epoch === state.epoch && data.storeId === storeId;
     const emit = () => {
       if (!current()) return;
       const observation = tracker.state;
-      this.latest = {
+      const next: ViewerState = {
         ...state,
         error: state.error ?? socketError,
         observation,
@@ -170,6 +172,23 @@ export class WorkspaceObserver {
           state.transportStatus === "current" &&
           (!scope || observation?.connection === "current"),
       };
+      if (
+        lastPublished &&
+        lastPublished.epoch === next.epoch &&
+        lastPublished.attached === next.attached &&
+        lastPublished.allocationSignal === next.allocationSignal &&
+        lastPublished.readCurrent === next.readCurrent &&
+        lastPublished.actions === next.actions &&
+        lastPublished.transportStatus === next.transportStatus &&
+        lastPublished.attachmentVersion === next.attachmentVersion &&
+        lastPublished.error === next.error &&
+        lastPublished.observation === next.observation &&
+        lastPublished.workspace === next.workspace &&
+        lastPublished.activeRuns === next.activeRuns
+      )
+        return;
+      lastPublished = next;
+      this.latest = next;
       publish(this.latest);
       for (const check of this.readiness) check(this.latest);
     };
@@ -186,9 +205,11 @@ export class WorkspaceObserver {
         allocationSignal: undefined,
       };
     };
+    let stopVisible = () => {};
     const stop = () => {
       if (disposed) return;
       disposed = true;
+      stopVisible();
       this.access.signal.removeEventListener("abort", revoked);
       retire();
       clearInterval(timer);
@@ -532,13 +553,23 @@ export class WorkspaceObserver {
       if (!state.attached) reconnect();
       else void poll();
     };
-    timer = setInterval(() => {
+    stopVisible = onPageVisible(() => {
       if (!current() || blocked) return;
-      tracker.tick(Date.now());
-      emit();
       if (
         Date.now() - lastPoll >= (failed ? 2000 : 30000) ||
         (scope && tracker.needsPoll(Date.now()))
+      )
+        void poll();
+    });
+    timer = setInterval(() => {
+      if (!current() || blocked) return;
+      const before = tracker.state;
+      tracker.tick(Date.now());
+      if (tracker.state !== before) emit();
+      if (
+        !pageHidden() &&
+        (Date.now() - lastPoll >= (failed ? 2000 : 30000) ||
+          (scope && tracker.needsPoll(Date.now())))
       )
         void poll();
     }, 1000);
