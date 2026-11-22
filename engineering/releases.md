@@ -1307,3 +1307,10 @@ Full `verify` and review-fix regressions passed on Linux (controlled fixtures, n
 Separates browser coordinator static dialogue policy (`request.instructions`, `<= 16KiB`) from dynamic per-turn conversation and project context (`request.context`, `<= 32KiB`) mounted via Pi 1.5.0 `appendSystemPrompt` so shared Pi session `.jsonl` files record only the user's raw prompt.
 Introduces a single budget owner (`buildCoordinatorContext`) with UTF-8-safe route-table clipping (`routeTableBrief(..., maxBytes?)`), trims duplicated schema/delivery prose from `CADENCE_INSTRUCTIONS`, and adds executable wire-budget and Pi session-isolation invariant tests to prevent `ContractError("oversize")` regressions.
 Full `verify` passed on Linux after rebuilding canonical operator, service and Web outputs and refreshing `provenance/webui-reuse.json` pins (controlled fixtures, not paid-provider or native Windows/macOS qualification).
+
+## 2.3.2 release candidate
+
+Anchors design choices in WebUI history and retires submitted choice prompts on approval, and turns the composer Cadence mode control into a direct one-step toggle without an intermediate armed state.
+Keeps incremental TypeScript build info in the verified private temporary directory and disables `.rumdl_cache` writes so checks and lint leave isolated worktrees spotless.
+Aligns checkout dependency guidance on `plan.links` and lists redacted residue paths whenever worktree cleanup retains a worktree.
+Full `verify` passed on Linux after rebuilding canonical operator, service and Web outputs and refreshing `provenance/webui-reuse.json` pins (controlled fixtures, not paid-provider or native Windows/macOS qualification).
