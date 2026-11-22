@@ -1841,3 +1841,141 @@ it.each(["steer", "queue"])(
     }
   },
 );
+
+it("approving a plan clears pending exit, and toggling off refuses a stale approval phrase without silent reinterpretation", async () => {
+  const model = {
+    ...proposal("").model,
+    epoch: crypto.randomUUID(),
+    catalogId: crypto.randomUUID(),
+    conversation: { id: "chat", cwd: "/fixture" },
+  };
+  const p = decodeWorkflowProposal({
+    ...proposal("Review before exit"),
+    epoch: model.epoch,
+    model,
+  });
+  f.state = {
+    id: "chat",
+    revision: 1,
+    enabled: true,
+    head: "turn-1",
+    proposal: p,
+    runs: [],
+  };
+  f.catalog = model;
+  const grant = crypto.randomUUID();
+  const prepare = vi.fn(async () => {});
+  const command = vi.fn(async (cmd: WorkbenchCommand) =>
+    cmd.kind === "cadence-prepare"
+      ? {
+          kind: "ok" as const,
+          value: {
+            kind: "cadence-grant" as const,
+            commandId: cmd.commandId,
+            revision: f.state?.revision ?? 0,
+            proposal: p,
+            expiresAt: Date.now() + 60_000,
+            grant,
+          },
+        }
+      : {
+          kind: "ok" as const,
+          value: { kind: "accepted" as const, commandId: cmd.commandId },
+        },
+  );
+  const client = new ServiceClient(transport({ workbenchCommand: command }));
+  vi.spyOn(client, "models").mockResolvedValue({
+    kind: "ok",
+    value: {
+      status: "complete",
+      withheld: 0,
+      remembered: null,
+      entries: [],
+      version: model,
+      selected: {
+        provider: "fixture",
+        model: "fixture",
+        api: "openai-completions",
+        thinking: "low",
+        sourceSelectionId: crypto.randomUUID(),
+      },
+    },
+  });
+  const root = recoveryRoot();
+  let tree!: ReturnType<typeof ChatWorkspace>,
+    field!: ReturnType<typeof useField>;
+  function Probe() {
+    tree = usePhraseWorkspace(client, prepare, prepare);
+    field = useField(composer(tree));
+    return null;
+  }
+  const draw = () => act(async () => root.render(<Probe />));
+  try {
+    await draw();
+    // 1. Enter approval phrase in Cadence mode, then toggle Cadence OFF.
+    await act(async () => toggleTitle(tree));
+    await act(async () => field.change(phrase, "insertText", phrase));
+    await act(async () => composer(tree).cadence.onClick());
+    expect(composer(tree).cadence.armed).toBe(false);
+    // Sending the pre-toggle approval phrase must refuse with an exit-specific notice.
+    await act(async () => field.key("Enter"));
+    expect(command).not.toHaveBeenCalled();
+    expect(currentToasts().at(-1)?.text).toContain(
+      "before turning Cadence off",
+    );
+    // Re-entering the text after toggling OFF sends as an atomic ordinary exit-send.
+    await act(async () => field.change("", "deleteContentBackward"));
+    await act(async () => field.change(phrase, "insertText", phrase));
+    await act(async () => field.key("Enter"));
+    expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
+      expect.objectContaining({
+        kind: "send",
+        text: phrase,
+        exitRevision: 1,
+      }),
+    ]);
+
+    // 2. Approving a plan clears a lingering pending exit so the next message stays in Cadence.
+    command.mockClear();
+    f.state = {
+      id: "chat",
+      revision: 2,
+      enabled: true,
+      head: "turn-2",
+      proposal: p,
+      runs: [],
+    };
+    await draw();
+    await act(async () => toggleTitle(tree));
+    await act(async () => composer(tree).cadence.onClick());
+    expect(composer(tree).cadence.armed).toBe(false);
+    const planCard = descendant<{ onApprove(): void; canApprove?: boolean }>(
+      tree,
+      (e) => typeof e.props.onApprove === "function",
+    );
+    if (!planCard?.canApprove) throw Error("missing approvable PlanCard");
+    await act(async () => planCard.onApprove());
+    expect(command.mock.calls.map(([cmd]) => cmd.kind)).toEqual([
+      "cadence-prepare",
+      "cadence-approve",
+    ]);
+    // After approval, pending exit is gone and the toggle stays ON.
+    expect(composer(tree).cadence.armed).toBe(true);
+    command.mockClear();
+    await act(async () =>
+      field.change("Check status", "insertText", "Check status"),
+    );
+    await act(async () => field.key("Enter"));
+    expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
+      expect.objectContaining({
+        kind: "cadence-send",
+        intent: "message",
+        text: "Check status",
+      }),
+    ]);
+  } finally {
+    await act(async () => root.unmount());
+    vi.unstubAllGlobals();
+    f.catalog = undefined;
+  }
+});

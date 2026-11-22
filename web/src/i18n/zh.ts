@@ -1259,8 +1259,6 @@ export const zh = {
   "Type a message below. Turn on Cadence mode to agree on a plan before implementation.":
     "在下方输入消息开始对话。打开 Cadence 模式可以先商定计划再实施。",
   "Cadence mode": "Cadence 模式",
-  "Turn on Cadence": "开启 Cadence",
-  "Turn off Cadence": "关闭 Cadence",
   "Cadence mode is on. Click to exit on your next message.":
     "Cadence 模式已开启，点击后将在发送下一条消息时退出。",
   "Your next message turns on Cadence mode. Click to cancel.":
@@ -1275,6 +1273,8 @@ export const zh = {
     "发送下一条消息时将退出 Cadence 并按普通对话发送。",
   "Your next message exits Cadence mode.":
     "发送下一条消息时将退出 Cadence 模式。",
+  "This approval phrase was entered before turning Cadence off. Edit the message to send normally, or keep Cadence on to confirm the plan.":
+    "该审批短语是在关闭 Cadence 前输入的。请修改或重新输入后再按普通消息发送，或保持 Cadence 开启以确认计划。",
   "Remove the /cadence prefix to send as an ordinary message.":
     "消息以 /cadence 开头，发送时将进入 Cadence 模式；如需普通发送请先删除 /cadence 前缀。",
   "Edit the exit command to stay in Cadence mode.":

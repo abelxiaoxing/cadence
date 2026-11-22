@@ -500,10 +500,20 @@ it("mode toggle defers entering and exiting Cadence until explicit Send, and /ca
   // 1. Ordinary mode: clicking toggle only arms next Send (no command).
   const initial = w.draw(true, "zh");
   expect(initial.html).toContain('class="mode-toggle off"');
+  expect(initial.html).toContain('aria-pressed="false"');
+  expect(initial.html).toContain(
+    '<span class="mode-toggle-label">Cadence</span>',
+  );
+  expect(initial.html).toContain(
+    '<span class="mode-switch" aria-hidden="true">',
+  );
+  expect(initial.html).not.toContain("composer-hint mode-pending");
   initial.input.cadence.onClick();
   const armed = w.draw(true, "zh");
   expect(w.command).not.toHaveBeenCalled();
   expect(armed.html).toContain('class="mode-toggle on armed"');
+  expect(armed.html).toContain('aria-pressed="true"');
+  expect(armed.html).toContain('class="composer-hint mode-pending"');
   expect(armed.html).toContain("发送下一条消息时将开启 Cadence 模式。");
   // Clicking again cancels cleanly without sending.
   armed.input.cadence.onClick();
@@ -617,4 +627,46 @@ it("freshNew opens directly in the centered new-conversation layout without flas
   expect(failed.html).not.toContain('data-entry="new"');
   expect(failed.html).not.toContain("entry-starters");
   expect(failed.html).toContain("读取当前上下文后才能发送");
+});
+
+it("lingering pending mode reconciles with server state and can be cancelled during a running reply to unlock steer/queue", () => {
+  const w = workspace();
+  // Arm Cadence while idle, then observe a live reply started elsewhere.
+  w.draw(true, "zh").input.cadence.onClick();
+  expect(w.draw(true, "zh").html).toContain('class="mode-toggle on armed"');
+
+  const live = { epoch: w.epoch, commandId: crypto.randomUUID() };
+  f.summary = {
+    id: "chat",
+    title: "Live reply",
+    origin: "webui",
+    leaf: null,
+    updatedAt: 1,
+    status: "running",
+    live,
+  };
+  w.draw(true, "zh").input.onDraft("follow up");
+  const blocked = w.draw(true, "zh");
+  // Steer/queue stays blocked by the pending mode change, but the toggle stays clickable to cancel it.
+  expect(blocked.input.input?.enabled).toBe(false);
+  expect(blocked.input.cadence.disabled).toBe(false);
+  expect(blocked.html).toContain('class="mode-toggle on armed"');
+
+  // Clicking cancels pendingMode, immediately unlocks steer/queue, and disables new mode changes while running.
+  blocked.input.cadence.onClick();
+  const unlocked = w.draw(true, "zh");
+  expect(unlocked.input.input?.enabled).toBe(true);
+  expect(unlocked.input.cadence.disabled).toBe(true);
+  expect(unlocked.html).toContain('class="mode-toggle off"');
+  // Clicking again while running cannot arm a new mode change.
+  unlocked.input.cadence.onClick();
+  expect(w.draw(true, "zh").html).toContain('class="mode-toggle off"');
+
+  // When server mode already catches up to pendingMode, it reconciles cleanly to steady state.
+  f.summary = null;
+  f.cadence = false;
+  w.draw(true, "zh").input.cadence.onClick();
+  expect(w.draw(true, "zh").html).toContain('class="mode-toggle on armed"');
+  f.cadence = true;
+  expect(w.draw(true, "zh").html).toContain('class="mode-toggle on"');
 });

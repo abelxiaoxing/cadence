@@ -12,15 +12,8 @@ export function composerMode({
   if (active) return armed ? "on" : "leaving";
   return armed ? "armed" : "off";
 }
-const labels = {
-  unknown: "Cadence state unavailable",
-  on: "Turn off Cadence",
-  armed: "Turn off Cadence",
-  leaving: "Turn on Cadence",
-  off: "Turn on Cadence",
-} as const;
 const titles = {
-  unknown: labels.unknown,
+  unknown: "Cadence state unavailable",
   on: "Cadence mode is on. Click to exit on your next message.",
   armed: "Your next message turns on Cadence mode. Click to cancel.",
   leaving:
@@ -35,7 +28,7 @@ const classes = {
   off: "off",
 } as const;
 export const modeHints = {
-  unknown: labels.unknown,
+  unknown: "Cadence state unavailable",
   on: "Cadence stays on. Confirm one plan before implementation.",
   armed: "Your next message turns on Cadence mode.",
   leaving: "Your next message exits Cadence mode and sends normally.",
@@ -55,19 +48,24 @@ export function CadenceModeButton({
 }) {
   const { t } = useT();
   const state = composerMode(facts);
-  const label = t(labels[state]);
+  const pressed = state === "on" || state === "armed";
+  const label =
+    state === "unknown" ? t("Cadence state unavailable") : "Cadence";
   return (
     <button
       type="button"
       className={`mode-toggle ${classes[state]}`}
       aria-label={label}
+      aria-pressed={state === "unknown" ? undefined : pressed}
       disabled={disabled || state === "unknown"}
       title={(disabled && disabledReason) || t(titles[state])}
       onClick={onClick}
     >
       <FiZap className="mode-toggle-icon" aria-hidden="true" />
-      <span className="mode-switch" aria-hidden="true" />
-      {label}
+      <span className="mode-toggle-label">{label}</span>
+      {state !== "unknown" && (
+        <span className="mode-switch" aria-hidden="true" />
+      )}
     </button>
   );
 }
