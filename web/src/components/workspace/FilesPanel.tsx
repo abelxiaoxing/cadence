@@ -67,12 +67,16 @@ export function FilesPanel({
   client,
   enabled,
   location,
+  switching = false,
   observed = "",
   onReference,
 }: {
   client: ServiceClient;
   enabled: boolean;
   location?: ConversationLocation;
+  /** Same-folder conversation switch awaiting its brief context read; retains
+   * the visible listing/preview without enabling actions until confirmed. */
+  switching?: boolean;
   /** Changes when execution starts, stops or is replaced: the reads move
    * between the stopped-owner reader and the owner, so they are made again. */
   observed?: string;
@@ -121,7 +125,48 @@ export function FilesPanel({
     refreshFiles();
     refreshPreview();
   }, [observed, refreshFiles, refreshPreview]);
-  const listing = files.value?.kind === "files" ? files.value : undefined;
+  const liveListing = files.value?.kind === "files" ? files.value : undefined;
+  const lastListing = useRef<{
+    cwd: string;
+    path: string;
+    value: NonNullable<typeof liveListing>;
+  } | null>(null);
+  const lastLocation = useRef<ConversationLocation | undefined>(undefined);
+  if (location) lastLocation.current = location;
+  else if (!switching) lastLocation.current = undefined;
+  if (liveListing && cwd)
+    lastListing.current = { cwd, path, value: liveListing };
+  else if (!enabled && !switching) lastListing.current = null;
+  const retainedListing =
+    !files.error &&
+    (enabled || switching) &&
+    lastListing.current?.path === path &&
+    (!cwd || lastListing.current.cwd === cwd)
+      ? lastListing.current.value
+      : undefined;
+  const listing = liveListing ?? retainedListing;
+  const displayLocation =
+    location ?? (switching ? lastLocation.current : undefined);
+  const liveFile =
+    preview.value?.kind === "file" && preview.value.path === selected
+      ? preview.value
+      : undefined;
+  const lastFile = useRef<{
+    cwd: string;
+    path: string;
+    value: NonNullable<typeof liveFile>;
+  } | null>(null);
+  if (liveFile && cwd && selected)
+    lastFile.current = { cwd, path: selected, value: liveFile };
+  else if ((!enabled && !switching) || !selected) lastFile.current = null;
+  const retainedFile =
+    !preview.error &&
+    (enabled || switching) &&
+    selected &&
+    lastFile.current?.path === selected &&
+    (!cwd || lastFile.current.cwd === cwd)
+      ? lastFile.current.value
+      : undefined;
   const open = (next: string) => {
     setPath(next);
     setFilter(null);
@@ -187,14 +232,16 @@ export function FilesPanel({
           type="button"
           className={`crumb${path ? "" : " active"}`}
           title={
-            location
-              ? `${t("Conversation folder:")} ${location.cwd}`
+            displayLocation
+              ? `${t("Conversation folder:")} ${displayLocation.cwd}`
               : undefined
           }
-          disabled={!location}
+          disabled={!displayLocation}
           onClick={() => open("")}
         >
-          {location ? lastSegment(location.cwd) : t("Not observed")}
+          {displayLocation
+            ? lastSegment(displayLocation.cwd)
+            : t("Not observed")}
         </button>
         <button
           type="button"
@@ -281,10 +328,10 @@ export function FilesPanel({
         </p>
       )}
       <section className="file-list" aria-label={t("File list")}>
-        {!enabled ? (
+        {!enabled && !listing ? (
           <p className="panel-empty" role="status">
             {t(
-              location
+              displayLocation
                 ? "Files appear once this folder has been observed."
                 : "The conversation folder has not been observed.",
             )}
@@ -413,8 +460,12 @@ export function FilesPanel({
         )}
       </section>
       <FilePreview
-        path={enabled ? selected : null}
-        preview={preview}
+        path={enabled || (switching && !!retainedFile) ? selected : null}
+        preview={
+          retainedFile && !liveFile && !preview.error
+            ? { ...preview, loading: false, value: retainedFile }
+            : preview
+        }
         onClose={() => setSelected(null)}
       />
     </div>

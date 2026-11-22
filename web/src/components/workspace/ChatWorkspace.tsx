@@ -211,6 +211,8 @@ export interface ConversationActivity {
   /** Turns on the branch shown. */
   turns: number;
   replyClock: ReplyClock;
+  /** True while awaiting the initial head read within READING_GRACE_MS. */
+  reading?: boolean;
   /** True while this conversation is an untouched empty new conversation. */
   empty?: boolean;
   /** The branch's context size as of its last completed model response;
@@ -219,6 +221,8 @@ export interface ConversationActivity {
   /** The whole session's input tokens by cache use; absent when the head
    * read states none. */
   cache?: ChatCache;
+  /** Observed model for this conversation, used only as a brief visual placeholder across same-owner switches. */
+  model?: ModelSelector;
 }
 /** Captured by the rendered control, never looked up on the next viewer. */
 export interface ViewerTicket {
@@ -318,6 +322,7 @@ export function ChatWorkspace({
   canCancelWorkflow,
   modelAvailability,
   previewModels,
+  fallbackModel = null,
   initialDraft,
   onDraftApplied,
   onModelChanged,
@@ -374,6 +379,8 @@ export function ChatWorkspace({
   /** Observed execution availability, independent of the readable history. */
   modelAvailability: ModelAvailability;
   previewModels?: PreviewModels;
+  /** Purely visual placeholder from the same owner during a brief initial switch. */
+  fallbackModel?: ModelSelector | null;
   initialDraft?: FolderDraft;
   /** Retire the one-time entry handoff only after the target mounts. */
   onDraftApplied?(): void;
@@ -1237,13 +1244,17 @@ export function ChatWorkspace({
     keepEnd,
   );
   // Earlier turns load while the reader is near the top, on scroll and after
-  // each render (a short transcript fills itself); no page is ever switched.
+  // transcript growth (a short transcript fills itself); no page is ever switched.
   const { earlier, loadEarlier } = conversation;
-  const nearTop = () => {
+  const nearTop = useCallback(() => {
     const el = scroll.current;
     if (el && !hidden && earlier && el.scrollTop < 1200) loadEarlier();
-  };
-  useEffect(nearTop);
+  }, [hidden, earlier, loadEarlier]);
+  useEffect(() => {
+    void turns.length;
+    void conversation.loadingEarlier;
+    nearTop();
+  }, [nearTop, turns.length, conversation.loadingEarlier]);
   // The question the transcript is at: the last one at its end, else the
   // turn that has reached the top of the view.
   const tracking = useRef(0);
@@ -1293,6 +1304,16 @@ export function ChatWorkspace({
   const firstOrdinal = turns[0]?.ordinal;
   const inserted = useRef<{ ordinal?: number; height: number }>({ height: 0 });
   useLayoutEffect(() => {
+    void turns;
+    void conversation.attempt;
+    void conversation.pending;
+    void conversation.undelivered;
+    void approving;
+    void state?.notice;
+    void state?.runs;
+    void state?.design;
+    void error;
+    void pending;
     const el = scroll.current;
     if (!el) return;
     const previous = inserted.current;
@@ -1307,7 +1328,21 @@ export function ChatWorkspace({
     // Include workflow lines, notices and queued inputs outside observed rows.
     if (!hidden) keepEnd();
     inserted.current = { ordinal: firstOrdinal, height: el.scrollHeight };
-  });
+  }, [
+    hidden,
+    firstOrdinal,
+    turns,
+    conversation.attempt,
+    conversation.pending,
+    conversation.undelivered,
+    approving,
+    state?.notice,
+    state?.runs,
+    state?.design,
+    error,
+    pending,
+    keepEnd,
+  ]);
   useEffect(() => {
     try {
       // 2.0.21 kept an approval lock here that could outlive its request.
@@ -1436,38 +1471,6 @@ export function ChatWorkspace({
     !hasRecord &&
     draft === "" &&
     imageDraft.files.length === 0;
-  const onActivityRef = useRef(onActivity);
-  onActivityRef.current = onActivity;
-  useLayoutEffect(() => {
-    onActivityRef.current?.({
-      id,
-      turns: conversation.count,
-      replyClock,
-      ...(emptyConversation ? { empty: true } : {}),
-      ...(usage ? { context: usage } : {}),
-      ...(cache ? { cache } : {}),
-    });
-  }, [id, conversation.count, replyClock, emptyConversation, usage, cache]);
-  const canIdlePoll =
-    observedEmpty &&
-    contextKnown &&
-    cadenceKnown &&
-    !cadence &&
-    !busy &&
-    !pending &&
-    !preparing &&
-    !approving &&
-    !revalidating;
-  const prevIdlePoll = useRef(false);
-  useEffect(() => {
-    const leavingIdle = prevIdlePoll.current && !canIdlePoll && hasRecord;
-    prevIdlePoll.current = canIdlePoll;
-    setIdlePoll(canIdlePoll);
-    if (leavingIdle) {
-      contextRead.refresh();
-      workflow.refresh();
-    }
-  }, [canIdlePoll, hasRecord, contextRead.refresh, workflow.refresh]);
   const waitingInitialRead =
     available &&
     !conversation.error &&
@@ -1487,17 +1490,79 @@ export function ChatWorkspace({
     return () => clearTimeout(timer);
   }, [waitingInitialRead]);
   const slowReading = readingShown && waitingInitialRead;
+  const replyReading =
+    available && !conversation.error && !observed && !readingShown;
+  const observedModel =
+    modelRead.catalog?.selected ?? modelRead.catalog?.remembered ?? undefined;
+  const onActivityRef = useRef(onActivity);
+  onActivityRef.current = onActivity;
+  useLayoutEffect(() => {
+    onActivityRef.current?.({
+      id,
+      turns: conversation.count,
+      replyClock,
+      ...(replyReading ? { reading: true } : {}),
+      ...(emptyConversation ? { empty: true } : {}),
+      ...(usage ? { context: usage } : {}),
+      ...(cache ? { cache } : {}),
+      ...(observedModel ? { model: observedModel } : {}),
+    });
+  }, [
+    id,
+    conversation.count,
+    replyClock,
+    replyReading,
+    emptyConversation,
+    usage,
+    cache,
+    observedModel,
+  ]);
+  const liveWorkflow = useMemo(
+    () => [...flows.runs.values()].some(workflowLive),
+    [flows.runs],
+  );
+  const settledIdle =
+    observed &&
+    !conversation.error &&
+    !running &&
+    !unsettled(summary?.status) &&
+    !conversation.pending.length &&
+    !activeWorkflowIds.length &&
+    !liveWorkflow;
+  const canIdlePoll =
+    (observedEmpty || settledIdle) &&
+    contextKnown &&
+    cadenceKnown &&
+    !cadence &&
+    !busy &&
+    !pending &&
+    !preparing &&
+    !approving &&
+    !revalidating;
+  const prevIdlePoll = useRef(false);
+  useEffect(() => {
+    const leavingIdle = prevIdlePoll.current && !canIdlePoll && available;
+    prevIdlePoll.current = canIdlePoll;
+    setIdlePoll(canIdlePoll);
+    if (leavingIdle) {
+      contextRead.refresh();
+      workflow.refresh();
+    }
+  }, [canIdlePoll, available, contextRead.refresh, workflow.refresh]);
   const showTranscriptReading =
     readingShown &&
     available &&
     !conversation.error &&
     !centerEntry &&
     (!observed || (turns.length === 0 && conversation.count > 0));
-  // Freshly minted new conversations start in ordinary mode visually so the
-  // toolbar toggle does not flash "unavailable" during the initial read;
-  // Send still strictly requires observed mode/context confirmation.
+  // Freshly minted new conversations and brief initial switches avoid flashing
+  // "unavailable" during the initial read; history switches stay disabled and
+  // Send strictly requires observed mode/context confirmation.
+  const graceMode = waitingInitialRead && !readingShown && !cadenceKnown;
   const displayModeFacts =
-    freshEntry && !cadenceKnown ? { ...modeFacts, known: true } : modeFacts;
+    (freshEntry || graceMode) && !cadenceKnown
+      ? { ...modeFacts, known: true }
+      : modeFacts;
   const displayModeState = composerMode(displayModeFacts);
   const displayModeHint =
     displayModeState === "leaving" && phraseExit
@@ -1530,7 +1595,7 @@ export function ChatWorkspace({
           );
       }
     }
-  });
+  }, [hidden, centerEntry, received, summary]);
   const firstAt = turns.find((turn) => turn.header.at > 0)?.header.at;
   const allTurns = !earlier && turns.length > 0;
   useEffect(() => {
@@ -2819,6 +2884,7 @@ export function ChatWorkspace({
                 stick.current = followsLatest(el);
               followedTop.current = null;
               setAway(!stick.current);
+              lazy.scheduleSweep();
               nearTop();
               trackActive();
             }
@@ -3055,7 +3121,11 @@ export function ChatWorkspace({
                       ? t("Choose a model; your message is sent right after.")
                       : busy
                         ? t("Sending…")
-                        : waitingInitialRead && !readingShown
+                        : waitingInitialRead &&
+                            (!readingShown ||
+                              (freshEntry &&
+                                draft.trim() === "" &&
+                                imageDraft.files.length === 0))
                           ? undefined
                           : t(
                               "Sending is unavailable until the current context is observed. Your draft stays here.",
@@ -3065,11 +3135,14 @@ export function ChatWorkspace({
             ...displayModeFacts,
             disabledReason: !displayModeFacts.known
               ? t("Cadence state unavailable")
-              : running && !(cadenceKnown && effectivePendingMode !== null)
-                ? t("Wait for the current reply before changing mode.")
-                : waitingReason,
+              : graceMode && !freshEntry
+                ? undefined
+                : running && !(cadenceKnown && effectivePendingMode !== null)
+                  ? t("Wait for the current reply before changing mode.")
+                  : waitingReason,
             disabled:
               !displayModeFacts.known ||
+              (graceMode && !freshEntry) ||
               (!!running && !(cadenceKnown && effectivePendingMode !== null)) ||
               busy ||
               !!pending ||
@@ -3118,6 +3191,14 @@ export function ChatWorkspace({
             },
             lastModel: context?.model,
             draftModel,
+            pendingModel:
+              available &&
+              !contextRead.error &&
+              !modelRead.error &&
+              !readingShown &&
+              (waitingInitialRead || modelRead.loading)
+                ? fallbackModel
+                : null,
             onPreviewChoice: previewModels
               ? (choice) => chosenModel(choice, false)
               : undefined,

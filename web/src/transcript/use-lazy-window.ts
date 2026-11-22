@@ -44,6 +44,9 @@ export function useLazyWindow(
   const heightsRef = useRef(new Map<string, number>()),
     heightMetaRef = useRef(new Map<string, HeightEntry>());
   const elsRef = useRef(new Map<string, HTMLDivElement>()),
+    callbacksRef = useRef(
+      new Map<string, (el: HTMLDivElement | null) => void>(),
+    ),
     sweepRafRef = useRef(0);
   const versionsRef = useRef(new Map<string, number>());
   versionsRef.current = new Map(rows.map((r) => [r.id, r.version]));
@@ -89,7 +92,7 @@ export function useLazyWindow(
   useLayoutEffect(() => {
     void pinned; // A newly pinned row is planned at once, not on the next scroll.
     if (!rows.length) {
-      setHidden(new Set());
+      setHidden((prev) => (prev.size ? new Set() : prev));
       return;
     }
     sweep();
@@ -109,17 +112,24 @@ export function useLazyWindow(
       sweepRafRef.current = 0;
     };
   }, [scheduleSweep, scrollRef]);
-  const register = useCallback(
-    (id: string) => (el: HTMLDivElement | null) => {
-      const prior = elsRef.current.get(id);
-      if (prior && prior !== el) observerRef.current?.unobserve(prior);
-      if (el) {
-        elsRef.current.set(id, el);
-        observerRef.current?.observe(el);
-      } else elsRef.current.delete(id);
-    },
-    [],
-  );
+  const register = useCallback((id: string) => {
+    let cb = callbacksRef.current.get(id);
+    if (!cb) {
+      cb = (el: HTMLDivElement | null) => {
+        const prior = elsRef.current.get(id);
+        if (prior && prior !== el) observerRef.current?.unobserve(prior);
+        if (el) {
+          elsRef.current.set(id, el);
+          observerRef.current?.observe(el);
+        } else {
+          elsRef.current.delete(id);
+          callbacksRef.current.delete(id);
+        }
+      };
+      callbacksRef.current.set(id, cb);
+    }
+    return cb;
+  }, []);
   const placeholder = useCallback(
     (id: string, version: number, estimate: number) =>
       getPlaceholderHeight(id, version, heightMetaRef.current, estimate),

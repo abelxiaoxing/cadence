@@ -139,9 +139,7 @@ export class ConversationContexts {
     this.current(cwd);
     return cwd;
   }
-  snapshot(location: ConversationLocation): ModelChoiceState {
-    this.o.owner.lease.assert();
-    const { context } = this.records.read(location);
+  private snapshotOf(context: ConversationContext): ModelChoiceState {
     const selected = context.model
       ? this.o.models.retainedSelection(context.model)
       : null;
@@ -159,13 +157,25 @@ export class ConversationContexts {
       },
     };
   }
-  catalog(location: ConversationLocation): ModelCatalog {
-    const before = this.snapshot(location);
+  snapshot(location: ConversationLocation): ModelChoiceState {
+    this.o.owner.lease.assert();
     const { context } = this.records.read(location);
+    return this.snapshotOf(context);
+  }
+  catalog(location: ConversationLocation): ModelCatalog {
+    this.o.owner.lease.assert();
+    const { context, file } = this.records.read(location);
+    const before = this.snapshotOf(context);
     const catalog = this.o.models.catalog();
     if (before.selected)
       this.o.models.assertCurrent(before.selected, "installed");
-    if (canonicalJson(before) !== canonicalJson(this.snapshot(location)))
+    this.o.owner.lease.assert();
+    this.o.coordination.files.assert(
+      this.records.path(context.id),
+      file,
+      BYTES,
+    );
+    if (canonicalJson(before) !== canonicalJson(this.snapshotOf(context)))
       throw new ContractError("stale");
     let remembered: ModelSelector | null = context.model;
     if (!remembered && this.o.agentDir)
@@ -187,7 +197,7 @@ export class ConversationContexts {
     const input = decodeConversationLocation(location);
     const { context, file } = this.records.read(input);
     this.current(input.cwd);
-    const before = this.snapshot(input);
+    const before = this.snapshotOf(context);
     if (
       context.cwd !== input.cwd ||
       canonicalJson(expected) !== canonicalJson(before.version)
@@ -238,17 +248,19 @@ export class ConversationContexts {
     } catch {
       /* Best effort; the conversation selection is authoritative. */
     }
-    return this.snapshot(input);
+    this.o.owner.lease.assert();
+    return this.snapshotOf(next ?? context);
   }
   restore(
     location: ConversationLocation,
     expected?: ChoiceVersion,
     intended?: ModelSelector,
   ): ModelChoiceState {
-    const before = this.snapshot(location);
+    this.o.owner.lease.assert();
+    const { context } = this.records.read(location);
+    const before = this.snapshotOf(context);
     if (expected && canonicalJson(expected) !== canonicalJson(before.version))
       throw new ContractError("stale");
-    const { context } = this.records.read(location);
     if (
       context.model &&
       intended &&

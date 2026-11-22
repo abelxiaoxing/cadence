@@ -76,6 +76,23 @@ export function ConversationFeedback({
       count: visible?.message === message ? visible.count + 1 : 1,
     }));
   }, [receipt, semantic]);
+  const span = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const app = span.current?.closest(".app") as HTMLElement | null;
+    if (!app) return;
+    if (notice) {
+      app.dataset.feedbackEvent = notice.message;
+      if (notice.sequence % 2 === 0) app.dataset.feedbackReplay = "";
+      else delete app.dataset.feedbackReplay;
+    } else {
+      delete app.dataset.feedbackEvent;
+      delete app.dataset.feedbackReplay;
+    }
+    return () => {
+      delete app.dataset.feedbackEvent;
+      delete app.dataset.feedbackReplay;
+    };
+  }, [notice]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => {
@@ -85,6 +102,7 @@ export function ConversationFeedback({
   }, [notice]);
   return (
     <span
+      ref={span}
       role="status"
       className="conversation-feedback"
       data-event={notice?.message}

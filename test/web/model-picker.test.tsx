@@ -401,3 +401,39 @@ it("a conversation's retained choice precedes the account default in a cold prev
   );
   expect(html).toContain('aria-label="Model: conversation-model · Low"');
 });
+it("pendingModel avoids loading text flash on switch without unlocking selection or hiding errors", () => {
+  const placeholder = {
+    provider: "local",
+    model: "m",
+    api: "openai-completions" as const,
+    thinking: "xhigh" as const,
+  };
+  const loading = picker(ready, read(), {
+    open: false,
+    pendingModel: placeholder,
+  });
+  expect(loading).toContain('aria-label="Model: m · Extra high"');
+  expect(loading).toContain('<span class="model-trigger-text">m</span>');
+  expect(loading).toContain("Thinking · Extra high");
+  const connecting = picker(
+    { status: "connecting" },
+    read(undefined, { loading: false }),
+    { open: false, pendingModel: placeholder },
+  );
+  expect(connecting).toContain('aria-label="Model: m · Extra high"');
+  expect(connecting).toContain('<span class="model-trigger-text">m</span>');
+  expect(connecting).toContain("Thinking · Extra high");
+  // Any real catalog error overrides the placeholder immediately.
+  const failed = picker(
+    ready,
+    read(undefined, { error: "unavailable", loading: false }),
+    { open: false, pendingModel: placeholder },
+  );
+  expect(failed).toContain("Model list unavailable");
+  // Opening during loading still offers no selectable options.
+  const openLoading = picker(ready, read(), {
+    open: true,
+    pendingModel: placeholder,
+  });
+  expect(openLoading).not.toContain('role="option"');
+});

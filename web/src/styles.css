@@ -3246,6 +3246,7 @@ summary:focus-visible,
 .chat-turn {
   max-width: var(--reading-width);
   margin: 0 auto 8px;
+  contain: style;
 }
 .chat-turn .msg {
   padding: 6px 0 12px;

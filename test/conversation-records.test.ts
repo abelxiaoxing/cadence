@@ -2310,3 +2310,56 @@ it("live conversation summaries expose immutable accepted.at as live.startedAt a
     entries: [{ id: saved.id, live: { commandId, epoch: live.epoch } }],
   });
 });
+
+it("list() reads secrets once and caches settled WebUI summary status across polls without thrashing open sessions", () => {
+  const f = fixture();
+  const sessions: { id: string; commandId: string; user: string }[] = [];
+  for (let i = 0; i < 12; i++) {
+    const saved = writeSession(f, [
+      { role: "user", content: [{ type: "text", text: `Session ${i}` }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: `Reply ${i}` }],
+        stopReason: "stop",
+      },
+    ]);
+    const commandId = f.command(saved.id, "completed", saved.entries[0]);
+    sessions.push({ id: saved.id, commandId, user: saved.entries[0] });
+  }
+  const secretSpy = vi.spyOn(f.records, "readSecrets");
+  const openSpy = vi.spyOn(f.records.sessions, "session");
+  const first = decodeWorkbenchResult(f.records.list());
+  expect(first.kind).toBe("conversations");
+  expect(secretSpy).toHaveBeenCalledTimes(1);
+  expect(openSpy).toHaveBeenCalledTimes(12);
+
+  // Repeated list polls reuse cached settled statuses with zero session re-opens
+  // and still read secrets once per request so redaction stays fresh.
+  secretSpy.mockClear();
+  openSpy.mockClear();
+  const second = decodeWorkbenchResult(f.records.list());
+  expect(second).toEqual(first);
+  expect(secretSpy).toHaveBeenCalledTimes(1);
+  expect(openSpy).toHaveBeenCalledTimes(0);
+
+  // Changing a recorded command state invalidates only that session's cached status.
+  const target = sessions[0];
+  const statePath = f.records.path(target.commandId, "state.json");
+  const prior = f.files.read(statePath);
+  if (!prior) throw Error("missing state");
+  f.files.replace(
+    statePath,
+    prior,
+    JSON.stringify({
+      status: "failed",
+      notice: "boom",
+      user: target.user,
+      omitted: { thinking: false, media: false, other: false },
+    }),
+  );
+  openSpy.mockClear();
+  const third = decodeWorkbenchResult(f.records.list());
+  if (third.kind !== "conversations") throw Error("conversations");
+  expect(third.entries.find((e) => e.id === target.id)?.status).toBe("failed");
+  expect(openSpy).toHaveBeenCalledTimes(1);
+});

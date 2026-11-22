@@ -141,8 +141,8 @@
   --mono:
     ui-monospace, "SFMono-Regular", Menlo, Consolas, "Microsoft YaHei Mono",
     monospace;
-  --glass-shell-blur: 22px;
-  --glass-card-blur: 5px;
+  --glass-shell-blur: 10px;
+  --glass-card-blur: 3px;
   --glass-filter: blur(var(--glass-shell-blur)) saturate(150%);
   --card-filter: blur(var(--glass-card-blur)) saturate(105%);
   --code-pad: 9px 12px;

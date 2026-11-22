@@ -3,6 +3,7 @@ import {
   decodeActivityDiscovery,
 } from "../../../src/service/contracts/activity.ts";
 import { observationRead, refusedAccess } from "./observation-read";
+import { onPageVisible, pageHidden } from "./visibility";
 
 export async function readActivity(
   signal: AbortSignal,
@@ -44,8 +45,16 @@ export function observeActivity(
 ) {
   const abort = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
+  let paused = false;
   let value: ActivityDiscovery | undefined;
   let announcedEpoch: string | undefined;
+  let lastKey: string | undefined;
+  const emit = (next: ActivityDiscovery | undefined, error: string) => {
+    const key = JSON.stringify([error, next ?? null]);
+    if (key === lastKey) return;
+    lastKey = key;
+    publish(next, error);
+  };
   const tick = async () => {
     try {
       const next = await read(abort.signal);
@@ -59,25 +68,36 @@ export function observeActivity(
       }
       announcedEpoch = undefined;
       value = next;
-      publish(value, "");
+      emit(value, "");
     } catch (error) {
       if (abort.signal.aborted) return;
       const code = error instanceof Error ? error.message : "unavailable";
       if (refusedAccess(code)) {
         abort.abort();
         invalidateEntry(code);
+        lastKey = undefined;
         publish(undefined, code);
         return;
       }
       value = value ? staleActivity(value, Date.now()) : undefined;
-      publish(value, code);
+      emit(value, code);
     } finally {
-      if (!abort.signal.aborted) timer = setTimeout(tick, 3000);
+      if (!abort.signal.aborted) {
+        if (pageHidden()) paused = true;
+        else timer = setTimeout(tick, 3000);
+      }
     }
   };
+  const unsubscribeVisible = onPageVisible(() => {
+    if (!paused || abort.signal.aborted) return;
+    paused = false;
+    void tick();
+  });
   void tick();
   return () => {
+    unsubscribeVisible();
     abort.abort();
+    paused = false;
     clearTimeout(timer);
   };
 }
