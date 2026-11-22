@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { publicError } from "../../src/service-contract";
 import {
+  BUILD_RELOAD_MARKER,
+  buildReloadUrl,
+  cleanBuildQuery,
+  reloadIfBuildChanged,
+  reloadToLatestBuild,
   rememberLoginReturn,
   restoreLoginReturn,
 } from "../../web/src/client/project-route";
@@ -53,5 +58,80 @@ it("after explicit login only restores validated chat/leaf on the same entry onc
     null,
     "",
     "#chat=session-A&leaf=abc123ef",
+  );
+});
+
+it("switches once via a cache-busted /app?v= URL when server build changes, cleans v on arrival, and never loops", async () => {
+  const project = "a".repeat(64);
+  const oldBuild = "1".repeat(64);
+  const nextBuild = "2".repeat(64);
+  const storage = new Map<string, string>();
+  const location = {
+    pathname: "/app",
+    search: `?project=${project}`,
+    hash: "#chat=session-A",
+    replace: vi.fn(),
+    reload: vi.fn(),
+  };
+  const history = { replaceState: vi.fn(), state: null };
+  vi.stubGlobal("window", { location, history });
+  vi.stubGlobal("location", location);
+  vi.stubGlobal("history", history);
+  vi.stubGlobal("sessionStorage", {
+    getItem: storage.get.bind(storage),
+    setItem: storage.set.bind(storage),
+    removeItem: storage.delete.bind(storage),
+  });
+
+  expect(buildReloadUrl(nextBuild, location)).toBe(
+    `/app?project=${project}&v=${nextBuild}#chat=session-A`,
+  );
+  // Same build does not reload.
+  expect(reloadIfBuildChanged(oldBuild, oldBuild)).toBe(false);
+  expect(location.replace).not.toHaveBeenCalled();
+
+  // Different server build navigates once via cache-busted URL and sets loop guard.
+  expect(reloadIfBuildChanged(nextBuild, oldBuild)).toBe(true);
+  expect(location.replace).toHaveBeenCalledExactlyOnceWith(
+    `/app?project=${project}&v=${nextBuild}#chat=session-A`,
+  );
+  expect(storage.get(BUILD_RELOAD_MARKER)).toBe(`${oldBuild}->${nextBuild}`);
+
+  // Repeating the same stale pair does not loop.
+  expect(reloadIfBuildChanged(nextBuild, oldBuild)).toBe(false);
+  expect(location.replace).toHaveBeenCalledTimes(1);
+
+  // Landing on the new build cleans `?v=` while preserving project + hash and retires the guard.
+  location.search = `?project=${project}&v=${nextBuild}`;
+  cleanBuildQuery(nextBuild);
+  expect(storage.has(BUILD_RELOAD_MARKER)).toBe(false);
+  expect(history.replaceState).toHaveBeenCalledExactlyOnceWith(
+    null,
+    "",
+    `/app?project=${project}#chat=session-A`,
+  );
+
+  // Explicit reloadToLatestBuild probes /app when buildId is unknown and navigates with `?v=`.
+  location.replace.mockClear();
+  location.search = `?project=${project}`;
+  const probedBuild = "3".repeat(64);
+  const fetchSpy = vi.fn(
+    async () =>
+      new Response(null, {
+        status: 200,
+        headers: { "X-Cadence-Web-Build": probedBuild },
+      }),
+  );
+  vi.stubGlobal("fetch", fetchSpy);
+  await reloadToLatestBuild();
+  expect(fetchSpy).toHaveBeenCalledExactlyOnceWith(
+    `/app?project=${project}`,
+    expect.objectContaining({
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+    }),
+  );
+  expect(location.replace).toHaveBeenCalledExactlyOnceWith(
+    `/app?project=${project}&v=${probedBuild}#chat=session-A`,
   );
 });

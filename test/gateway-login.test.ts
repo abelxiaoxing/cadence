@@ -97,13 +97,40 @@ it("gateway entry points use the script-free 401 password page and one-year cook
     const home = await request(origin, "/", { headers: { cookie } });
     expect(home.status).toBe(303);
     expect(home.headers.location).toBe("/app");
-    // Authenticated /app?project= serves the app asset.
+    // Authenticated /app?project= serves the app asset with proxy-safe anti-cache headers.
     const app = await request(origin, `/app?project=${"a".repeat(64)}`, {
       headers: { cookie },
     });
     expect(app.status).toBe(200);
     expect(app.headers["cache-control"]).toBe("no-store");
-    const asset = `/ui/${app.headers["x-cadence-web-build"]}/assets/react.js`;
+    expect(app.headers.pragma).toBe("no-cache");
+    expect(app.headers.expires).toBe("0");
+    expect(app.headers["cdn-cache-control"]).toBe("no-store");
+    expect(app.headers["cloudflare-cdn-cache-control"]).toBe("no-store");
+    expect(app.headers["surrogate-control"]).toBe("no-store");
+    expect(app.headers["x-accel-expires"]).toBe("0");
+    expect(app.headers.vary).toBe("Cookie");
+    const buildId = app.headers["x-cadence-web-build"] as string;
+    const busted = await request(
+      origin,
+      `/app?project=${"a".repeat(64)}&v=${buildId}`,
+      { headers: { cookie } },
+    );
+    expect(busted.status).toBe(200);
+    expect(busted.headers["x-cadence-web-build"]).toBe(buildId);
+    expect(
+      (
+        await request(origin, `/app?project=${"a".repeat(64)}&v=bad`, {
+          headers: { cookie },
+        })
+      ).status,
+    ).toBe(400);
+    const service = await request(origin, "/workbench/v1/service", {
+      headers: { cookie },
+    });
+    expect(service.status).toBe(200);
+    expect(service.headers["x-cadence-web-build"]).toBe(buildId);
+    const asset = `/ui/${buildId}/assets/react.js`;
     expect(app.text).toContain(asset);
     expect((await request(origin, asset, { headers: { cookie } })).status).toBe(
       200,

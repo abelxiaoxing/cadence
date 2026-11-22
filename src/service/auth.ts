@@ -99,11 +99,29 @@ export function sanitizeNextPath(raw: unknown): string {
     const url = new URL(value, "http://cadence.invalid");
     url.searchParams.delete("token");
     url.searchParams.delete("auth_error");
+    url.searchParams.delete("v");
     const path = `${url.pathname}${url.search}${url.hash}`;
     return path.startsWith("/") && !path.startsWith("//") ? path : fallback;
   } catch {
     return fallback;
   }
+}
+const HASH_64 = /^[a-f0-9]{64}$/;
+/** Whether a request targets `/app`, allowing only validated `project`
+ * (unified workbench) and one-shot `v` cache-bust build hashes. */
+export function isAppRequest(url: URL, allowProject: boolean): boolean {
+  if (url.pathname !== "/app") return false;
+  const seen = new Set<string>();
+  for (const [key, value] of url.searchParams.entries()) {
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (key === "v" || (allowProject && key === "project")) {
+      if (!HASH_64.test(value)) return false;
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 function cookieTokens(header: string | undefined, name: string): string[] {
   if (!header) return [];

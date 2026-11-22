@@ -46,6 +46,7 @@ cadence.example.net {
 
 Audit any additional proxy-generated forwarding headers against the exact backend policy before use.
 Forward `/app`, `/assets/start.js`, `/ui/` and the API to the same Cadence instance, without shared caching or rewriting asset failures to the app HTML.
+Cadence emits `Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`, `CDN-Cache-Control: no-store`, `Cloudflare-CDN-Cache-Control: no-store`, `Surrogate-Control: no-store` and `X-Accel-Expires: 0` (plus `Vary: Cookie` on `/app`): do not override origin cache headers in Nginx (`proxy_cache off`) or Cloudflare Cache/Page Rules, and keep query parameters on `/app` intact so one-shot `?v=<build>` cache-busting works after upgrades.
 For a stale page, compare the authenticated `/app` response's `X-Cadence-Web-Build` with the `/ui/<build>/assets/cadence.js` URL in that response and the browser's loaded module.
 An old entry served by a still-running process is not fixed by clearing browser data.
 Do not share cookies, access codes or full authenticated network traces.

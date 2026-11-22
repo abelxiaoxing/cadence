@@ -59,6 +59,7 @@ import {
 } from "../service-wire.ts";
 import {
   type HttpAuthentication,
+  isAppRequest,
   type RequestBoundary,
   requestBoundary,
 } from "./auth.ts";
@@ -158,6 +159,12 @@ function refusal(
 }
 export function fixedHeaders(response: ServerResponse): void {
   response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Pragma", "no-cache");
+  response.setHeader("Expires", "0");
+  response.setHeader("CDN-Cache-Control", "no-store");
+  response.setHeader("Cloudflare-CDN-Cache-Control", "no-store");
+  response.setHeader("Surrogate-Control", "no-store");
+  response.setHeader("X-Accel-Expires", "0");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
@@ -594,16 +601,21 @@ export class ServiceHttpServer {
       }
       this.requests.add(abort);
       if (!route) {
-        const asset = this.assets.get(target);
+        const app = isAppRequest(url, false);
+        const assetPath = app ? "/app" : target;
+        const asset = this.assets.get(assetPath);
         if (!asset || req.method !== "GET") throw new ContractError("invalid");
         this.options.auth.current(caller);
         res.setHeader("Content-Type", asset.contentType);
-        if (target === "/app" && this.options.build)
-          res.setHeader(
-            "X-Cadence-Web-Build",
-            this.options.build.assets.buildId,
-          );
-        if (target !== "/app") {
+        if (app) {
+          res.setHeader("Vary", "Cookie");
+          if (this.options.build)
+            res.setHeader(
+              "X-Cadence-Web-Build",
+              this.options.build.assets.buildId,
+            );
+        }
+        if (!app && assetPath !== "/assets/start.js") {
           res.setHeader("Cache-Control", "private, no-cache");
           res.setHeader("ETag", asset.etag);
           if (boundary.headers.get("if-none-match") === asset.etag) {

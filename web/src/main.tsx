@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { restoreLoginReturn } from "./client/project-route";
+import { cleanBuildQuery, restoreLoginReturn } from "./client/project-route";
 import { LocaleProvider, useT } from "./i18n/locale";
 import { applyTheme, preferredTheme } from "./layout/theme";
 import { Workbench } from "./Workbench";
@@ -40,6 +40,7 @@ class PresentationBoundary extends Component<
 }
 // A saved theme choice is applied before the first render; the content policy
 // allows no inline script, and without a choice the stylesheet needs none.
+cleanBuildQuery();
 restoreLoginReturn();
 applyTheme(preferredTheme());
 const root = document.getElementById("root");
