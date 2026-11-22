@@ -209,6 +209,30 @@ it("keeps observing through a proxy error and a version handoff, then reconnects
   }
 });
 
+it("passes observed X-Cadence-Web-Build when an upgrade finishes so reload bypasses proxy caches", async () => {
+  vi.useFakeTimers();
+  const submitted = job({ state: "running", version: null, endedAt: null });
+  const nextBuild = "d".repeat(64);
+  const status = { kind: "service", job: job({}), version: submitted.to };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify(status), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Cadence-Web-Build": nextBuild,
+          },
+        }),
+    ),
+  );
+  const result = vi.fn();
+  observeMaintenance(submitted, vi.fn(), result);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(result).toHaveBeenCalledExactlyOnceWith("reload", nextBuild);
+});
+
 it.each([401, 403])(
   "an access refusal (%i) stops polling without reloading",
   async (status) => {

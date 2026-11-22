@@ -18,7 +18,10 @@ import {
   observeMaintenance,
   unchanged,
 } from "../../client/maintenance-observation";
-import { rememberLoginReturn } from "../../client/project-route";
+import {
+  reloadToLatestBuild,
+  rememberLoginReturn,
+} from "../../client/project-route";
 import {
   readRelease,
   readService,
@@ -119,6 +122,7 @@ export function ServiceDialog({
   const [submitted, setSubmitted] = useState<MaintenanceJob>();
   const [down, setDown] = useState(false);
   const [result, setResult] = useState<MaintenanceResult>();
+  const [nextBuild, setNextBuild] = useState<string>();
   const [revision, observe] = useState(0);
   const work = service?.work ?? null;
   const workUnavailable = service?.unit && !work && (
@@ -149,8 +153,9 @@ export function ServiceDialog({
     return observeMaintenance(
       submitted,
       () => setDown(true),
-      (outcome) => {
-        if (outcome === "reload") window.location.reload();
+      (outcome, buildId) => {
+        if (buildId) setNextBuild(buildId);
+        if (outcome === "reload") void reloadToLatestBuild(buildId);
         else setResult(outcome);
       },
     );
@@ -275,8 +280,12 @@ export function ServiceDialog({
                 type="button"
                 className="primary"
                 onClick={() => {
-                  if (result === "access-denied") rememberLoginReturn();
-                  window.location.reload();
+                  if (result === "access-denied") {
+                    rememberLoginReturn();
+                    window.location.reload();
+                  } else {
+                    void reloadToLatestBuild(nextBuild);
+                  }
                 }}
               >
                 {t(

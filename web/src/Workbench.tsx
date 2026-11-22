@@ -38,7 +38,7 @@ import {
   selectActivity,
   selectDirectory,
 } from "./client/project-entry";
-import { currentProject } from "./client/project-route";
+import { currentProject, reloadIfBuildChanged } from "./client/project-route";
 import { errorCode, readJson as read } from "./client/service";
 import { useActivity } from "./client/use-activity";
 import { readEntry } from "./client/workbench-entry";
@@ -149,6 +149,7 @@ export function Workbench() {
       try {
         const next = await readEntry(abort.signal);
         if (abort.signal.aborted) return;
+        if (next && reloadIfBuildChanged(next.build.assets.buildId)) return;
         checkingNewEpoch.current = false;
         setEntry(next);
         const last =
@@ -249,6 +250,7 @@ export function Workbench() {
   const adoptEntry = useCallback(
     (next: WorkbenchEntry) => {
       if (refusal.current) throw new Error(refusal.current);
+      if (reloadIfBuildChanged(next.build.assets.buildId)) return;
       retire();
       checkingNewEpoch.current = false;
       setReading({ pending: false });

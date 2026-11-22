@@ -11167,11 +11167,30 @@ function sanitizeNextPath(raw) {
     const url = new URL(value, "http://cadence.invalid");
     url.searchParams.delete("token");
     url.searchParams.delete("auth_error");
+    url.searchParams.delete("v");
     const path = `${url.pathname}${url.search}${url.hash}`;
     return path.startsWith("/") && !path.startsWith("//") ? path : fallback;
   } catch {
     return fallback;
   }
+}
+var HASH_64 = /^[a-f0-9]{64}$/;
+function isAppRequest(url, allowProject) {
+  if (url.pathname !== "/app")
+    return false;
+  const seen = new Set;
+  for (const [key2, value] of url.searchParams.entries()) {
+    if (seen.has(key2))
+      return false;
+    seen.add(key2);
+    if (key2 === "v" || allowProject && key2 === "project") {
+      if (!HASH_64.test(value))
+        return false;
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 function cookieTokens(header, name) {
   if (!header)
@@ -17077,6 +17096,12 @@ function refusal(code2 = "invalid", uncertain = false) {
 }
 function fixedHeaders(response) {
   response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Pragma", "no-cache");
+  response.setHeader("Expires", "0");
+  response.setHeader("CDN-Cache-Control", "no-store");
+  response.setHeader("Cloudflare-CDN-Cache-Control", "no-store");
+  response.setHeader("Surrogate-Control", "no-store");
+  response.setHeader("X-Accel-Expires", "0");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
@@ -17435,14 +17460,19 @@ Content-Length: 0\r
       }
       this.requests.add(abort);
       if (!route) {
-        const asset = this.assets.get(target);
+        const app = isAppRequest(url, false);
+        const assetPath = app ? "/app" : target;
+        const asset = this.assets.get(assetPath);
         if (!asset || req.method !== "GET")
           throw new ContractError("invalid");
         this.options.auth.current(caller);
         res.setHeader("Content-Type", asset.contentType);
-        if (target === "/app" && this.options.build)
-          res.setHeader("X-Cadence-Web-Build", this.options.build.assets.buildId);
-        if (target !== "/app") {
+        if (app) {
+          res.setHeader("Vary", "Cookie");
+          if (this.options.build)
+            res.setHeader("X-Cadence-Web-Build", this.options.build.assets.buildId);
+        }
+        if (!app && assetPath !== "/assets/start.js") {
           res.setHeader("Cache-Control", "private, no-cache");
           res.setHeader("ETag", asset.etag);
           if (boundary.headers.get("if-none-match") === asset.etag) {
@@ -19274,6 +19304,7 @@ Content-Length: 0\r
         const service = await serviceEntry();
         auth.current(caller);
         assert();
+        res.setHeader("X-Cadence-Web-Build", build2.assets.buildId);
         reply(res, 200, service);
         return;
       }
@@ -19333,12 +19364,14 @@ Content-Length: 0\r
         reply(res, 200, { kind: "project", project: project2 });
         return;
       }
-      const app = url.pathname === "/app" && (raw === "/app" || /^[a-f0-9]{64}$/.test(url.searchParams.get("project") ?? "") && [...url.searchParams.keys()].join() === "project");
+      const app = isAppRequest(url, true);
       const asset = assets.get(app ? "/app" : raw);
       if (req.method !== "GET" || !asset)
         throw new ContractError("invalid");
-      if (app)
+      if (app) {
         res.setHeader("X-Cadence-Web-Build", build2.assets.buildId);
+        res.setHeader("Vary", "Cookie");
+      }
       res.setHeader("Content-Type", asset.contentType);
       res.end(asset.bytes);
     } catch (error) {
@@ -38207,7 +38240,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.3",
-  build: "72aae8c0978e8ef8c7aad4fb08954c1860d75563b66f440d02d6da3c4d194a69",
+  build: "421432a3d2825470ae854c6d1b8024a6d55e583278e43822c0adec7417b4ca04",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

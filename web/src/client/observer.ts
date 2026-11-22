@@ -7,6 +7,7 @@ import { compareSequence } from "../../../src/service-contract.ts";
 import type { Scope, WorkspaceBootstrap } from "../types";
 import type { BrowserClient } from "./browser";
 import { refusedAccess } from "./observation-read";
+import { reloadIfBuildChanged } from "./project-route";
 
 export interface ViewerState {
   workspace?: WorkspaceBootstrap;
@@ -309,6 +310,7 @@ export class WorkspaceObserver {
             state.error = "stale";
             return;
           }
+          if (reloadIfBuildChanged(session.value.build?.assets.buildId)) return;
           actionCapability = session.value.capabilities.actions;
           if (!actionCapability && state.actions) {
             // Withdraw on the session reply; restoring still needs the full read.
@@ -412,6 +414,7 @@ export class WorkspaceObserver {
         }
         throw new Error(session.error.code);
       }
+      if (reloadIfBuildChanged(session.value.build?.assets.buildId)) return;
       abort = new AbortController();
       tracker = new ProjectionTracker();
       storeId = session.value.storeId;

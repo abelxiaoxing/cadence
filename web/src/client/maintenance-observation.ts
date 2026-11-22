@@ -5,6 +5,7 @@ import {
 } from "../../../src/service/contracts/gateway.ts";
 import { ContractError } from "../../../src/service-contract.ts";
 import { ObservationRefusal, observationRead } from "./observation-read";
+import { isBuildId } from "./project-route";
 
 export const maintenanceWaitMs = { restart: 3 * 60_000, upgrade: 20 * 60_000 };
 const pollMs = 1000;
@@ -17,7 +18,7 @@ export type MaintenanceResult =
 /** This read spans two installations. Decode only the observation, not the
  * other version's installation method or work-to-stop confirmation fields. */
 function readStatus(signal: AbortSignal) {
-  return observationRead("/workbench/v1/service", signal, (value) => {
+  return observationRead("/workbench/v1/service", signal, (value, response) => {
     if (
       !value ||
       typeof value !== "object" ||
@@ -27,9 +28,11 @@ function readStatus(signal: AbortSignal) {
       !("job" in value)
     )
       throw new ContractError("invalid");
+    const header = response.headers.get("X-Cadence-Web-Build");
     return {
       version: decodeVersion(value.version),
       job: value.job === null ? null : decodeMaintenanceJob(value.job),
+      ...(isBuildId(header) ? { buildId: header } : {}),
     };
   });
 }
@@ -67,7 +70,7 @@ export function maintenanceOutcome(
 export function observeMaintenance(
   submitted: MaintenanceJob,
   onUnavailable: () => void,
-  onResult: (result: MaintenanceResult | "reload") => void,
+  onResult: (result: MaintenanceResult | "reload", buildId?: string) => void,
 ) {
   const abort = new AbortController();
   const deadline = setTimeout(
@@ -80,14 +83,18 @@ export function observeMaintenance(
     clearTimeout(timer);
     abort.abort();
   }
-  function finish(result: MaintenanceResult | "reload") {
+  function finish(result: MaintenanceResult | "reload", buildId?: string) {
     stop();
-    onResult(result);
+    if (buildId !== undefined) onResult(result, buildId);
+    else onResult(result);
   }
   async function poll() {
     let outcome: ReturnType<typeof maintenanceOutcome>;
+    let buildId: string | undefined;
     try {
-      outcome = maintenanceOutcome(submitted, await readStatus(abort.signal));
+      const current = await readStatus(abort.signal);
+      buildId = current.buildId;
+      outcome = maintenanceOutcome(submitted, current);
     } catch (error) {
       if (abort.signal.aborted) return;
       if (
@@ -98,7 +105,7 @@ export function observeMaintenance(
       onUnavailable();
     }
     if (abort.signal.aborted) return;
-    if (outcome !== undefined) return finish(outcome);
+    if (outcome !== undefined) return finish(outcome, buildId);
     timer = setTimeout(poll, pollMs);
   }
   return stop;

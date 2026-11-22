@@ -36,6 +36,7 @@ import { effectiveWorkspace } from "../workspace.ts";
 import { ActivityDiscoveryReader } from "./activity-discovery.ts";
 import {
   HttpAuthentication,
+  isAppRequest,
   type RequestBoundary,
   requestBoundary,
 } from "./auth.ts";
@@ -1520,6 +1521,7 @@ export async function createGateway(
         const service = await serviceEntry();
         auth.current(caller);
         assert();
+        res.setHeader("X-Cadence-Web-Build", build.assets.buildId);
         reply(res, 200, service);
         return;
       }
@@ -1598,14 +1600,13 @@ export async function createGateway(
         reply(res, 200, { kind: "project", project });
         return;
       }
-      const app =
-        url.pathname === "/app" &&
-        (raw === "/app" ||
-          (/^[a-f0-9]{64}$/.test(url.searchParams.get("project") ?? "") &&
-            [...url.searchParams.keys()].join() === "project"));
+      const app = isAppRequest(url, true);
       const asset = assets.get(app ? "/app" : raw);
       if (req.method !== "GET" || !asset) throw new ContractError("invalid");
-      if (app) res.setHeader("X-Cadence-Web-Build", build.assets.buildId);
+      if (app) {
+        res.setHeader("X-Cadence-Web-Build", build.assets.buildId);
+        res.setHeader("Vary", "Cookie");
+      }
       res.setHeader("Content-Type", asset.contentType);
       res.end(asset.bytes);
     } catch (error) {

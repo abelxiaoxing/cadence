@@ -238,7 +238,24 @@ it("serves compiled flat fonts/JS/CSS behind auth with exact MIME and explicit C
   );
   expect(response.headers["referrer-policy"]).toBe("no-referrer");
   expect(response.headers["cache-control"]).toBe("no-store");
+  expect(response.headers.pragma).toBe("no-cache");
+  expect(response.headers.expires).toBe("0");
+  expect(response.headers["cdn-cache-control"]).toBe("no-store");
+  expect(response.headers["cloudflare-cdn-cache-control"]).toBe("no-store");
+  expect(response.headers["x-accel-expires"]).toBe("0");
+  expect(response.headers.vary).toBe("Cookie");
   expect(response.headers["x-cadence-web-build"]).toBe(manifest.buildId);
+  const busted = await request(origin, `/app?v=${manifest.buildId}`, {
+    headers: { "x-cadence-local": f.local },
+  });
+  expect(busted.status).toBe(200);
+  expect(busted.headers["x-cadence-web-build"]).toBe(manifest.buildId);
+  const startJs = await request(origin, "/assets/start.js", {
+    headers: { "x-cadence-local": f.local },
+  });
+  expect(startJs.status).toBe(200);
+  expect(startJs.headers["cache-control"]).toBe("no-store");
+  expect(startJs.headers["cloudflare-cdn-cache-control"]).toBe("no-store");
   for (const old of [
     "/assets/cadence.js",
     `/ui/${"0".repeat(64)}/assets/cadence.js`,
