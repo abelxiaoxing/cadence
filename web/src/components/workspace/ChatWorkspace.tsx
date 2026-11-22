@@ -744,6 +744,12 @@ export function ChatWorkspace({
     },
     [draftKey],
   );
+  const effectivePendingMode =
+    cadenceKnown &&
+    ((cadence && pendingMode === "enter") ||
+      (!cadence && pendingMode === "exit"))
+      ? null
+      : pendingMode;
   const slashCadence = cadenceInput(draft, "chat").mode === "cadence";
   const phraseExit = cadence && cadenceExit(draft);
   const nextCadence = slashCadence
@@ -751,8 +757,8 @@ export function ChatWorkspace({
     : phraseExit
       ? false
       : cadence
-        ? pendingMode !== "exit"
-        : pendingMode === "enter";
+        ? effectivePendingMode !== "exit"
+        : effectivePendingMode === "enter";
   const modeFacts = {
     active: cadence,
     armed: nextCadence,
@@ -1016,14 +1022,16 @@ export function ChatWorkspace({
     !!entry.source &&
     entry.source === phraseSource &&
     phraseSource === latestSource.current;
-  const refusePhrase = () =>
+  const refusePhrase = (exitingOrdinary = false) =>
     refuse(
       t(
-        !proposal
-          ? "No plan is awaiting approval."
-          : approvalAction === "readonly"
-            ? "This plan is read-only. A new proposal is required for implementation."
-            : "This draft does not confirm the current plan. Review it from the conversation title and enter the approval phrase again.",
+        exitingOrdinary
+          ? "This approval phrase was entered before turning Cadence off. Edit the message to send normally, or keep Cadence on to confirm the plan."
+          : !proposal
+            ? "No plan is awaiting approval."
+            : approvalAction === "readonly"
+              ? "This plan is read-only. A new proposal is required for implementation."
+              : "This draft does not confirm the current plan. Review it from the conversation title and enter the approval phrase again.",
       ),
     );
   const validationPending =
@@ -1115,6 +1123,15 @@ export function ChatWorkspace({
     };
   }, []);
   useEffect(() => {
+    if (
+      cadenceKnown &&
+      ((cadence && pendingMode === "enter") ||
+        (!cadence && pendingMode === "exit"))
+    ) {
+      setPendingMode(null);
+    }
+  }, [cadenceKnown, cadence, pendingMode]);
+  useEffect(() => {
     try {
       if (pendingMode) sessionStorage.setItem(`${draftKey}:mode`, pendingMode);
       else sessionStorage.removeItem(`${draftKey}:mode`);
@@ -1156,6 +1173,7 @@ export function ChatWorkspace({
   useEffect(() => {
     if (attempted.current && state?.runs.includes(attempted.current)) {
       rememberApproval("");
+      setPendingMode(null);
       setError("");
     }
     if (
@@ -1602,6 +1620,7 @@ export function ChatWorkspace({
       if (!alive.current || sendGeneration.current !== generation) return;
       setValidation({ before: proposal, after: next });
       setInvalidatedPlan("");
+      setPendingMode((current) => (current === "exit" ? null : current));
       setDraftModel((value) =>
         canonicalJson(value) === canonicalJson(model) ? null : value,
       );
@@ -1682,7 +1701,8 @@ export function ChatWorkspace({
           rememberApproval("");
           if (reply.error.code === "stale") setInvalidatedPlan(proposal.id);
         }
-      } else
+      } else {
+        setPendingMode(null);
         setEntry((value) =>
           phraseSource &&
           value.source === phraseSource &&
@@ -1690,6 +1710,7 @@ export function ChatWorkspace({
             ? { text: "" }
             : value,
         );
+      }
     } catch (e) {
       if (alive.current && sendGeneration.current === generation) {
         setError(e instanceof Error ? e.message : "unavailable");
@@ -1778,15 +1799,17 @@ export function ChatWorkspace({
         !exiting &&
         !slash &&
         cadence &&
-        pendingMode === "exit";
+        effectivePendingMode === "exit";
     const entering = retained
       ? retained.command.kind === "cadence-send" &&
         retained.command.intent === "enter"
-      : !submitDesign && !cadence && (slash || pendingMode === "enter");
+      : !submitDesign &&
+        !cadence &&
+        (slash || effectivePendingMode === "enter");
     const phrase =
       !images.length && !retained && !override && cadenceApproval(message);
     if (phrase && !phraseCurrent()) {
-      refusePhrase();
+      refusePhrase(exitingOrdinary);
       return;
     }
     if (
@@ -3042,16 +3065,21 @@ export function ChatWorkspace({
             ...displayModeFacts,
             disabledReason: !displayModeFacts.known
               ? t("Cadence state unavailable")
-              : running
+              : running && !(cadenceKnown && effectivePendingMode !== null)
                 ? t("Wait for the current reply before changing mode.")
                 : waitingReason,
             disabled:
               !displayModeFacts.known ||
-              !!running ||
+              (!!running && !(cadenceKnown && effectivePendingMode !== null)) ||
               busy ||
               !!pending ||
               awaitingModel,
             onClick: () => {
+              if (running) {
+                if (cadenceKnown && effectivePendingMode !== null)
+                  setPendingMode(null);
+                return;
+              }
               if (slashCadence) {
                 setPendingMode(null);
                 refuse(

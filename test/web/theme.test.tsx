@@ -381,6 +381,42 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
           contrast(ruleColor(selector, "color", scheme), surface),
         ).toBeGreaterThanOrEqual(AA);
     }
+    const armedSurface = over(
+      ruleColor(".mode-toggle.on.armed", "background", scheme),
+      capsule,
+    );
+    expect(
+      contrast(
+        ruleColor(".mode-toggle.on.armed", "color", scheme),
+        armedSurface,
+      ),
+    ).toBeGreaterThanOrEqual(AA);
+    expect(
+      contrast(
+        ruleColor(
+          ".mode-toggle.on.armed .mode-switch::after",
+          "background",
+          scheme,
+        ),
+        ruleColor(".mode-toggle.on.armed .mode-switch", "background", scheme),
+      ),
+    ).toBeGreaterThanOrEqual(AA);
+    for (const selector of [".mode-toggle.off", ".mode-toggle.off.leaving"])
+      expect(
+        contrast(ruleColor(selector, "color", scheme), capsule),
+      ).toBeGreaterThanOrEqual(AA);
+    expect(
+      contrast(
+        ruleColor(".mode-toggle.on", "color", scheme),
+        ruleColor(".mode-toggle.on", "background", scheme),
+      ),
+    ).toBeGreaterThanOrEqual(AA);
+    expect(
+      declaration(
+        "@media (max-width: 900px) / .composer-hint.mode-pending",
+        "order",
+      ),
+    ).toBe("10");
   });
   it.each([
     ["touch at rest", "@media (hover: none) / .composer-resize"],

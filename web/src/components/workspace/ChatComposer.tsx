@@ -582,7 +582,13 @@ export function ChatComposer({
           <FiImage aria-hidden="true" />
         </button>
         <ModelPicker {...model} />
-        <span className="composer-hint">
+        <span
+          className={`composer-hint${
+            !running && cadence.known && cadence.armed !== cadence.active
+              ? " mode-pending"
+              : ""
+          }`}
+        >
           {(running && input?.enabled) ||
           (!running && cadence.known && cadence.armed !== cadence.active)
             ? hint

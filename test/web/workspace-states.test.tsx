@@ -100,7 +100,7 @@ afterEach(() => {
 });
 
 it.each(["en", "zh"] as const)(
-  "%s: the mode toggle shows two-state off/on styling with next-Send tooltips, unknown stays disabled",
+  "%s: the mode toggle renders a Cadence pill switch with next-Send tooltips, unknown stays disabled",
   (locale) => {
     const click = vi.fn();
     const render = (active: boolean, armed: boolean, known = true) =>
@@ -116,12 +116,12 @@ it.each(["en", "zh"] as const)(
         </LocaleProvider>,
       );
     const chinese = locale === "zh";
-    for (const [active, armed, cls, text, title] of [
+    for (const [active, armed, cls, pressed, title] of [
       [
         false,
         false,
         "off",
-        chinese ? "开启 Cadence" : "Turn on Cadence",
+        "false",
         chinese
           ? "在发送下一条消息时开启 Cadence 模式：先商定计划，再开始实施。"
           : "Turn on Cadence mode on your next message: agree on a plan before implementation.",
@@ -130,7 +130,7 @@ it.each(["en", "zh"] as const)(
         false,
         true,
         "on armed",
-        chinese ? "关闭 Cadence" : "Turn off Cadence",
+        "true",
         chinese
           ? "发送下一条消息时将开启 Cadence 模式，点击取消。"
           : "Your next message turns on Cadence mode. Click to cancel.",
@@ -139,7 +139,7 @@ it.each(["en", "zh"] as const)(
         true,
         true,
         "on",
-        chinese ? "关闭 Cadence" : "Turn off Cadence",
+        "true",
         chinese
           ? "Cadence 模式已开启，点击后将在发送下一条消息时退出。"
           : "Cadence mode is on. Click to exit on your next message.",
@@ -148,7 +148,7 @@ it.each(["en", "zh"] as const)(
         true,
         false,
         "off leaving",
-        chinese ? "开启 Cadence" : "Turn on Cadence",
+        "false",
         chinese
           ? "发送下一条消息时将退出 Cadence 并按普通对话发送，点击取消。"
           : "Your next message exits Cadence mode and sends normally. Click to stay in Cadence.",
@@ -156,11 +156,13 @@ it.each(["en", "zh"] as const)(
     ] as const) {
       const html = render(active, armed);
       expect(html).toContain(`class="mode-toggle ${cls}"`);
-      expect(html).toContain(`aria-label="${text}"`);
+      expect(html).toContain('aria-label="Cadence"');
+      expect(html).toContain(`aria-pressed="${pressed}"`);
       expect(html).toContain(`title="${title}"`);
       expect(html).toContain('class="mode-toggle-icon"');
-      expect(html).toContain(`</span>${text}</button>`);
-      expect(html).not.toMatch(/disabled=|aria-pressed="true"/);
+      expect(html).toContain('<span class="mode-toggle-label">Cadence</span>');
+      expect(html).toContain('<span class="mode-switch" aria-hidden="true">');
+      expect(html).not.toMatch(/disabled=/);
     }
     const neutral = chinese
       ? "Cadence 状态未确认"
@@ -172,7 +174,10 @@ it.each(["en", "zh"] as const)(
       expect(html).toContain(`aria-label="${neutral}"`);
       expect(html).toContain(`title="${neutral}"`);
       expect(html).toContain('class="mode-toggle-icon"');
-      expect(html).toContain(`</span>${neutral}</button>`);
+      expect(html).toContain(
+        `<span class="mode-toggle-label">${neutral}</span></button>`,
+      );
+      expect(html).not.toMatch(/aria-pressed=|class="mode-switch"/);
     }
     expect(click).not.toHaveBeenCalled();
   },
