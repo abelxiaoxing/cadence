@@ -1,34 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { LIMITS } from "../src/worker-public.mjs";
+import { lintKnowledge } from "../src/service/knowledge-store.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (p: string) => readFileSync(p, "utf8");
 
 const NON_PACKAGE_DIRS = new Set([".git", "node_modules"]);
-
-/** Spellings a LIMITS value may take in the engineering limits table. */
-function limitSpellings(key: string, value: number): string[] {
-  const units: (readonly [string, number])[] = key.endsWith("Bytes")
-    ? [
-        ["GiB", 2 ** 30],
-        ["MiB", 2 ** 20],
-        ["KiB", 2 ** 10],
-        [" bytes", 1],
-      ]
-    : key.endsWith("Ms")
-      ? [
-          ["h", 3_600_000],
-          ["min", 60_000],
-          ["s", 1000],
-          ["ms", 1],
-        ]
-      : [["", 1]];
-  return units
-    .filter(([, size]) => value % size === 0)
-    .map(([unit, size]) => `${value / size}${unit}`);
-}
 
 function walk(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -43,18 +21,15 @@ function walk(dir: string): string[] {
 }
 
 describe("standalone independence", () => {
-  it("keeps engineering guidance available without a project task framework", () => {
-    const engineering = (name: string) =>
-      read(path.join(root, "engineering", name));
+  it("keeps engineering guidance in managed project knowledge without a project task framework", () => {
+    const projectIndex = read(path.join(root, ".cadence/project.md"));
     const agents = read(path.join(root, "AGENTS.md"));
-    expect(engineering("architecture.md")).toContain(
-      "## Source ownership and API boundaries",
-    );
-    expect(engineering("verification.md")).toContain(
-      "## Validation and regression lessons",
-    );
+    expect(projectIndex).toContain("## Routes");
+    const lint = lintKnowledge(root, []);
+    expect(lint.usage.topics.length).toBeGreaterThan(0);
+    expect(lint.findings).toEqual([]);
     expect(agents).toContain("`README.md`");
-    expect(agents).toContain("`engineering/verification.md`");
+    expect(agents).toContain("`.cadence/project.md`");
     expect(agents).not.toMatch(/trellis/iu);
     expect(existsSync(path.join(root, ".trellis"))).toBe(false);
     for (const dir of [
@@ -79,43 +54,6 @@ describe("standalone independence", () => {
       "scripts/check-agents.mjs",
     ])
       expect(read(path.join(root, name)), name).not.toContain(".trellis/");
-  });
-
-  it("keeps every LIMITS value cited in the engineering limits table", () => {
-    const rows = read(path.join(root, "engineering/limits.md"))
-      .split("\n")
-      .filter((line) => line.startsWith("| ") && line.includes("`LIMITS`"));
-    expect(rows.length).toBeGreaterThan(10);
-    const limits: Record<string, number> = LIMITS;
-    for (const row of rows) {
-      const [, ceiling = "", source = ""] = row
-        .split("|")
-        .slice(1)
-        .map((cell) => cell.trim());
-      const keys = [...source.matchAll(/`(\w+)`/gu)]
-        .map((match) => match[1] ?? "")
-        .filter((key) => key !== "LIMITS");
-      expect(keys.length, row).toBeGreaterThan(0);
-      // Keys are listed in the order their values appear, so each must match
-      // after the previous one and a repeated number cannot cite two keys.
-      let from = 0;
-      for (const key of keys) {
-        expect(limits, key).toHaveProperty(key);
-        const ends = limitSpellings(key, limits[key] ?? Number.NaN).flatMap(
-          (spelling) => {
-            const pattern = new RegExp(`(?<![\\w.])${spelling}(?!\\w)`, "gu");
-            pattern.lastIndex = from;
-            const match = pattern.exec(ceiling);
-            return match ? [match.index + match[0].length] : [];
-          },
-        );
-        expect(
-          ends.length,
-          `${key}=${limits[key]} in "${ceiling}"`,
-        ).toBeGreaterThan(0);
-        from = Math.min(...ends);
-      }
-    }
   });
 
   it("retains historical provenance by Git object rather than a removed task path", () => {

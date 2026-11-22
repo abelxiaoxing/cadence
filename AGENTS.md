@@ -29,9 +29,9 @@ Prefer simplifying or replacing outdated designs within the affected scope over 
 When replacing an implementation, remove superseded code within the affected scope and update its callers, tests and documentation together rather than leaving transitional scaffolding behind; preserve required behavior and regression coverage.
 These principles do not relax the data-preservation, security, consent or lifecycle contracts above, and do not authorize unrelated rewrites or cleanup.
 
-`engineering/` holds project architecture, executable contracts, limits, regression lessons and verification guidance, one file per area; `README.md` stays a short user guide.
-Before changing a boundary, read the area file the project index names and the affected source/tests; read `engineering/verification.md` before integrating.
-Keep each fact in one place: limits beside their constants, operations in `docs/`, and new release evidence appended to `engineering/releases.md`, which is not required reading.
+`.cadence/project.md` routes source paths to `.cadence/knowledge/*.md` (source-anchored architecture, contracts, limits, verification guidance and regression owners) and `docs/` (shipped user and operations manuals); `README.md` stays a short user guide.
+Before changing a boundary, follow `.cadence/project.md` to the relevant `.cadence/knowledge/` card and the affected source/tests; read `.cadence/knowledge/verification-and-builds.md` before integrating.
+Keep each fact in one place: limits beside their constants, operations in `docs/`, engineering invariants in `.cadence/knowledge/`, and release history in Git tags and GitHub releases.
 Handle ordinary engineering directly; no task-management framework, task creation, archive ceremony or workflow-specific agent is required.
 Keep research and commit skills independent; Git commits, pushes, installation, publication and deployment require their applicable explicit authorization.
 Preserve unrelated working-tree changes and actual native/auth/storage outcomes.
@@ -51,7 +51,7 @@ Use the installed public Pi declarations rather than assuming global documentati
 - Validate the designated location against the verification rules below. If it is unsuitable, stop and name the problem; do not invent a fallback location or relocate consumer state.
 - Prefer stdout/in-memory inspection. A normal Git audit needs no persistent diff/hash archive or new temporary directory.
 - Before finishing, remove only this session's own temporary scope once every command and child has settled and its contents are no longer needed. Keep failed-attempt evidence while diagnosing, not forever after a successful resolution. If retention is necessary, keep it in the designated scope and report its exact path and reason.
-- Never sweep shared temp/cache containers, other sessions, old directories or consumer data; uncertain/live work is retained. Pre-existing clutter requires a separate, explicitly scoped cleanup request. See `engineering/verification.md` for the engineering recipe and the service's separate resource ownership.
+- Never sweep shared temp/cache containers, other sessions, old directories or consumer data; uncertain/live work is retained. Pre-existing clutter requires a separate, explicitly scoped cleanup request. See `.cadence/knowledge/verification-and-builds.md` for the engineering recipe and the service's separate resource ownership.
 
 ## Verification
 
@@ -71,15 +71,7 @@ Use the installed public Pi declarations rather than assuming global documentati
 - `src/index.ts` is the sole Pi extension entrypoint; `src/service/` owns the shared execution service.
 - `src/history/` owns durable recording and retained readers; `web/src/` owns the browser client.
 - `agents/`, `skills/` and `config/` contain the shipped independent profiles, skills and examples.
-- `engineering/architecture.md`: module ownership, maintained seams, packaging and shipped content.
-- `engineering/project-knowledge.md`: source-backed project knowledge, context selection and verified learning.
-- `engineering/worker-tools.md`: worker capability composition, fixed workspaces, observation continuations and tool resource ownership.
-- `engineering/worktree-delivery.md`: named task branches, worktree ownership, exact-candidate acceptance and local delivery.
-- `engineering/lifetimes.md`: admission, scheduling, Stop, registry and automatic recovery.
-- `engineering/checks-review.md`: checks, change observation, task publication and Review.
-- `engineering/history.md`: capture, redaction and retained history readers.
-- `engineering/clients.md`: the native client, the agent panel, the WebUI and ordinary conversations.
-- `engineering/limits.md`: resource ceilings and their owning constants.
-- `engineering/verification.md`: commands, development practice, regression owners and lessons.
-- `engineering/releases.md`: append-only release evidence, not required reading.
+- `docs/` holds shipped user and operations manuals (`docs/conversation-mode.md`, `docs/service-management.md`, `docs/remote-access.md`, `docs/reuse-and-distribution.md`).
+- `.cadence/project.md` routes code areas to source-anchored engineering cards under `.cadence/knowledge/`.
+- `.cadence/knowledge/verification-and-builds.md` and `.cadence/knowledge/regression-owners.md` document the verification gate, temp hygiene and test ownership.
 <!-- ABEL:AGENTS-INDEX:END -->

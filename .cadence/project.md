@@ -5,21 +5,21 @@ Keep it short.
 
 ## Routes
 
-- `src/service/http.ts`, `src/service/gateway.ts`, `src/service/auth.ts`, `src/service/auth-form.ts`, `src/service/auth-page.ts` -> `docs/remote-access.md#Explicit Personal HTTPS Access` — script-free 401, one-year login cookie, Origin and redirect guards
-- `test/service-auth.test.ts`, `test/gateway-login.test.ts` -> `engineering/verification.md#Regression owners` — owner and gateway login regressions
-- `src/worker-public.mjs`, `src/worker-public.d.mts` -> `engineering/limits.md` — shared limits and cookie lifetime
-- `web/dist`, `src/native-build.ts`, `src/service-host.mjs`, `src/service-cli.mjs`, `src/model-preview.mjs` -> `engineering/verification.md#Builds and packaging` — canonical builders and byte checks
-- `provenance/webui-reuse.json`, `provenance/package-members.json`, `scripts/build-identity.mjs` -> `.cadence/knowledge/provenance-pins.md` — content vs membership pins; shared build identity
-- `test/research-tools.test.mjs`, `test/service-autostart.test.ts` -> `.cadence/knowledge/controlled-fixtures.md` — long socket paths; manager and cgroup fixtures
-- `test/web/workspace-states.test.tsx` -> `.cadence/knowledge/web-test-fixtures.md` — a mocked model catalog's version must be UUID v4
-- `src/service/checkout-gate.ts`, `src/service/workbench.ts` -> `engineering/lifetimes.md#Conversation workflow lifetime` — workflow permits vs ordinary Send concurrency
-- `src/service/conversations.ts`, `test/conversation-input.test.ts`, `test/web/conversation-reader.test.tsx` -> `engineering/verification.md#Ordinary Send admission` — overlap, settlement, startup and draft outcomes
-- `src/worker-capture.mjs`, `src/service/conversations.ts`, `src/service/conversation-records.ts`, `src/service/pi-sessions.ts`, `src/service/contracts/workbench.ts` -> `engineering/history.md#Ordinary conversation records` — capture/Pi handoff, thinking, versioning and read-time redaction
-- `src/service/turn-capture.ts`, `src/service/workflow-report.ts` -> `engineering/history.md#Conversation workflow records` — retained snapshots and call state vs parent settlement
-- `web/src/client/conversation-reader.ts`, `web/src/components/workspace`, `web/src/components/StreamMarkdown.tsx`, `web/src/rich/stream-markdown.ts`, `web/src/transcript` -> `engineering/clients.md#Streaming timelines` — render vs read identity, semantic Markdown, lazy details and scroll intent
-- `test/helpers/runtime-timeline.ts`, `test/runtime-timeline.test.ts`, `test/workflow-runtime.test.ts`, `test/web/chat-timeline.test.tsx`, `test/web/stream-markdown.test.tsx`, `test/web/runtime-observation.test.tsx` -> `engineering/verification.md#Regression owners` — shared fixture contract, view wiring and SSR evidence limits
-- `web/src/optical-tokens.css`, `web/src/reference.css`, `web/src/styles.css`, `web/src/components/workspace/design.css`, `web/src/timeline`, `test/web/theme.test.tsx` -> `.cadence/knowledge/web-theme-tokens.md` — source vs shipped CSS; timeline swatches
-- `scripts/qualify-optical.mjs`, `scripts/optical-fixtures`, `scripts/quiet-workspace-observation.mjs`, `scripts/transcript-polish-observation.mjs` -> `engineering/verification.md#Optical presentation observation` — same-build probes, native geometry and glyph comparisons
-- `web/src/components/workspace/WorkflowPanel.tsx`, `test/web/current-plan-entry.test.tsx`, `test/web/plan-proposal-presentation.test.tsx` -> `docs/conversation-mode.md#Restore a saved plan without sending a message` — plan disclosure vs validation and approval
-- `web/src/components/workspace/CadenceModeButton.tsx`, `web/src/components/workspace/ChatWorkspace.tsx` -> `docs/conversation-mode.md` — deferred browser mode switch: clicking toggles next-Send intent without sending; Send enters Cadence or atomically exits with an ordinary message
-- `provenance/webui-reuse.json` -> `docs/reuse-and-distribution.md#Emitted licenses` — pi-web-ui adaptation scope and MIT pins
+- `src/index.ts`, `src/service/`, `package.json`, `agents/` -> `.cadence/knowledge/architecture-packaging.md` — module boundaries, SDK isolation, OIDC npm release and agent pins
+- `src/service/workflows.ts`, `src/service/workflow-git.ts`, `src/service/workflow-links.ts` -> `.cadence/knowledge/workflow-v5-delivery.md` — V5 two-stage planning, auto-links and worktree delivery
+- `src/service/workflow-delivery.ts`, `src/service/workflow-review-ledger.ts`, `src/service/run-environment.ts` -> `.cadence/knowledge/checks-and-review.md` — Stage 4 checks, recovery, Agent review and scratch pools
+- `src/service/gateway.ts`, `src/service/checkout-gate.ts`, `src/service/self-heal.ts`, `src/service/maintenance.ts` -> `.cadence/knowledge/lifetimes-and-recovery.md` — preparation concurrency, checkout gate, Stop and self-heal
+- `src/worker-toolkit.mjs`, `src/research-tools.mjs`, `src/change-tools.mjs`, `src/sdk-worker.mjs` -> `.cadence/knowledge/worker-tools-and-sdk.md` — worker capabilities, frozen settings and cancel settlement
+- `src/worker-capture.mjs`, `src/service/pi-sessions.ts`, `src/service/conversation-records.ts`, `src/service/workflow-report.ts` -> `.cadence/knowledge/history-and-redaction.md` — Pi session sharing, live capture handoff and redaction
+- `src/coordinator-context.ts`, `src/cadence-mode.ts`, `web/src/components/workspace`, `web/src/rich/stream-markdown.ts` -> `.cadence/knowledge/coordinator-and-clients.md` — coordinator memory, approval binding and streaming timelines
+- `src/service/knowledge-store.ts`, `src/service/project-knowledge.ts`, `src/service/investigations.ts` -> `.cadence/knowledge/project-knowledge-store.md` — store limits, reading budget, investigations and Stage 6 curation
+- `src/worker-public.mjs`, `src/worker-model.mjs`, `src/service/contracts/workflow.ts` -> `.cadence/knowledge/resource-ceilings.md` — no Agent deadlines, workflow ceilings and storage floor
+- `scripts/verify.mjs`, `scripts/build-web.mjs`, `scripts/qualify-optical.mjs`, `test/no-fsync.mjs` -> `.cadence/knowledge/verification-and-builds.md` — verify gate, disk TMPDIR, Node-only web builds and slow tags
+- `test/workflow-v5-planning.test.ts`, `test/gateway-prepare.test.ts`, `test/web/chat-timeline.test.tsx`, `test/service-package.test.ts` -> `.cadence/knowledge/regression-owners.md` — targeted regression suites across workflow, gateway, Web and packaging
+- `provenance/webui-reuse.json`, `provenance/package-members.json`, `scripts/build-identity.mjs` -> `.cadence/knowledge/provenance-pins.md` — content vs membership pins and shared build identity
+- `test/research-tools.test.mjs`, `test/service-autostart.test.ts` -> `.cadence/knowledge/controlled-fixtures.md` — long socket paths, manager and cgroup fixtures
+- `test/web/workspace-states.test.tsx` -> `.cadence/knowledge/web-test-fixtures.md` — mocked model catalog versions must be UUID v4
+- `web/src/optical-tokens.css`, `web/src/styles.css`, `web/src/timeline`, `test/web/theme.test.tsx` -> `.cadence/knowledge/web-theme-tokens.md` — source vs shipped CSS and timeline swatches
+- `src/service/http.ts`, `src/service/auth.ts`, `src/service/auth-form.ts` -> `docs/remote-access.md#Explicit Personal HTTPS Access` — script-free 401, login cookie, Origin and redirect guards
+- `web/src/components/workspace/WorkflowPanel.tsx`, `web/src/components/workspace/CadenceModeButton.tsx` -> `docs/conversation-mode.md#Restore a saved plan without sending a message` — deferred mode switch, plan disclosure and browser approval
+- `provenance/bundled-notices.json`, `licenses/` -> `docs/reuse-and-distribution.md#Emitted licenses` — pi-web-ui adaptation scope, bundled notices and package closure

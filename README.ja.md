@@ -115,8 +115,8 @@ bun install
 bun run verify
 ```
 
-領域別のガイドは [engineering/](engineering/) と [AGENTS.md](AGENTS.md)。
-`verify` が唯一の高速ゲートで、公式 Node ビルドと専用の一時ディレクトリが必要です（[検証](engineering/verification.md)）。
+領域別のガイドは [.cadence/project.md](.cadence/project.md) と [AGENTS.md](AGENTS.md)。
+`verify` が唯一の高速ゲートで、公式 Node ビルドと専用の一時ディレクトリが必要です（[検証](.cadence/knowledge/verification-and-builds.md)）。
 
 ## ライセンス
 

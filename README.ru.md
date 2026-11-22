@@ -109,7 +109,7 @@ bun install
 bun run verify
 ```
 
-Руководства по областям: [engineering/](engineering/) и [AGENTS.md](AGENTS.md). `verify` — единственный быстрый барьер; нужны официальная сборка Node и приватный временный каталог ([проверка](engineering/verification.md)).
+Руководства по областям: [.cadence/project.md](.cadence/project.md) и [AGENTS.md](AGENTS.md). `verify` — единственный быстрый барьер; нужны официальная сборка Node и приватный временный каталог ([проверка](.cadence/knowledge/verification-and-builds.md)).
 
 ## Лицензия
 
