@@ -261,7 +261,7 @@ export class ConversationWorkflow {
             : null,
         entries,
         notice:
-          "Preparation evidence only. cadence_plan checks the proposed write paths for conflicts and requires Git commit identity for local delivery. Unrelated dirty files do not require a clean checkout. Use an authorized original dependency entry by its displayed checkout-relative path; confirm it is usable in declared setup.",
+          "Preparation evidence only. cadence_plan checks the proposed write paths for conflicts and requires Git commit identity for local delivery. Unrelated dirty files do not require a clean checkout. Share an authorized original dependency entry through plan.links by its displayed checkout-relative path; use setup only for non-link commands.",
       };
     }
     return coordinatorKnowledge(this.o.cwd, source, this.o.secrets(), (path) =>

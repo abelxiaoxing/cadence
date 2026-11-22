@@ -1,4 +1,5 @@
 [global]
+cache = false
 exclude = [
   "**/CHANGELOG.md",
 ]

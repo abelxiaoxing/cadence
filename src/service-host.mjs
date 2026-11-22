@@ -31617,7 +31617,7 @@ You are the sole user-facing coordinator. Understand the desired result, not a t
 Start with existing evidence. Use cadence_knowledge to read a named project document/heading (guided by the route table, AGENTS.md and project index), inspect a literal in a source file with path and match, check local dependency directories/Git placement with checkout, or reuse a recorded investigation by ID (which rechecks its cited files; older conclusions are leads until rechecked). Read returned results before broadening an investigation. Surface material user choices once tradeoffs are understood; exact implementation values, selectors and file inventories usually belong to implementation workers. Zero research runs is appropriate when evidence suffices. Use cadence_research only for unresolved questions whose answers could change design or acceptance, asking focused independent questions together and reusing answered results by investigation ID.
 For material choices about experience, scope or expensive tradeoffs, call cadence_design with one batch of real alternatives in the user's language before publishing a plan: state each option's cost, recommendation, reason and affected acceptance, give stable lowercase IDs, and omit when (or use null) unless dependent on an earlier option. Publish choices through the tool, never a Markdown questionnaire. Keep routine implementation decisions yourself and do not invent questions for a settled task. A submitted design or "按你推荐的来" calls for the final plan card in the same conversation (never execution approval); respect all submitted decisions, including custom answers.
 Once the result is clear, call cadence_plan with goal, explicit decisions/non-goals, acceptance, assumptions, initial route and parallel assignments with write paths, reads/reviewReads, exact setup/baselineChecks/checks, delivery policy, policy.installs (false unless the user agreed revisions may install dependencies), and optional V4 fields (build, links, checks[].tier, checks[].target) per the tool schema. Cut parallel assignments as independently verifiable slices: establish thin shared entrypoints/contracts first, place browser/end-to-end specs after the slice whose interface they exercise, state only real dependencies in after and keep independent writes apart so as much work as possible runs side by side. Name the few readings each assignment and the review need first ({path, section, reason} or {research, reason} using a completed step's investigation ID), because workers start without this conversation. Goal, decisions, acceptance and assumptions stay as approved; after approval the owner may revise the route, assignments and repository write scope, or record a minimal necessary deviation confirmed by independent review when an item proves impossible.
-Focus plans on the project, its implementation and real checks. The owner supplies workspace-specific TMPDIR/TEMP/TMP to every delivery command and worker: never add temp-dir setup, environment discovery, path handoff or marker checks to the plan. Use cadence_knowledge with checkout to observe local dependency dirs and Git placement rather than sending researchers into Git internals, ignored dependencies or private records. Worktrees do not inherit ignored dependencies; share existing checkout dependencies via links or explicit setup only with user authorization, and never rely on implicit downloads or source/profile/credential copying. Setup commands run in target, candidate, then worktree order (keep target branch checks out of worktree setup because parallel children stay detached); command environments do not persist across processes.
+Focus plans on the project, its implementation and real checks. The owner supplies workspace-specific TMPDIR/TEMP/TMP to every delivery command and worker: never add temp-dir setup, environment discovery, path handoff or marker checks to the plan. Use cadence_knowledge with checkout to observe local dependency dirs and Git placement rather than sending researchers into Git internals, ignored dependencies or private records. Worktrees do not inherit ignored dependencies; share existing checkout dependencies via links (not setup symlinks) only with user authorization, and never rely on implicit downloads or source/profile/credential copying. Setup commands run in target, candidate, then worktree order (keep target branch checks out of worktree setup because parallel children stay detached); command environments do not persist across processes.
 For Git delivery, prefer local-merge; working-copy requires explicit direct-edit approval, never a silent fallback. local-merge creates a named task branch and isolated worktree only AFTER approval (never on mode entry or research), runs parallel slices in detached worktrees, checks and independently Agent-reviews the exact final single-parent candidate before fast-forwarding the target, keeps private process reports out of repository commits, keeps the task branch, and leaves the original conversation cwd unchanged; working-copy edits directly without Git mutation.
 The owner maintains .cadence/project.md and .cadence/knowledge/ automatically at the end of delivery within its fixed budget, so never list those in documents; list in documents only existing project Markdown owning a fact this delivery changes. Avoid duplicate documentation systems.
 When a tool refuses your own call it names the field at fault: correct exactly that and call again in the same turn. There is one plan. Never publish, offer or mention a shortened, split or otherwise reduced variant of it, and never ask the user to reply so that you can try again.
@@ -34163,7 +34163,7 @@ class ConversationWorkflow {
         head: head.code === 0 ? head.stdout.trim() : null,
         branch: branch.code === 0 ? sanitizeText(branch.stdout.trim(), this.o.secrets()) : null,
         entries: entries3,
-        notice: "Preparation evidence only. cadence_plan checks the proposed write paths for conflicts and requires Git commit identity for local delivery. Unrelated dirty files do not require a clean checkout. Use an authorized original dependency entry by its displayed checkout-relative path; confirm it is usable in declared setup."
+        notice: "Preparation evidence only. cadence_plan checks the proposed write paths for conflicts and requires Git commit identity for local delivery. Unrelated dirty files do not require a clean checkout. Share an authorized original dependency entry through plan.links by its displayed checkout-relative path; use setup only for non-link commands."
       };
     }
     return coordinatorKnowledge(this.o.cwd, source, this.o.secrets(), (path) => this.o.files.read(path));
@@ -36249,6 +36249,12 @@ function acceptanceRecord(candidate, tree, digest2, execution, checks, review, e
   };
 }
 var zeroOid = (oid) => "0".repeat(oid.length);
+var RESIDUE_PREVIEW_LIMIT = 8;
+function residueMessage(paths, secrets = []) {
+  const shown2 = paths.slice(0, RESIDUE_PREVIEW_LIMIT).join(", ");
+  const more = paths.length > RESIDUE_PREVIEW_LIMIT ? ` and ${paths.length - RESIDUE_PREVIEW_LIMIT} more` : "";
+  return diagnosticText(`Uncommitted, untracked, ignored or index-hidden files retained: ${shown2}${more}`, 1024, secrets);
+}
 
 class WorkflowDelivery {
   view;
@@ -36538,8 +36544,9 @@ class WorkflowDelivery {
         if (!child2.applied || await this.assertTip(path) !== child2.head)
           throw new ContractError("stale");
         await options.prepareCleanup?.();
-        if ((await worktreeResidue(path)).length)
-          throw new Error("Uncommitted, untracked, ignored or index-hidden files retained");
+        const residue = await worktreeResidue(path);
+        if (residue.length)
+          throw new Error(residueMessage(residue, options.secrets?.() ?? []));
       });
       if (safeDirectory(path))
         throw new Error("Worktree removal was not confirmed");
@@ -36622,8 +36629,9 @@ class WorkflowDelivery {
           throw new ContractError("stale");
         assertRepository(this.view.binding.target);
         await options.prepareCleanup?.();
-        if ((await worktreeResidue(path)).length)
-          throw new Error("Uncommitted, untracked, ignored or index-hidden files retained");
+        const residue = await worktreeResidue(path);
+        if (residue.length)
+          throw new Error(residueMessage(residue, options.secrets?.() ?? []));
         if ((await gitRun(this.view.binding.target.checkoutRoot, [
           "merge-base",
           "--is-ancestor",
@@ -36654,7 +36662,7 @@ class WorkflowDelivery {
         this.view.workspace.state = "retained";
       this.view.cleanup = {
         status: "retained",
-        reason: (error instanceof Error ? error.message : "Cleanup unavailable").slice(0, 2048)
+        reason: diagnosticText(error instanceof Error ? error.message : "Cleanup unavailable", 1536, options.secrets?.() ?? [])
       };
     }
     this.save();
@@ -37405,7 +37413,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.1",
-  build: "3e13f2dec476b66d7d758fb4dbc2143b68a4f4ac2ab8f617137e27f2e98584df",
+  build: "7ace17c218762317a4d6d333a7c5bac58b12f29c9a7fdb8be50a73634d102894",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -40055,7 +40063,10 @@ ${result.output}`}`);
     await delivery.removeChild(child2, (path, check) => this.gitStep(live2, this.cwd, `worktree-remove-${task.id}`, async (git) => {
       await check();
       await git(["worktree", "remove", path]);
-    }), { prepareCleanup: () => this.unlinkLinks(live2, child2) });
+    }), {
+      prepareCleanup: () => this.unlinkLinks(live2, child2),
+      secrets: () => this.o.secrets()
+    });
   }
   async checkoutAccess(live2, access) {
     const previous = live2.barrier;
@@ -40326,6 +40337,7 @@ ${result.output}`}`);
       });
     }, {
       prepareCleanup: () => this.unlinkLinks(live2, integration),
+      secrets: () => this.o.secrets(),
       deleteCheckpointRefs: async (refs) => {
         const deleted = [];
         await this.gitStep(live2, this.cwd, "cleanup-checkpoint-refs", async (git2) => {

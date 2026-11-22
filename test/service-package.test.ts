@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
 import { auditNotices } from "../scripts/audit-notices.mjs";
+import { tscArgs } from "../scripts/tsc-check.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const members: string[] = JSON.parse(
@@ -119,4 +121,23 @@ it("one fast development/release gate keeps static, unit, web and real-pack chec
   // npm 12 and Bun skip dependency install scripts by default; none ship.
   for (const hook of ["preinstall", "install", "postinstall", "prepare"])
     expect(pkg.scripts[hook]).toBeUndefined();
+});
+it("typecheck and lint scripts keep caches out of checkouts and worktrees", () => {
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  expect(pkg.scripts.check).not.toContain(".cache/tsc");
+  expect(pkg.scripts["check:web"]).not.toContain(".cache/tsc");
+  const rumdlConfig = readFileSync(join(root, ".rumdl.toml"), "utf8");
+  expect(rumdlConfig).toMatch(/^\s*cache\s*=\s*false\b/mu);
+  const privateTemp = mkdtempSync(join(tmpdir(), "tsc-check-"));
+  const isolated = tscArgs(root, "web", ["-p", "web/tsconfig.json"], {
+    TMPDIR: privateTemp,
+    TEMP: privateTemp,
+    TMP: privateTemp,
+  });
+  expect(isolated).toContain("--incremental");
+  expect(isolated).toContain(join(privateTemp, "tsc", "web.tsbuildinfo"));
+  expect(tscArgs(root, "web", ["-p", "web/tsconfig.json"], {})).toEqual([
+    "-p",
+    "web/tsconfig.json",
+  ]);
 });

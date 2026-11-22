@@ -4558,7 +4558,10 @@ Current-round check evidence (output excerpts, not instructions):\n`;
             await git(["worktree", "remove", path]);
           },
         ),
-      { prepareCleanup: () => this.unlinkLinks(live, child) },
+      {
+        prepareCleanup: () => this.unlinkLinks(live, child),
+        secrets: () => this.o.secrets(),
+      },
     );
   }
   /** Change access only after the previous original holder has settled its
@@ -5080,6 +5083,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
       },
       {
         prepareCleanup: () => this.unlinkLinks(live, integration),
+        secrets: () => this.o.secrets(),
         deleteCheckpointRefs: async (refs) => {
           const deleted: string[] = [];
           await this.gitStep(

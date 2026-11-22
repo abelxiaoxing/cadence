@@ -7,6 +7,7 @@
  * refs only after confirmed worktree removal while always keeping the task branch. */
 import { lstatSync, rmdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { diagnosticText } from "../verification-diagnostics.ts";
 import { safeDirectory } from "../workspace.ts";
 import { ContractError, canonicalJson, decodeId } from "./contracts/core.ts";
 import type { ExecutionContext } from "./contracts/models.ts";
@@ -136,6 +137,24 @@ export function acceptanceRecord(
 }
 
 const zeroOid = (oid: string) => "0".repeat(oid.length);
+
+const RESIDUE_PREVIEW_LIMIT = 8;
+
+function residueMessage(
+  paths: readonly string[],
+  secrets: readonly string[] = [],
+): string {
+  const shown = paths.slice(0, RESIDUE_PREVIEW_LIMIT).join(", ");
+  const more =
+    paths.length > RESIDUE_PREVIEW_LIMIT
+      ? ` and ${paths.length - RESIDUE_PREVIEW_LIMIT} more`
+      : "";
+  return diagnosticText(
+    `Uncommitted, untracked, ignored or index-hidden files retained: ${shown}${more}`,
+    1024,
+    secrets,
+  );
+}
 
 export class WorkflowDelivery {
   private token: string | undefined;
@@ -528,7 +547,10 @@ export class WorkflowDelivery {
   async removeChild(
     path: string,
     remove: (path: string, check: () => Promise<void>) => Promise<void>,
-    options: { prepareCleanup?: () => Promise<void> | void } = {},
+    options: {
+      prepareCleanup?: () => Promise<void> | void;
+      secrets?: () => readonly string[];
+    } = {},
   ): Promise<void> {
     const child = this.child(path);
     if (!child) throw new ContractError("stale");
@@ -537,10 +559,9 @@ export class WorkflowDelivery {
         if (!child.applied || (await this.assertTip(path)) !== child.head)
           throw new ContractError("stale");
         await options.prepareCleanup?.();
-        if ((await worktreeResidue(path)).length)
-          throw new Error(
-            "Uncommitted, untracked, ignored or index-hidden files retained",
-          );
+        const residue = await worktreeResidue(path);
+        if (residue.length)
+          throw new Error(residueMessage(residue, options.secrets?.() ?? []));
       });
       if (safeDirectory(path))
         throw new Error("Worktree removal was not confirmed");
@@ -687,6 +708,7 @@ export class WorkflowDelivery {
       deleteCheckpointRefs?: (
         refs: readonly { ref: string; oid: string }[],
       ) => Promise<readonly string[]>;
+      secrets?: () => readonly string[];
     } = {},
   ): Promise<void> {
     const path = this.view.worktreeRoot;
@@ -704,10 +726,9 @@ export class WorkflowDelivery {
           throw new ContractError("stale");
         assertRepository(this.view.binding.target);
         await options.prepareCleanup?.();
-        if ((await worktreeResidue(path)).length)
-          throw new Error(
-            "Uncommitted, untracked, ignored or index-hidden files retained",
-          );
+        const residue = await worktreeResidue(path);
+        if (residue.length)
+          throw new Error(residueMessage(residue, options.secrets?.() ?? []));
         if (
           (
             await gitRun(this.view.binding.target.checkoutRoot, [
@@ -754,10 +775,11 @@ export class WorkflowDelivery {
       if (this.view.workspace) this.view.workspace.state = "retained";
       this.view.cleanup = {
         status: "retained",
-        reason: (error instanceof Error
-          ? error.message
-          : "Cleanup unavailable"
-        ).slice(0, 2048),
+        reason: diagnosticText(
+          error instanceof Error ? error.message : "Cleanup unavailable",
+          1536,
+          options.secrets?.() ?? [],
+        ),
       };
     }
     this.save();

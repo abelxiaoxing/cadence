@@ -1711,6 +1711,7 @@ it("browser model padding selects the actual reader; direct owner requests remai
   );
   expect(await call({ checkout: ["node_modules"] })).toMatchObject({
     entries: [{ path: "node_modules", kind: "directory" }],
+    notice: expect.stringContaining("plan.links"),
   });
   expect(await call({ investigation: randomUUID() })).toMatchObject({
     answer: "retained fixture",
