@@ -166,10 +166,12 @@ it.each([false, true])(
     expect(f.git("rev-parse", f.view.taskBranch)).toBe(f.oid);
     expect(existsSync(f.cwd)).toBe(residue);
     expect(f.view.cleanup.status).toBe(residue ? "retained" : "removed");
-    if (residue)
+    if (residue) {
+      expect(f.view.cleanup.reason).toContain("ignored/user-data");
       expect(readFileSync(join(f.cwd, "ignored", "user-data"), "utf8")).toBe(
         "only copy",
       );
+    }
     f.delivery.finish();
   },
 );
@@ -406,14 +408,27 @@ it("an assignment's own worktree starts at the candidate's commit, its commit is
   f.delivery.applied(child, picked);
   expect(readFileSync(join(cwd, "guide.md"), "utf8")).toBe("# Guide\n");
 
-  // Ignored residue retains the worktree; nothing is forced.
+  // Ignored residue retains the worktree with concrete paths; nothing is forced.
   mkdirSync(join(child, "ignored"));
-  writeFileSync(join(child, "ignored", "cache.bin"), "x");
+  for (let i = 0; i < 10; i++)
+    writeFileSync(join(child, "ignored", `cache-${i}.bin`), "x");
+  let childReason = "";
   const remove = async (path: string, check: () => Promise<void>) => {
-    await check();
+    try {
+      await check();
+    } catch (error) {
+      childReason = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
     f.git("worktree", "remove", path);
   };
-  await f.delivery.removeChild(child, remove);
+  await f.delivery.removeChild(child, remove, {
+    secrets: () => ["cache-0"],
+  });
+  expect(childReason).toContain("ignored/[redacted].bin");
+  expect(childReason).toContain("ignored/cache-1.bin");
+  expect(childReason).toContain("and 2 more");
+  expect(childReason).not.toContain("cache-0");
   expect(existsSync(child)).toBe(true);
   expect(f.view.artifacts?.[0]).toMatchObject({
     state: "retained",

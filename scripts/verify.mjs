@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import path from "node:path";
+import { tscArgs } from "./tsc-check.mjs";
 import { assertVerificationTemp } from "./verification-temp.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -16,14 +17,8 @@ const windows = process.platform === "win32";
 const node = process.execPath;
 const bin = (name) =>
   path.join(root, "node_modules", ".bin", windows ? `${name}.cmd` : name);
-// Incremental type checks keep their state per checkout under `.cache/tsc`.
-const tsc = (state, ...args) => [
-  bin("tsc"),
-  ...args,
-  "--incremental",
-  "--tsBuildInfoFile",
-  `.cache/tsc/${state}.tsbuildinfo`,
-];
+// Keep incremental build info in the verified private TMPDIR, never inside checkouts.
+const tsc = (state, ...args) => [bin("tsc"), ...tscArgs(root, state, args)];
 const vitest = (...args) => [bin("vitest"), "run", ...args];
 const counts = /^\s*(Test Files|Tests)\s/;
 // Files tagged `slow` as a whole are left out rather than imported and skipped.
