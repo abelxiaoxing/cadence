@@ -283,6 +283,11 @@ export function ActivityList({
                           ? t("Working")
                           : t("Stale observation")
                       }
+                      activityState={
+                        !error && reports.some((a) => a.freshness === "current")
+                          ? "live"
+                          : "stale"
+                      }
                       onOpen={() => {
                         if (!opening) onOpen(path, reports[0]);
                       }}

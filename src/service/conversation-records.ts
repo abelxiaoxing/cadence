@@ -486,7 +486,11 @@ export class ConversationRecords {
         status: live.state.status,
         updatedAt: live.accepted.at,
         origin: "webui",
-        live: { commandId: live.commandId, epoch: live.epoch },
+        live: {
+          commandId: live.commandId,
+          epoch: live.epoch,
+          startedAt: live.accepted.at,
+        },
         ...hidden,
       };
     }
@@ -516,7 +520,13 @@ export class ConversationRecords {
       updatedAt: Math.max(Math.trunc(listed.mtimeMs), live?.accepted.at ?? 0),
       origin: s.webui ? "webui" : "terminal",
       ...(live
-        ? { live: { commandId: live.commandId, epoch: live.epoch } }
+        ? {
+            live: {
+              commandId: live.commandId,
+              epoch: live.epoch,
+              startedAt: live.accepted.at,
+            },
+          }
         : {}),
       ...hidden,
     };

@@ -152,7 +152,7 @@ it("groups the selected project's associated work on first discovery, before his
     'class="session-title">Conversation pi-session</span>',
   );
   expect(list).toContain(
-    'class="status-dot busy history-activity-mark" role="img" aria-label="Working"',
+    'class="status-dot live history-activity-mark" role="img" aria-label="Working"',
   );
   const work = (html: string) =>
     html.match(/<details class="history-workflows">(.*?)<\/details>/s)?.[1];
@@ -285,7 +285,7 @@ it("keeps same-session terminals with unshared history in exact, read-only detai
               origin: "webui",
               status: "completed",
               leaf: null,
-              updatedAt: 1000,
+              updatedAt: Date.now(),
             },
           ]}
         />
@@ -432,7 +432,7 @@ it("pins only the selected directory's exact work through expired and incomplete
       chats: ["Earlier", "Local"].map((title, i) => ({
         title,
         id: i ? "pi-session" : "past",
-        updatedAt: 2 - i,
+        updatedAt: Date.now() - i * 1000,
         origin: "webui",
         status: "completed",
         leaf: null,
@@ -464,9 +464,11 @@ it("pins only the selected directory's exact work through expired and incomplete
     expect(
       html.indexOf('title="Local"') < html.indexOf('title="Earlier"'),
     ).toBe(!!count);
+    // Running conversations stay inside Conversation history (never floating above it).
     expect(
-      html.indexOf('title="Local"') < html.indexOf('class="task-list"'),
-    ).toBe(!!count);
+      html.indexOf('title="Local"') > html.indexOf('class="task-list"'),
+    ).toBe(true);
+    expect(html.includes("history-activity-mark")).toBe(!!count);
     expect(
       html.match(/class="history-run history-terminal"/g) ?? [],
     ).toHaveLength(count);

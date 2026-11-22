@@ -223,17 +223,22 @@ it("a readiness change disables only history controls without inserting text bet
         actionsUnavailable={actionsUnavailable}
       />,
     );
-  const [running, history] = sidebar().split("Conversation history");
-  const admitted = running.match(
+  const [above, history] = sidebar().split("Conversation history");
+  // Running rows stay inside Conversation history, never floating above its heading.
+  expect(above).not.toContain("Admitted reply");
+  expect(above).not.toContain("Live reply");
+  const admitted = history.match(
     /<button\b[^>]* title="Admitted reply"[^>]*>.*?<\/button>/gs,
   );
   expect(admitted).toHaveLength(1);
+  expect(admitted?.[0]).toContain('class="session-item running"');
   expect(admitted?.[0]).toContain(
-    'history-activity-mark" role="img" aria-label="Working"',
+    'status-dot live history-activity-mark" role="img" aria-label="Working"',
   );
   expect(admitted?.[0]).not.toMatch(/session-sub|>starting</);
-  expect(history).not.toContain("Admitted reply");
-  expect(running).not.toContain("session-action");
+  expect(history.indexOf('title="Admitted reply"')).toBeLessThan(
+    history.indexOf('title="Done today"'),
+  );
   expect(history.match(/aria-label="Rename /g)).toHaveLength(2);
   expect(history.match(/aria-label="Archive /g)).toHaveLength(2);
   // The archived view is one press away and reads nothing until opened.

@@ -1,13 +1,135 @@
-/* The observed activity dot and the selected background have independent
+/* The observed activity styling and the selected background have independent
  * meanings. Neither the elapsed clock nor the workflow phase animates a row. */
 .history-activity-mark {
   margin: 0;
+}
+.status-dot.live {
+  background: var(--tool-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tool-success) 20%, transparent);
 }
 .history-entry {
   position: relative;
 }
 .history-entry .session-item.active::before {
   content: none;
+}
+/* Running conversations sit at the top of Today inside Conversation history
+ * with a crisp emerald optical identity distinct from selection blue and
+ * failure/cancel tones. */
+.history-entry .session-item.running {
+  background: color-mix(in srgb, var(--tool-success) 10%, transparent);
+  border-color: color-mix(in srgb, var(--tool-success) 20%, transparent);
+  box-shadow: inset 2.5px 0 0 var(--tool-success);
+  color: var(--text);
+}
+.history-entry .session-item.running:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tool-success) 16%, transparent);
+  border-color: color-mix(in srgb, var(--tool-success) 28%, transparent);
+}
+.history-entry .session-item.running .session-icon {
+  color: var(--tool-success);
+}
+.history-entry .session-item.running .session-title {
+  font-weight: 500;
+}
+.history-entry .session-item.active.running,
+.history-entry .session-item.active.running:hover {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--tool-success) 15%, transparent) 0%,
+    var(--accent-soft) 58%
+  );
+  border-color: color-mix(in srgb, var(--tool-success) 34%, var(--border-soft));
+  box-shadow: inset 2.5px 0 0 var(--tool-success);
+  color: var(--text);
+}
+/* Stale running observation keeps an amber tone so it never impersonates
+ * confirmed live work. */
+.history-entry .session-item.stale-running {
+  background: color-mix(in srgb, var(--amber) 9%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 22%, transparent);
+  box-shadow: inset 2.5px 0 0 var(--amber);
+}
+.history-entry .session-item.stale-running:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+}
+.history-entry .session-item.stale-running .session-icon {
+  color: var(--amber);
+}
+.history-entry .session-item.active.stale-running,
+.history-entry .session-item.active.stale-running:hover {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--amber) 14%, transparent) 0%,
+    var(--accent-soft) 58%
+  );
+  border-color: color-mix(in srgb, var(--amber) 34%, var(--border-soft));
+  box-shadow: inset 2.5px 0 0 var(--amber);
+}
+@media (forced-colors: active) {
+  .history-entry .session-item.running,
+  .history-entry .session-item.stale-running {
+    border-inline-start: 2.5px solid Highlight;
+  }
+}
+/* Compact running count shown beside the section count when history is folded. */
+.lp-live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tool-success) 14%, transparent);
+  color: var(--tool-success);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+.lp-live-pill.stale {
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  color: var(--amber-text);
+}
+.lp-live-pill > .status-dot {
+  margin: 0;
+  box-shadow: none;
+}
+/* Collapsible "Earlier" group heading inside the history list. */
+.lp-time-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.14s,
+    color 0.14s;
+}
+.lp-time-toggle:hover {
+  background: var(--bg-elev2);
+  color: var(--text-dim);
+}
+.lp-time-toggle > svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+.lp-time-count {
+  margin-inline-start: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+@media (pointer: coarse) {
+  .lp-time-toggle {
+    min-height: 32px;
+  }
 }
 .history-entry.has-workflows > .conversation-row {
   margin-inline-end: 36px;

@@ -392,9 +392,9 @@ Up and Down on the first and last visual line recall the prompts this tab sent i
 The question rail sits beside, not over, the native scrollbar.
 Its marks reveal labels or the list on hover or keyboard focus; the same arrow-key group jumps to loaded or earlier messages, and phones still hide it.
 Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
-The sidebar lists active conversations before the paged history.
+The sidebar keeps every conversation inside Conversation history: running conversations sit at the top of Today (never floating above the history heading or filter), highlighted in an emerald running tone distinct from the selected background (falling back to amber when observation is stale) with a static trailing activity mark; a collapsed history heading shows a compact running count badge when active work exists.
+Multiple concurrent running conversations are ordered newest-started first by immutable admission/workflow start time (with first-observed order as a stable fallback when no start timestamp is present), so changing elapsed time, write clocks or workflow phases does not reorder or rewrite rows.
 A reply, its linked active workflows and shared-history terminal reports from the selected project share one row per session ID, even without a summary or outside the loaded page.
-A static activity mark is separate from the selected background; changing elapsed time or workflow phase does not rewrite the row.
 A stale observation is not a settled run.
 Eligible history rows offer Rename and Archive (`ConversationRow.tsx`), revealed on hover or focus and always shown on touch screens.
 Rename turns the row into a field: Enter or Save requests the name, Escape or leaving the row keeps the recorded one, an emptied field clears the name so the first message titles the conversation again, and a name over the limit is refused in the browser.
@@ -402,7 +402,7 @@ The history heading's archive control swaps the list for the archived conversati
 Each request is one command and nothing is changed ahead of it: the row says what is in flight, an accepted or unknown outcome re-reads the lists (and the head of the conversation, when it is the open one), and only those reads change a title or a list.
 A refusal that changed nothing is a toast, and an unknown outcome stays under its row without a retry.
 When the live owner cannot take a history action, the button is disabled and its reason is available on the control and in the footer's connection details; readiness changes never insert a notice into the history or archive list.
-History rows are grouped by this browser's calendar day (today, yesterday, earlier), and a filter box narrows the rows already listed by title and reads nothing: active rows are never filtered, and pages not loaded are not searched.
+History rows are grouped by this browser's calendar day (today, yesterday, earlier), with Today and Yesterday expanded and Earlier collapsed by default behind a toggle showing its count; a filter box narrows every listed row by title (including running conversations, automatically expanding Earlier while a filter query matches) and reads nothing, and pages not loaded are not searched.
 The row disclosure keeps each terminal’s explicit session/leaf navigation and each owner workflow’s exact-run controls separate; unattributed work has its own compact disclosure rather than a fabricated session.
 The lower-left Subagents dock follows the open conversation, not the whole activity roster.
 Active candidate IDs come from that conversation's owner-issued roster links; retained IDs in Pi or browser history are hints, not ownership (a fork may copy them).

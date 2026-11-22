@@ -2271,3 +2271,42 @@ it("reading an unstarted conversation scans Pi sessions only once per request", 
   expect(findSpy).toHaveBeenCalledTimes(1);
   expect(listSpy).toHaveBeenCalledTimes(1);
 });
+
+it("live conversation summaries expose immutable accepted.at as live.startedAt and decode older summaries without it", () => {
+  const f = fixture();
+  const saved = writeSession(f, [
+    { role: "user", content: [{ type: "text", text: "Active check" }] },
+  ]);
+  const commandId = f.command(saved.id, "running", saved.entries[0]);
+  const live = goLive(f, commandId);
+  live.accepted.at = 1_760_000_123_456;
+  const active = decodeWorkbenchResult(f.records.activeConversations());
+  expect(active).toMatchObject({
+    kind: "conversation-active",
+    entries: [
+      {
+        id: saved.id,
+        live: { commandId, epoch: live.epoch, startedAt: 1_760_000_123_456 },
+      },
+    ],
+  });
+  // Older service projections without live.startedAt still decode cleanly.
+  const legacy = decodeWorkbenchResult({
+    kind: "conversation-active",
+    entries: [
+      {
+        id: saved.id,
+        title: "Legacy",
+        leaf: saved.entries[0],
+        status: "running",
+        updatedAt: 1000,
+        origin: "webui",
+        live: { commandId, epoch: live.epoch },
+      },
+    ],
+  });
+  expect(legacy).toMatchObject({
+    kind: "conversation-active",
+    entries: [{ id: saved.id, live: { commandId, epoch: live.epoch } }],
+  });
+});
