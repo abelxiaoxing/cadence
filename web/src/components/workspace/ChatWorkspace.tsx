@@ -36,9 +36,10 @@ import type {
   ChatTreeNode,
 } from "../../../../src/service/contracts/workbench.ts";
 import { CONVERSATION_SEND_BYTES } from "../../../../src/service/contracts/workbench.ts";
-import type {
-  WorkflowProposal,
-  WorkflowRun,
+import {
+  CURRENT_WORKFLOW_PLAN_VERSION,
+  type WorkflowProposal,
+  type WorkflowRun,
 } from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import {
@@ -889,7 +890,7 @@ export function ChatWorkspace({
     !!draftModel &&
     canonicalJson(draftModel) !== canonicalJson(context?.model ?? null);
   const planApprovable =
-    state?.proposal?.plan.version === 4 &&
+    state?.proposal?.plan.version === CURRENT_WORKFLOW_PLAN_VERSION &&
     state.enabled &&
     state.id === id &&
     !!summary &&
@@ -917,7 +918,7 @@ export function ChatWorkspace({
   const planOpen = reviewed && review.open;
   const planPanelId = `current-plan-${id}`;
   const approvalAction =
-    state?.proposal?.plan.version === 4
+    state?.proposal?.plan.version === CURRENT_WORKFLOW_PLAN_VERSION
       ? planAction(
           state.proposal,
           actionsReady,

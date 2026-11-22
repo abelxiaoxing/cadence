@@ -90,6 +90,53 @@ it.each([
     const replace = vi.spyOn(coordination.files, "replace");
     let observed = false;
     let temporaryDirectory: string | undefined;
+    const selectedPlan = editing
+      ? vi.spyOn(WorkflowTranscript.prototype, "selected").mockReturnValueOnce(
+          JSON.stringify({
+            tasks: [
+              {
+                id: "a",
+                title: "A",
+                instructions: "Create a.txt",
+                writes: ["a.txt"],
+                after: [],
+                reads: [],
+              },
+            ],
+          }),
+        )
+      : undefined;
+    if (editing)
+      worker.mockImplementationOnce(
+        async (_prepared, _cwd, _signal, options) => {
+          options.onNative({
+            outcome: "completed",
+            closure: "direct-child-closed",
+            exitCode: 0,
+            signal: null,
+            durationMs: 10,
+            stdin: "delivered",
+            final: "valid",
+            cleanup: "settled",
+            capture: {
+              observed: "complete",
+              source: "available",
+              redacted: false,
+              omissions: [],
+            },
+          });
+          return {
+            outcome: "completed",
+            closed: true,
+            exitCode: 0,
+            signal: null,
+            durationMs: 10,
+            text: "",
+            output: "",
+            truncated: false,
+          };
+        },
+      );
     worker.mockImplementationOnce(async (_prepared, _cwd, _signal, options) => {
       temporaryDirectory = options.temporaryDirectory;
       expect(!!temporaryDirectory).toBe(editing);
@@ -185,7 +232,7 @@ it.each([
       expect(view.response.run.status).toBe(
         failStorage || editing ? "unknown" : "timeout",
       );
-      expect(view.response.run.steps[0].timing).toMatchObject({
+      expect(view.response.run.steps.at(-1)?.timing).toMatchObject({
         startedAt: expect.any(Number),
         stopRequestedAt: expect.any(Number),
         closedAt: expect.any(Number),
@@ -200,6 +247,7 @@ it.each([
         owner.state = "quarantined";
       } else gate.assertQuiescent();
     } finally {
+      selectedPlan?.mockRestore();
       replace.mockRestore();
       workflows.closeHistory();
     }
@@ -426,10 +474,13 @@ it.each([
           '"combinedCandidateRelativeToCheckout":"../integration"',
         );
         expect(requests[0].request.instructions).toContain(
-          "Completed siblings may have been integrated after this checkout forked",
+          "Detached assignment snapshot: inspect combinedCandidateRelativeToCheckout readonly for completed sibling outputs; finish only this assignment.",
         );
         expect(requests[0].request.instructions).toContain(
-          "Keep all scratch files under that root",
+          "There is no total runtime deadline",
+        );
+        expect(requests[0].request.instructions).not.toContain(
+          "Do not delegate, restart the workflow, mutate Git",
         );
       }
       if (kind === "review") {

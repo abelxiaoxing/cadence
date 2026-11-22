@@ -780,6 +780,34 @@ export class ServiceCoordination {
   }
 }
 
+/** Short backoff when a live Cadence process holds the millisecond-long shared
+ * registry lock. Never breaks, expires or reclaims a live lock; dead, foreign
+ * or unreadable locks fail immediately so recovery or doctor handles them. */
+export async function waitForRegistry<T>(
+  c: ServiceCoordination,
+  action: () => T | Promise<T>,
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 2000;
+  const intervalMs = Math.max(1, options.intervalMs ?? 30);
+  const deadline = performance.now() + timeoutMs;
+  for (;;) {
+    try {
+      return await action();
+    } catch (error) {
+      if (!(error instanceof ContractError) || error.code !== "registry-locked")
+        throw error;
+      const diag = c.registryLockDiagnostic();
+      if (diag && diag.owner !== "live") throw error;
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw error;
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(intervalMs, remaining)),
+      );
+    }
+  }
+}
+
 /** Held only by the original owner. Raw-byte AND inode/time identities supplement
  * CheckoutStore's semantic lock assertion, including whitespace-only interference. */
 export class OwnerLease {

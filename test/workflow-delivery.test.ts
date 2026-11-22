@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { Workflows } from "../src/service/workflows.ts";
-import { plan } from "./helpers/workflow-plan.ts";
+import { stagedPlan as plan } from "./helpers/workflow-plan.ts";
 
 vi.mock("../src/service/workflow-git.ts", async (original) => {
   const actual =

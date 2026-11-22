@@ -20,7 +20,7 @@ import {
 } from "../src/service/workflow-delivery.ts";
 import { pathIdentity } from "../src/service/workflow-git.ts";
 import { Workflows } from "../src/service/workflows.ts";
-import { plan } from "./helpers/workflow-plan.ts";
+import { stagedPlan as plan } from "./helpers/workflow-plan.ts";
 
 const seam = vi.hoisted(() => ({
   trees: new Map<

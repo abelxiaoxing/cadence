@@ -1192,3 +1192,33 @@ it("the registered knowledge tool sends exactly one canonical lookup or names th
     expect(read).not.toHaveBeenCalled();
   }
 });
+
+it("native before_agent_start shares bounded working-memory projection and cadence_status({ proposal: true }) reads the pending plan", async () => {
+  const h = host();
+  await h.start();
+  expect(
+    (await h.call("cadence_status", { proposal: true })).content[0].text,
+  ).toBe("No current pending proposal.");
+  const longGoal =
+    "Deliver unified V5 working memory without 256-byte clipping. ".repeat(6);
+  h.proposal.plan = {
+    ...plan(),
+    goal: longGoal,
+    links: [{ path: "node_modules", placement: "worktree" }],
+  };
+  await h.call("cadence_plan", {
+    ...plan(),
+    goal: longGoal,
+    links: [{ path: "node_modules", placement: "worktree" }],
+  });
+  const [started] = await h.emit("before_agent_start", {
+    systemPrompt: "BASE",
+  });
+  expect(started.message.content).toContain("Active plan proposal");
+  expect(started.message.content).toContain(longGoal);
+  expect(started.message.content).toContain("node_modules (worktree)");
+  const full = await h.call("cadence_status", { proposal: true });
+  expect(full.content[0].text).toContain(longGoal);
+  expect(full.content[0].text).toContain(h.proposal.digest);
+  await h.emit("session_shutdown");
+});

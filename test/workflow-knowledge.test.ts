@@ -11,7 +11,7 @@ import { KNOWLEDGE_STORE } from "../src/service/knowledge-store.ts";
 import { hash } from "../src/service/private-files.ts";
 import { AttemptFailure } from "../src/service/workflow-controller.ts";
 import { Workflows } from "../src/service/workflows.ts";
-import { plan } from "./helpers/workflow-plan.ts";
+import { stagedPlan as plan } from "./helpers/workflow-plan.ts";
 
 const git = vi.hoisted(() => ({
   ignored: false,

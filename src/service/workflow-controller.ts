@@ -16,9 +16,13 @@ import {
   oneOf,
   parseWireJson,
   text,
+  utf8Bytes,
 } from "./contracts/core.ts";
 import {
+  decodeWorkflowReadings,
   WORKFLOW_LIMITS,
+  WorkflowInputError,
+  type WorkflowReading,
   type WorkflowTask,
   type WorkflowTaskState,
   workflowBoundary,
@@ -31,6 +35,256 @@ import { issueText, type ReviewIssue } from "./workflow-report.ts";
 
 /** Full structured recovery reply, independent of ordinary text previews. */
 export const RECOVERY_BYTES = 32768;
+/** Full structured Stage 2 route plan reply. */
+export const ROUTE_PLAN_BYTES = 65536;
+/** An unusable route-planner reply is asked again this many times before failing. */
+export const PLAN_OBJECTIONS = 2;
+
+/** A Stage 2 route plan the owner cannot act on. The route planner is asked
+ * again with this exact reason up to PLAN_OBJECTIONS times. */
+export class InvalidRoute extends Error {}
+
+export interface RoutePlan {
+  action: "plan" | "blocked";
+  tasks: WorkflowTask[];
+  reviewReads: WorkflowReading[];
+  documents: string[];
+  reason: string;
+}
+
+export function decodeRoutePlan(
+  reply: string,
+  options: {
+    secrets?: readonly string[];
+    agreementDocuments?: readonly string[];
+    buildOutputs?: readonly string[];
+  } = {},
+): RoutePlan {
+  const secrets = options.secrets ?? [];
+  function refuse(message: string): never {
+    throw new InvalidRoute(message);
+  }
+  const noControl = (label: string, value: string) => {
+    if (
+      [...value].some(
+        (c) =>
+          (c.charCodeAt(0) < 32 && c !== "\n" && c !== "\t") ||
+          c.charCodeAt(0) === 127 ||
+          /[\u202a-\u202e\u2066-\u2069]/u.test(c),
+      )
+    )
+      refuse(
+        `${label} contains an invisible control character (only newline and tab are accepted)`,
+      );
+  };
+  const clean = (label: string, value: unknown, maximum: number): string => {
+    let raw: string;
+    try {
+      raw = text(value, maximum, true);
+    } catch {
+      refuse(`${label} must be non-empty text of at most ${maximum} bytes`);
+    }
+    noControl(label, raw);
+    try {
+      return text(sanitizeText(raw, secrets), maximum, true);
+    } catch {
+      refuse(`${label} exceeds ${maximum} bytes after sanitization`);
+    }
+  };
+  const sanitizeReadings = (
+    items: WorkflowReading[],
+    label: string,
+  ): WorkflowReading[] =>
+    items.map((r, j) => {
+      noControl(`${label}[${j}].reason`, r.reason);
+      if ("research" in r)
+        return {
+          research: r.research,
+          reason: clean(`${label}[${j}].reason`, r.reason, 512),
+        };
+      if (sanitizeText(r.path, secrets) !== r.path)
+        refuse(`${label}[${j}].path names protected text`);
+      if (r.section) noControl(`${label}[${j}].section`, r.section);
+      return {
+        path: r.path,
+        ...(r.section
+          ? { section: clean(`${label}[${j}].section`, r.section, 256) }
+          : {}),
+        reason: clean(`${label}[${j}].reason`, r.reason, 512),
+      };
+    });
+  try {
+    const raw = extractJsonObject(reply, ROUTE_PLAN_BYTES);
+    const has = (key: string) => Object.hasOwn((raw ?? {}) as object, key);
+    const actionRaw = has("action")
+      ? oneOf((raw as Record<string, unknown>).action, ["plan", "blocked"])
+      : "plan";
+    if (actionRaw === "blocked") {
+      const o = closed(raw, ["action", "reason"]);
+      return {
+        action: "blocked",
+        tasks: [],
+        reviewReads: [],
+        documents: [],
+        reason: clean("reason", o.reason, 4096),
+      };
+    }
+    const o = closed(raw, [
+      "tasks",
+      ...["action", "reviewReads", "documents"].filter(has),
+    ]);
+    const tasks = list(o.tasks, WORKFLOW_LIMITS.tasks, (entry) => entry).map(
+      (entry, index) => {
+        const prefix = `tasks[${index}]`;
+        const hasField = (key: string) =>
+          Object.hasOwn((entry ?? {}) as object, key);
+        const t = closed(entry, [
+          "id",
+          "title",
+          "instructions",
+          "writes",
+          ...["after", "reads"].filter(hasField),
+        ]);
+        let id = "";
+        try {
+          id = workflowTaskId(t.id);
+        } catch {
+          refuse(
+            `${prefix}.id must be lowercase letters, digits and hyphens, starting with a letter, at most 48 characters`,
+          );
+        }
+        const writes = list(t.writes, 128, (p) => p).map((p, j) => {
+          let normalized: string;
+          try {
+            normalized = workflowPath(p, true);
+          } catch (error) {
+            refuse(
+              `${prefix}.writes[${j}]: ${error instanceof Error ? error.message : "invalid path"}`,
+            );
+          }
+          if (!workflowBoundary(normalized))
+            refuse(
+              `${prefix}.writes[${j}] (${normalized}) cannot target credentials, keys, .env, .git or paths outside the repository`,
+            );
+          if (normalized === ".cadence" || normalized.startsWith(".cadence/"))
+            refuse(
+              `${prefix}.writes[${j}] (${normalized}) is managed automatically under .cadence/ and must not be listed in task writes`,
+            );
+          if (sanitizeText(normalized, secrets) !== normalized)
+            refuse(`${prefix}.writes[${j}] names protected text`);
+          return normalized;
+        });
+        if (!writes.length)
+          refuse(
+            `${prefix}.writes needs at least one repository-relative path`,
+          );
+        if (new Set(writes).size !== writes.length)
+          refuse(`${prefix}.writes lists a path twice`);
+        const after = hasField("after")
+          ? list(t.after, WORKFLOW_LIMITS.tasks, (dep) => dep).map((dep, j) => {
+              try {
+                return workflowTaskId(dep);
+              } catch {
+                return refuse(
+                  `${prefix}.after[${j}] is not a valid assignment id`,
+                );
+              }
+            })
+          : [];
+        if (new Set(after).size !== after.length)
+          refuse(`${prefix}.after lists an assignment twice`);
+        const reads = hasField("reads")
+          ? sanitizeReadings(
+              decodeWorkflowReadings(t.reads, true, `${prefix}.reads`),
+              `${prefix}.reads`,
+            )
+          : [];
+        return {
+          id,
+          title: clean(`${prefix}.title`, t.title, 256),
+          instructions: clean(`${prefix}.instructions`, t.instructions, 8192),
+          writes,
+          after,
+          reads,
+        };
+      },
+    );
+    if (!tasks.length) refuse("tasks needs at least one assignment");
+    const ids = tasks.map((t) => t.id);
+    for (const [i, t] of tasks.entries()) {
+      if (ids.indexOf(t.id) !== i)
+        refuse(
+          `tasks[${i}].id (${t.id}) is already used by tasks[${ids.indexOf(t.id)}]`,
+        );
+      const unknown = t.after.find((dep) => !ids.includes(dep));
+      if (unknown !== undefined)
+        refuse(`tasks[${i}].after names "${unknown}", which is not in tasks`);
+    }
+    try {
+      workflowOrder(tasks);
+    } catch {
+      refuse("tasks after dependencies form a cycle");
+    }
+    const reviewReads = has("reviewReads")
+      ? sanitizeReadings(
+          decodeWorkflowReadings(o.reviewReads, true, "reviewReads"),
+          "reviewReads",
+        )
+      : [];
+    const documents = has("documents")
+      ? list(o.documents, 16, (entry) => entry).map((entry, j) => {
+          let doc: string;
+          try {
+            doc = workflowPath(entry, true);
+          } catch (error) {
+            refuse(
+              `documents[${j}]: ${error instanceof Error ? error.message : "invalid path"}`,
+            );
+          }
+          if (!doc.endsWith(".md"))
+            refuse(`documents[${j}] (${doc}) must be a Markdown file (.md)`);
+          if (doc === ".cadence" || doc.startsWith(".cadence/"))
+            refuse(
+              `documents[${j}] (${doc}) is managed automatically under .cadence/ and must not be listed in documents`,
+            );
+          if (!workflowBoundary(doc) || sanitizeText(doc, secrets) !== doc)
+            refuse(`documents[${j}] (${doc}) is outside the write boundary`);
+          return doc;
+        })
+      : [];
+    if (new Set(documents).size !== documents.length)
+      refuse("documents lists a path twice");
+    const allWrites = [
+      ...new Set([
+        ...tasks.flatMap((t) => t.writes),
+        ...documents,
+        ...(options.agreementDocuments ?? []),
+        ...(options.buildOutputs ?? []),
+      ]),
+    ];
+    const scopeBytes = utf8Bytes(allWrites.join(", "));
+    if (scopeBytes > 16384)
+      refuse(
+        `combined write paths (${scopeBytes} bytes) exceed the 16384-byte limit`,
+      );
+    return {
+      action: "plan",
+      tasks,
+      reviewReads,
+      documents,
+      reason: "",
+    };
+  } catch (error) {
+    if (error instanceof InvalidRoute) throw error;
+    if (error instanceof WorkflowInputError)
+      throw new InvalidRoute(error.message);
+    throw new InvalidRoute(
+      error instanceof Error && error.message
+        ? error.message
+        : "The route plan reply was not the requested JSON object",
+    );
+  }
+}
 
 export class AttemptFailure extends Error {
   constructor(
@@ -249,10 +503,13 @@ export interface RecoveryBounds {
 }
 /** Extract exactly one complete object, allowing diagnostic prose or a fence.
  * Bound the whole reply before extraction; never choose between objects or
- * salvage a nested decision from a malformed/duplicate-key outer object. */
-function recoveryObject(reply: string): unknown {
-  if (Buffer.byteLength(reply) > RECOVERY_BYTES)
-    throw new Error("Recovery reply exceeds its byte bound");
+ * salvage a nested object from a malformed/duplicate-key outer object. */
+export function extractJsonObject(
+  reply: string,
+  maxBytes = RECOVERY_BYTES,
+): unknown {
+  if (Buffer.byteLength(reply) > maxBytes)
+    throw new Error("Structured JSON reply exceeds its byte bound");
   let start = -1,
     depth = 0,
     brackets = 0,
@@ -284,10 +541,11 @@ function recoveryObject(reply: string): unknown {
         brackets = Math.max(0, brackets - 1);
         continue;
       }
-      if (c === "}") throw new Error("Unmatched recovery object delimiter");
+      if (c === "}") throw new Error("Unmatched JSON object delimiter");
       if (c !== "{") continue;
-      if (brackets) throw new Error("Recovery must be an object, not an array");
-      if (found) throw new Error("Multiple recovery objects are ambiguous");
+      if (brackets)
+        throw new Error("Reply must be a JSON object, not an array");
+      if (found) throw new Error("Multiple JSON objects are ambiguous");
       start = i;
       depth = 1;
     } else if (quoted) {
@@ -297,12 +555,15 @@ function recoveryObject(reply: string): unknown {
     } else if (c === '"') quoted = true;
     else if (c === "{") depth++;
     else if (c === "}" && --depth === 0) {
-      value = parseWireJson(reply.slice(start, i + 1), RECOVERY_BYTES);
+      value = parseWireJson(reply.slice(start, i + 1), maxBytes);
       found = true;
     }
   }
-  if (!found || depth !== 0) throw new Error("Incomplete recovery object");
+  if (!found || depth !== 0) throw new Error("Incomplete JSON object");
   return value;
+}
+function recoveryObject(reply: string): unknown {
+  return extractJsonObject(reply, RECOVERY_BYTES);
 }
 export function decodeRecoveryDecision(
   reply: string,

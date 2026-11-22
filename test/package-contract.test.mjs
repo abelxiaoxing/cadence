@@ -185,11 +185,16 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(diagnosis).toContain("beyond the initial scope");
     expect(diagnosis).toContain("combined candidate readonly");
     expect(diagnosis).not.toContain("in-scope remaining assignments");
-    for (const role of ["design-explorer", "diagnosis-worker"]) {
+    for (const role of [
+      "design-explorer",
+      "diagnosis-worker",
+      "route-planner",
+    ]) {
       const body = read(path.join(root, `agents/${role}.md`));
       expect(body).toMatch(/readonly/i);
       expect(body).toMatch(/Do not/i);
-      expect(body).toMatch(/supporting evidence|human review/i);
+      expect(body).toContain("There is no total runtime deadline");
+      expect(body).toMatch(/supporting evidence|human review|JSON object/i);
     }
   });
 });

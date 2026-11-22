@@ -221,6 +221,9 @@ export async function acceptingFixture(
       !toolNames.includes("write") &&
       !JSON.stringify(input.messages).includes(
         "Independently inspect the implemented files",
+      ) &&
+      !JSON.stringify(input.messages).includes(
+        "Plan the execution route for this approved delivery agreement",
       )
     ) {
       if (input.messages.at(-1)?.role === "tool")
@@ -230,7 +233,52 @@ export async function acceptingFixture(
     }
     if (providerMode === "coordinator" || providerMode === "workflow") {
       const prompt = JSON.stringify(input.messages);
-      if (prompt.includes("Independently inspect the implemented files")) {
+      if (
+        prompt.includes(
+          "Plan the execution route for this approved delivery agreement",
+        )
+      ) {
+        const scoped = prompt.includes("Create one scoped file");
+        finish(
+          res,
+          JSON.stringify({
+            tasks: scoped
+              ? [
+                  {
+                    id: "a",
+                    title: "A",
+                    instructions: "Create the declared checkout-relative file.",
+                    writes: ["pkg/a.txt"],
+                    after: [],
+                    reads: [],
+                  },
+                ]
+              : [
+                  {
+                    id: "a",
+                    title: "A",
+                    instructions: "Create a.txt",
+                    writes: ["a.txt"],
+                    after: [],
+                    reads: [],
+                  },
+                  {
+                    id: "b",
+                    title: "B",
+                    instructions: "Create b.txt",
+                    writes: ["b.txt"],
+                    after: [],
+                    reads: [],
+                  },
+                ],
+            reviewReads: [],
+            documents: [],
+          }),
+          false,
+        );
+      } else if (
+        prompt.includes("Independently inspect the implemented files")
+      ) {
         finish(
           res,
           JSON.stringify({

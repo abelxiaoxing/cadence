@@ -38,6 +38,7 @@ import { decodeVersion } from "./contracts/gateway.ts";
 import {
   type RegistryLockDiagnostic,
   ServiceCoordination,
+  waitForRegistry,
 } from "./coordination.ts";
 import {
   doctor,
@@ -406,20 +407,30 @@ export async function startService(
   const env = hostEnvironment(process.env); // validate route before any child/SDK import
   const c = new ServiceCoordination(options.workspace, options.stateHome);
   // Whatever a dead predecessor left behind is reclaimed before observing.
-  const blocked = await healProjectForStart(c, () => ownerResponsive(c));
+  let blocked: string | null = null;
+  try {
+    await waitForRegistry(c, async () => {
+      blocked = await healProjectForStart(c, () => ownerResponsive(c));
+      if (blocked) return;
+      if (c.registryLockDiagnostic())
+        throw new ContractError("registry-locked");
+    });
+  } catch (error) {
+    if (error instanceof ContractError && error.code === "registry-locked") {
+      process.stderr.write(registryGuidance(c.store.root, c.stateHome));
+      return {
+        status: "refused",
+        error: "registry-locked",
+        stage: "service",
+      } satisfies StartupReport;
+    }
+    throw error;
+  }
   if (blocked) {
     process.stderr.write(blocked);
     return {
       status: "refused",
       error: "quarantine",
-      stage: "service",
-    } satisfies StartupReport;
-  }
-  if (c.registryLockDiagnostic()) {
-    process.stderr.write(registryGuidance(c.store.root, c.stateHome));
-    return {
-      status: "refused",
-      error: "registry-locked",
       stage: "service",
     } satisfies StartupReport;
   }
@@ -1123,9 +1134,17 @@ export async function openProjectDirectory(
   const c = new ServiceCoordination(workspace, stateHome);
   // A registry lock left by a dead process is released before deciding
   // whether this is a new selection.
-  await healAccount(new ServiceCoordination(null, stateHome));
-  if (c.registryLockDiagnostic())
-    throw new ProjectOpenRefusal(true, "registry-locked");
+  try {
+    await waitForRegistry(c, async () => {
+      await healAccount(new ServiceCoordination(null, stateHome));
+      if (c.registryLockDiagnostic())
+        throw new ContractError("registry-locked");
+    });
+  } catch (error) {
+    if (error instanceof ContractError && error.code === "registry-locked")
+      throw new ProjectOpenRefusal(true, "registry-locked");
+    throw error;
+  }
   const kept = readHostConfig(c);
   const options: StartOptions = {
     workspace,
@@ -1199,7 +1218,14 @@ async function projectMain(argv: string[], hostUrl: URL): Promise<void> {
   }
   effectiveWorkspace(options.workspace, options.stateHome);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
-  await healAccount(new ServiceCoordination(null, options.stateHome));
+  await waitForRegistry(c, async () => {
+    await healAccount(new ServiceCoordination(null, options.stateHome));
+    if (c.registryLockDiagnostic()?.owner === "live")
+      throw new ContractError("registry-locked");
+  }).catch((error) => {
+    if (!(error instanceof ContractError && error.code === "registry-locked"))
+      throw error;
+  });
   const kept = c.registryLockDiagnostic() ? undefined : readHostConfig(c);
   // Port 0 is requested only for a genuinely new selection. An existing owner
   // keeps its exact persisted port/cwd/config; an inconclusive read is not new.

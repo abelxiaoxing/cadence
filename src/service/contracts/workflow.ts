@@ -20,7 +20,7 @@ import {
   type ExecutionContext,
 } from "./models.ts";
 
-export const CURRENT_WORKFLOW_PLAN_VERSION = 4 as const;
+export const CURRENT_WORKFLOW_PLAN_VERSION = 5 as const;
 export const WORKFLOW_LIMITS = {
   tasks: 16,
   /** Assignments one run may list in all, counting those its revisions added
@@ -98,23 +98,32 @@ export interface WorkflowPolicy {
   installs: boolean;
 }
 export interface WorkflowPlan {
-  /** Version 4 admits behavioral-convergence single-commit delivery with owner-synced
-   * builds, tiered/target-explicit checks, managed dependency links and private process
-   * reports. Versions 3, 2 and unversioned plans remain readable and readonly. */
-  version?: 2 | 3 | 4;
+  /** Version 5 separates the human-approved Stage 1 delivery agreement from the
+   * service-owned Stage 2 route planning (`route-planner` in the isolated worktree)
+   * and owner proposal-time discovery of managed `node_modules` links. Versions 4,
+   * 3, 2 and unversioned plans remain readable and readonly. */
+  version?: 2 | 3 | 4 | 5;
   /** Version 2 only: approved documentation write paths. */
   knowledge?: string[];
   /** Version 3+: what the coordinator decided on the user's behalf; approval
    * confirms these with the goal, decisions and acceptance. */
   assumptions?: string;
+  /** Version 5: recorded `cadence_research` investigation UUIDs to pass directly
+   * to Stage 2 route planning. */
+  investigations?: string[];
+  /** Version 5: advisory repository areas/modules for Stage 2 route planning
+   * (never a dirty-file fence at proposal time). */
+  areas?: string[];
   /** Version 3+: existing project documents this delivery may update. */
   documents?: string[];
-  /** Version 3+: what the independent review reads first. */
+  /** Version 3-4: what the independent review reads first (planned in Stage 2 for V5). */
   reviewReads?: WorkflowReading[];
   policy?: WorkflowPolicy;
-  /** Version 4: deterministic owner-synced build commands with declared output paths. */
+  /** Version 4+: deterministic owner-synced build commands with declared output paths. */
   build?: WorkflowBuild[];
-  /** Version 4: owner-managed dependency symlinks from the original checkout. */
+  /** Version 4+: owner-managed dependency symlinks from the original checkout.
+   * In V5 input, omitted (`undefined`) enables owner proposal-time discovery of
+   * ignored `node_modules` links; explicit `[]` disables automatic links. */
   links?: WorkflowSetupLink[];
   goal: string;
   design: string;
@@ -122,6 +131,7 @@ export interface WorkflowPlan {
   acceptance: string;
   /** Retained v1 data only, never used to synthesize new project knowledge. */
   projectContext?: string;
+  /** Empty in V5 Stage 1 agreements (populated in Stage 2 route planning). */
   tasks: WorkflowTask[];
   checks: WorkflowCheck[];
   setup: WorkflowSetup[];
@@ -244,6 +254,7 @@ export interface WorkflowStep {
   childRunId?: string;
   kind:
     | "research"
+    | "planning"
     | "implementation"
     | "diagnosis"
     | "knowledge"
@@ -324,6 +335,7 @@ export interface WorkflowRun {
     | "unknown";
   phase:
     | "research"
+    | "planning"
     | "implementing"
     | "verifying"
     | "reviewing"
@@ -670,79 +682,116 @@ export function decodeWorkflowPlan(
     );
   }
   const version = modern ? (v as { version?: unknown }).version : undefined;
-  if (modern && version !== 2 && version !== 3 && version !== 4)
+  if (
+    modern &&
+    version !== 2 &&
+    version !== 3 &&
+    version !== 4 &&
+    version !== 5
+  )
     throw new Error("Unsupported delivery agreement version");
-  const v3OrNewer = version === 3 || version === 4;
-  const v4 = version === 4;
-  if (strict && !v4)
+  const v3OrNewer = version === 3 || version === 4 || version === 5;
+  const v4OrNewer = version === 4 || version === 5;
+  const v5 = version === 5;
+  if (strict && !v5)
     throw new Error(
       "Publish a new delivery agreement; earlier agreements are readonly",
     );
-  const o = fields("plan", v, [
-    "goal",
-    "design",
-    "decisions",
-    "acceptance",
-    ...(v3OrNewer
-      ? [
-          "version",
-          "assumptions",
-          "documents",
-          "reviewReads",
-          "policy",
-          ...(v4 ? ["build", "links"] : []),
-        ]
-      : modern
-        ? ["version", "knowledge"]
-        : ["projectContext", "repairAttempts"]),
-    "tasks",
-    "checks",
-    "setup",
-    "baselineChecks",
-    "delivery",
-  ]);
+  const o = fields(
+    "plan",
+    v,
+    [
+      "goal",
+      "design",
+      "decisions",
+      "acceptance",
+      ...(v5
+        ? [
+            "version",
+            "assumptions",
+            "investigations",
+            "areas",
+            "documents",
+            "policy",
+            "build",
+          ]
+        : v3OrNewer
+          ? [
+              "version",
+              "assumptions",
+              "documents",
+              "reviewReads",
+              "policy",
+              ...(v4OrNewer ? ["build", "links"] : []),
+              "tasks",
+            ]
+          : modern
+            ? ["version", "knowledge", "tasks"]
+            : ["projectContext", "repairAttempts", "tasks"]),
+      "checks",
+      "setup",
+      "baselineChecks",
+      "delivery",
+    ],
+    v5 ? ["links", "tasks"] : [],
+  );
   const documentation = (value: unknown, name: string) =>
     entries(name, value, 16, (entry, path) =>
       at(path, () => {
         const document = workflowPath(entry, strict);
         if (!document.endsWith(".md"))
           throw new Error("must be a Markdown file (.md)");
+        if (v5 && (document === ".cadence" || document.startsWith(".cadence/")))
+          throw new Error(
+            "is managed automatically under .cadence/ and must not be listed in documents",
+          );
         return document;
       }),
     );
-  const tasks = entries(
-    "tasks",
-    o.tasks,
-    WORKFLOW_LIMITS.tasks,
-    (value, path) => {
-      const t = fields(path, value, [
-        "id",
-        "title",
-        "instructions",
-        "writes",
-        "after",
-        ...(v3OrNewer ? ["reads"] : []),
-      ]);
-      return {
-        id: at(`${path}.id`, () => taskId(t.id, strict)),
-        title: words(`${path}.title`, t.title, 256, true),
-        instructions: words(`${path}.instructions`, t.instructions, 8192, true),
-        writes: entries(`${path}.writes`, t.writes, 128, (p, entry) =>
-          at(entry, () => workflowPath(p, strict)),
-        ),
-        after: entries(
-          `${path}.after`,
-          t.after,
-          WORKFLOW_LIMITS.tasks,
-          (id, entry) => at(entry, () => taskId(id, strict)),
-        ),
-        ...(v3OrNewer
-          ? { reads: decodeWorkflowReadings(t.reads, strict, `${path}.reads`) }
-          : {}),
-      };
-    },
-  );
-  if (!tasks.length) issue("tasks", "needs at least one assignment");
+  const tasks = v5
+    ? o.tasks === undefined
+      ? []
+      : (() => {
+          const list = entries("tasks", o.tasks, 0, () => {
+            throw new Error("must not be specified in v5 agreements");
+          });
+          return list as WorkflowTask[];
+        })()
+    : entries("tasks", o.tasks, WORKFLOW_LIMITS.tasks, (value, path) => {
+        const t = fields(path, value, [
+          "id",
+          "title",
+          "instructions",
+          "writes",
+          "after",
+          ...(v3OrNewer ? ["reads"] : []),
+        ]);
+        return {
+          id: at(`${path}.id`, () => taskId(t.id, strict)),
+          title: words(`${path}.title`, t.title, 256, true),
+          instructions: words(
+            `${path}.instructions`,
+            t.instructions,
+            8192,
+            true,
+          ),
+          writes: entries(`${path}.writes`, t.writes, 128, (p, entry) =>
+            at(entry, () => workflowPath(p, strict)),
+          ),
+          after: entries(
+            `${path}.after`,
+            t.after,
+            WORKFLOW_LIMITS.tasks,
+            (id, entry) => at(entry, () => taskId(id, strict)),
+          ),
+          ...(v3OrNewer
+            ? {
+                reads: decodeWorkflowReadings(t.reads, strict, `${path}.reads`),
+              }
+            : {}),
+        };
+      });
+  if (!v5 && !tasks.length) issue("tasks", "needs at least one assignment");
   const ids = tasks.map((t) => t.id);
   for (const [i, t] of tasks.entries()) {
     const path = `tasks[${i}]`;
@@ -764,7 +813,7 @@ export function decodeWorkflowPlan(
         `names ${quoted(unknown)}, which is not the id of an assignment in tasks`,
       );
   }
-  at("tasks", () => workflowOrder(tasks));
+  if (tasks.length) at("tasks", () => workflowOrder(tasks));
   // Retained parallel plans keep their original validation. New delivery uses
   // a stable sequential candidate, so adjacent assignments may share files.
   for (const a of modern ? [] : tasks)
@@ -792,19 +841,25 @@ export function decodeWorkflowPlan(
     entries(name, value, maximum, (entry, path) =>
       decodeWorkflowCheck(entry, path, { v4Check }),
     );
-  const checks = commands(o.checks, "checks", WORKFLOW_LIMITS.checks, v4);
+  const checks = commands(
+    o.checks,
+    "checks",
+    WORKFLOW_LIMITS.checks,
+    v4OrNewer,
+  );
   if (!checks.length)
     issue("checks", "needs at least one real verification command");
-  const build = v4
+  const build = v4OrNewer
     ? entries("build", o.build, WORKFLOW_LIMITS.builds, (entry, path) =>
         decodeWorkflowBuild(entry, path, strict),
       )
     : undefined;
-  const links = v4
-    ? entries("links", o.links, WORKFLOW_LIMITS.links, (entry, path) =>
-        decodeWorkflowSetupLink(entry, path, strict),
-      )
-    : undefined;
+  const links =
+    v4OrNewer && o.links !== undefined
+      ? entries("links", o.links, WORKFLOW_LIMITS.links, (entry, path) =>
+          decodeWorkflowSetupLink(entry, path, strict),
+        )
+      : undefined;
   if (links) {
     const linkPaths = links.map((l) => l.path);
     for (const [i, l] of links.entries()) {
@@ -815,21 +870,50 @@ export function decodeWorkflowPlan(
         );
     }
   }
+  const investigations = v5
+    ? entries(
+        "investigations",
+        o.investigations,
+        WORKFLOW_LIMITS.questions,
+        (entry, path) => {
+          const id = typeof entry === "string" ? investigationId(entry) : null;
+          if (id === null)
+            issue(
+              path,
+              `${typeof entry === "string" ? `${quoted(entry)} ` : ""}is not an investigation; give the "investigation" value of a completed research step`,
+            );
+          return id as string;
+        },
+      )
+    : undefined;
+  if (investigations && new Set(investigations).size !== investigations.length)
+    issue("investigations", "lists an investigation twice");
+  const areas = v5
+    ? entries("areas", o.areas, 32, (entry, path) =>
+        at(path, () => {
+          const p = workflowPath(entry, strict);
+          if (!workflowBoundary(p))
+            throw new Error(
+              "cannot name credentials, keys, .env, .git or paths outside the repository",
+            );
+          return p;
+        }),
+      )
+    : undefined;
+  if (areas && new Set(areas).size !== areas.length)
+    issue("areas", "lists an area twice");
   const result: WorkflowPlan = {
     goal: words("goal", o.goal, 8192, true),
     design: words("design", o.design, 32768, true),
     decisions: words("decisions", o.decisions, 16384),
     acceptance: words("acceptance", o.acceptance, 16384, true),
-    ...(v3OrNewer
+    ...(v5
       ? {
-          version: (v4 ? 4 : 3) as 3 | 4,
+          version: 5 as const,
           assumptions: words("assumptions", o.assumptions, 16384),
+          investigations: investigations ?? [],
+          areas: areas ?? [],
           documents: documentation(o.documents, "documents"),
-          reviewReads: decodeWorkflowReadings(
-            o.reviewReads,
-            strict,
-            "reviewReads",
-          ),
           policy: {
             installs: at("policy.installs", () => {
               try {
@@ -840,19 +924,44 @@ export function decodeWorkflowPlan(
               }
             }),
           },
-          ...(v4 ? { build: build ?? [], links: links ?? [] } : {}),
+          build: build ?? [],
+          ...(links !== undefined ? { links } : {}),
         }
-      : modern
+      : v3OrNewer
         ? {
-            version: 2 as const,
-            knowledge: documentation(o.knowledge, "knowledge"),
-          }
-        : {
-            projectContext: words("projectContext", o.projectContext, 16384),
-            repairAttempts: at("repairAttempts", () =>
-              integer(o.repairAttempts, 0, 2),
+            version: (version === 4 ? 4 : 3) as 3 | 4,
+            assumptions: words("assumptions", o.assumptions, 16384),
+            documents: documentation(o.documents, "documents"),
+            reviewReads: decodeWorkflowReadings(
+              o.reviewReads,
+              strict,
+              "reviewReads",
             ),
-          }),
+            policy: {
+              installs: at("policy.installs", () => {
+                try {
+                  return bool(
+                    fields("policy", o.policy, ["installs"]).installs,
+                  );
+                } catch (error) {
+                  if (error instanceof WorkflowInputError) throw error;
+                  throw new Error("must be true or false");
+                }
+              }),
+            },
+            ...(v4OrNewer ? { build: build ?? [], links: links ?? [] } : {}),
+          }
+        : modern
+          ? {
+              version: 2 as const,
+              knowledge: documentation(o.knowledge, "knowledge"),
+            }
+          : {
+              projectContext: words("projectContext", o.projectContext, 16384),
+              repairAttempts: at("repairAttempts", () =>
+                integer(o.repairAttempts, 0, 2),
+              ),
+            }),
     tasks,
     checks,
     setup: entries("setup", o.setup, 4, (value, path): WorkflowSetup => {
@@ -968,22 +1077,57 @@ export function workflowPlanInput(v: unknown): WorkflowPlan {
     version: CURRENT_WORKFLOW_PLAN_VERSION,
     decisions: "",
     assumptions: "",
+    investigations: [],
+    areas: [],
     documents: [],
-    reviewReads: [],
     policy: {},
     build: [],
-    links: [],
     setup: [],
     baselineChecks: [],
   });
+  // Preserve omitted `links` as undefined so publishProposal can run 3D
+  // auto-discovery, while explicit `links: []` disables auto-discovery.
+  if (Object.hasOwn(v, "tasks")) {
+    const rawTasks = (v as { tasks?: unknown }).tasks;
+    if (
+      rawTasks !== undefined &&
+      rawTasks !== null &&
+      !(Array.isArray(rawTasks) && rawTasks.length === 0)
+    )
+      issue(
+        "tasks",
+        "v5 delivery agreements do not declare tasks; the service plans the execution route automatically after approval",
+      );
+    delete plan.tasks;
+  }
   if (plan.policy && typeof plan.policy === "object")
     plan.policy = completed(plan.policy, { installs: false });
-  if (Array.isArray(plan.tasks))
-    plan.tasks = plan.tasks.map((task: unknown) =>
-      task && typeof task === "object" && !Array.isArray(task)
-        ? completed(task, { after: [], reads: [] })
-        : task,
-    );
+  if (Array.isArray(plan.investigations)) {
+    const seen = new Set<string>();
+    const deduped: unknown[] = [];
+    for (const entry of plan.investigations) {
+      const key =
+        typeof entry === "string" ? (investigationId(entry) ?? entry) : null;
+      if (key !== null) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+      deduped.push(entry);
+    }
+    plan.investigations = deduped;
+  }
+  if (Array.isArray(plan.areas)) {
+    const seen = new Set<string>();
+    const deduped: unknown[] = [];
+    for (const entry of plan.areas) {
+      if (typeof entry === "string") {
+        if (seen.has(entry)) continue;
+        seen.add(entry);
+      }
+      deduped.push(entry);
+    }
+    plan.areas = deduped;
+  }
   if (Array.isArray(plan.checks))
     plan.checks = plan.checks.map((check: unknown) =>
       check && typeof check === "object" && !Array.isArray(check)
@@ -1075,7 +1219,7 @@ export function workflowBoundary(path: string): boolean {
         /\.(?:pem|key|p12|pfx)$/iu.test(name),
     );
 }
-function decodeWorkflowReadings(
+export function decodeWorkflowReadings(
   value: unknown,
   strict: boolean,
   name: string,
@@ -1107,7 +1251,7 @@ function decodeWorkflowReadings(
   });
 }
 const agreementText = (p: WorkflowPlan) =>
-  `# ${p.goal}\n\nInitial route (${p.version === 3 || p.version === 4 ? "the owner may revise it" : "adapt within the approved boundary"}): ${p.design}\n\nExplicit decisions and non-goals: ${p.decisions}${p.assumptions ? `\n\nAssumptions confirmed with the agreement: ${p.assumptions}` : ""}\n\nAcceptance: ${p.acceptance}`;
+  `# ${p.goal}\n\nInitial route (${p.version === 3 || p.version === 4 || p.version === 5 ? "the owner may revise it" : "adapt within the approved boundary"}): ${p.design}\n\nExplicit decisions and non-goals: ${p.decisions}${p.assumptions ? `\n\nAssumptions confirmed with the agreement: ${p.assumptions}` : ""}\n\nAcceptance: ${p.acceptance}`;
 export function workflowContext(p: WorkflowPlan): string {
   return text(agreementText(p), WORKFLOW_LIMITS.context, true);
 }
@@ -1570,6 +1714,7 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
     status: o.status === "queued" ? "queued" : status(o.status),
     phase: oneOf(o.phase, [
       "research",
+      "planning",
       "implementing",
       "verifying",
       "reviewing",
@@ -1614,6 +1759,7 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
         ...(linked ? { childRunId: decodeId(s.childRunId) } : {}),
         kind: oneOf(s.kind, [
           "research",
+          "planning",
           "implementation",
           "diagnosis",
           "knowledge",
@@ -1626,10 +1772,12 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
             ? "rejected"
             : s.kind === "check" && s.status === "not-run"
               ? "not-run"
-              : ["implementation", "knowledge"].includes(s.kind as string) &&
-                  ["partial", "blocked"].includes(s.status as string)
-                ? oneOf(s.status, ["partial", "blocked"])
-                : status(s.status),
+              : s.kind === "planning" && s.status === "blocked"
+                ? "blocked"
+                : ["implementation", "knowledge"].includes(s.kind as string) &&
+                    ["partial", "blocked"].includes(s.status as string)
+                  ? oneOf(s.status, ["partial", "blocked"])
+                  : status(s.status),
         text: text(s.text, 65536),
         exitCode: nullable(s.exitCode, (n) =>
           integer(n, -2147483648, 2147483647),
@@ -1669,6 +1817,8 @@ const readableReading = (r: WorkflowReading) =>
     : `${r.path}${r.section ? ` § ${r.section}` : ""} — ${r.reason}`;
 /** What approval of each agreement version lets the owner do on its own. */
 function readableAutomation(p: WorkflowPlan): string {
+  if (p.version === 5)
+    return `After approval the service works to completion without further confirmation. First, a readonly route planner inspects the isolated candidate and splits this agreement into parallelizable assignments, write scopes and review reads (validated against repository boundaries, Git-ignore rules, managed links and target cleanliness before any edit). It then advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. It stops for cancellation, uncertain settlement, external target drift, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 4)
     return `After approval the service works to completion without further confirmation. It advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. It stops for cancellation, uncertain settlement, external target drift, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 3)
@@ -1679,31 +1829,34 @@ function readableAutomation(p: WorkflowPlan): string {
 }
 export function readableWorkflowPlan(p: WorkflowPlan): string {
   const documents = workflowDocuments(p);
-  const v4 = p.version === 4;
+  const v5 = p.version === 5;
+  const v4OrNewer = p.version === 4 || v5;
+  const routeSection =
+    v5 && !p.tasks.length
+      ? `${p.areas?.length ? `\n\n## Focus areas (advisory for route planning)\n${p.areas.join("\n")}` : ""}${p.investigations?.length ? `\n\n## Investigations passed to route planning\n${p.investigations.join("\n")}` : ""}\n\n## Execution route\nPlanned automatically inside the isolated candidate after approval (readonly route-planner), validated against write boundaries, Git-ignore rules, managed links and target cleanliness before editing.`
+      : `\n\n## Tasks\n${workflowOrder(p.tasks)
+          .map(
+            (t) =>
+              `### ${t.id}: ${t.title}\nDepends on: ${t.after.join(", ") || "none"}\nWrites: ${t.writes.join(", ")}${t.reads?.length ? `\nReads first: ${t.reads.map(readableReading).join("; ")}` : ""}\n${t.instructions}`,
+          )
+          .join("\n\n")}`;
   return `# ${p.goal}\n\n## Initial route (the service may revise it)\n${p.design}\n\n## Decisions\n${p.decisions}\n\n## Acceptance\n${p.acceptance}${
-    p.version === 3 || v4
+    p.version === 3 || v4OrNewer
       ? `\n\n## Assumptions (confirmed by approval)\n${p.assumptions || "None beyond the decisions above."}`
       : ""
-  }\n\n## Tasks\n${workflowOrder(p.tasks)
-    .map(
-      (t) =>
-        `### ${t.id}: ${t.title}\nDepends on: ${t.after.join(", ") || "none"}\nWrites: ${t.writes.join(", ")}${t.reads?.length ? `\nReads first: ${t.reads.map(readableReading).join("; ")}` : ""}\n${t.instructions}`,
-    )
-    .join(
-      "\n\n",
-    )}\n\n## Setup (explicitly authorized commands)\nExecution order: target once before worktree creation, candidate once, then worktree in the candidate and every detached child; listed order within each stage. Each command is a separate process; exports do not persist.\n${p.setup.map((c) => `[${c.placement ?? "worktree"}] ${readableCheck(c)}`).join("\n") || "None; no dependency installation or copying."}${
-    v4 && p.links?.length
+  }${routeSection}\n\n## Setup (explicitly authorized commands)\nExecution order: target once before worktree creation, candidate once, then worktree in the candidate and every detached child; listed order within each stage. Each command is a separate process; exports do not persist.\n${p.setup.map((c) => `[${c.placement ?? "worktree"}] ${readableCheck(c)}`).join("\n") || "None; no dependency installation or copying."}${
+    v4OrNewer && p.links?.length
       ? `\n\n## Managed dependency links (owner-created, identity-verified unlink on cleanup)\n${p.links.map(readableLink).join("\n")}`
       : ""
   }${
-    v4 && p.build?.length
+    v4OrNewer && p.build?.length
       ? `\n\n## Build (owner-synced derived outputs)\n${p.build.map(readableBuild).join("\n")}`
       : ""
-  }\n\n## Baseline verification\n${p.baselineChecks.map((c) => readableCheck(c)).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => readableCheck(c, v4)).join("\n")}${
+  }\n\n## Baseline verification\n${p.baselineChecks.map((c) => readableCheck(c)).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => readableCheck(c, v4OrNewer)).join("\n")}${
     p.reviewReads?.length
       ? `\n\n## Review reads first\n${p.reviewReads.map(readableReading).join("\n")}`
       : ""
-  }\n\n## Automation boundary\n${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? (v4 ? "Authorize one named task branch and detached development checkpoints in a stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, a single clean final delivery commit sealed onto the verified target frontier, and serialized fast-forward delivery of that exact checked and Agent-reviewed OID into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be incorporated before sealing the final candidate. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; unlink only owner-created managed dependency links after identity verification, then remove owned worktrees only when completely free of any remaining residue, including ignored files." : "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and serialized fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be merged into this candidate and checked/reviewed again. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue.") : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. ${v4 ? "Related project knowledge is included; workflow process reports stay in private service records." : "Related project knowledge and workflow Markdown are included."} Worktrees/tools are not a sandbox.\n\n## Project documents\n${
+  }\n\n## Automation boundary\n${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? (v4OrNewer ? "Authorize one named task branch and detached development checkpoints in a stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, a single clean final delivery commit sealed onto the verified target frontier, and serialized fast-forward delivery of that exact checked and Agent-reviewed OID into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be incorporated before sealing the final candidate. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; unlink only owner-created managed dependency links after identity verification, then remove owned worktrees only when completely free of any remaining residue, including ignored files." : "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and serialized fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be merged into this candidate and checked/reviewed again. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue.") : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. ${v4OrNewer ? "Related project knowledge is included; workflow process reports stay in private service records." : "Related project knowledge and workflow Markdown are included."} Worktrees/tools are not a sandbox.\n\n## Project documents\n${
     p.version === undefined
       ? p.projectContext
       : documents.join("\n") ||

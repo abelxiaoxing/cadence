@@ -91,6 +91,7 @@
     "src/conversation-identity.ts",
     "src/service/contracts/workflow.ts",
     "src/cadence-instructions.ts",
+    "src/coordinator-context.ts",
     "src/coordinator-tools.mjs",
     "src/workspace.ts",
     "src/data-shapes.ts",

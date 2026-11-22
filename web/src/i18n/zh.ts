@@ -25,8 +25,8 @@ export const zh = {
     "使用任务分支和隔离工作树。检查与自动代理审阅通过后，在本地提交并快进合并至目标分支。不复制源码、配置档案或依赖。",
   "This plan requests local branch delivery but has no bound target.":
     "此计划要求本地分支交付，但尚未绑定目标。",
-  "Approval confirms the goal, decisions, acceptance and assumptions. The service then finishes on its own: it may adjust the route and repository write scope, record reviewed deviations and update project knowledge.":
-    "批准即确认目标、决定、验收条件及假设。随后服务自行完成交付，可调整路线和仓库内写入范围，记录经审阅的偏差并更新项目知识。",
+  "Approval confirms the goal, decisions, acceptance and assumptions. After approval the service plans parallel tasks from the codebase, may adjust the route and repository write scope, records reviewed deviations and updates project knowledge to finish on its own.":
+    "批准即确认目标、决定、验收条件及假设。批准后服务会从代码库自动规划并行任务，并在仓库内按需调整路线与写入范围、记录经审阅的偏差、更新项目知识以自行完成交付。",
   "This retained agreement is read-only. Its declared paths and commands are fixed.":
     "此留存协议只读，列出的路径和命令固定不变。",
   "Revisions may add dependency installs with the project’s package manager.":
@@ -255,8 +255,8 @@ export const zh = {
   "Delivery target": "交付目标",
   "Worktree preparation": "工作区准备",
   "Last confirmed checkpoint": "最近确认的检查点",
-  "Managed dependency links ({count}) are owner-created and unlinked only after identity verification.":
-    "托管依赖链接（{count} 项）由服务创建，仅在身份核验通过后解除链接。",
+  "Managed dependency links ({count}): {paths} — owner-created and unlinked only after identity verification.":
+    "托管依赖链接（{count} 项：{paths}）由服务创建，仅在身份核验通过后解除链接。",
   "Candidate commit": "候选提交",
   "Candidate acceptance": "候选验收",
   "Checks and automatic Agent review passed": "检查和自动 Agent review 已通过",
@@ -459,6 +459,7 @@ export const zh = {
     "Cadence 模式已关闭。已接受的工作继续执行；退出不会取消执行。",
   "Incomplete work is not replayed. A new explicit message may continue from the last complete checkpoint.":
     "不会重放未完成工作。明确发送新消息后，可从上一次完整上下文继续。",
+  planning: "规划中",
   implementing: "实施中",
   verifying: "验证中",
   reviewing: "审查中",

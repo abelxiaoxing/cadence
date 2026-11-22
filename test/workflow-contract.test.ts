@@ -25,15 +25,19 @@ import {
   workflowOrder,
   workflowPlanInput,
 } from "../src/service/contracts/workflow.ts";
+import {
+  decodeRoutePlan,
+  InvalidRoute,
+} from "../src/service/workflow-controller.ts";
 
-import { plan } from "./helpers/workflow-plan.ts";
+import { plan, v4Plan } from "./helpers/workflow-plan.ts";
 
 /** A plan as a model may send it: any field present, absent or of any type. */
 type Draft = Record<string, unknown>;
 
-it("initial plans are finite DAGs and checks are mandatory; route revisions belong to the owner", () => {
+it("retained task plans remain finite DAGs and checks are mandatory; route revisions belong to the owner", () => {
   expect(
-    workflowOrder(decodeWorkflowPlan(plan()).tasks).map((t) => t.id),
+    workflowOrder(decodeWorkflowPlan(v4Plan()).tasks).map((t) => t.id),
   ).toEqual(["a", "b"]);
   for (const mutate of [
     (p: WorkflowPlan) => {
@@ -56,18 +60,19 @@ it("initial plans are finite DAGs and checks are mandatory; route revisions belo
       p.repairAttempts = 3;
     },
   ]) {
-    const p = plan();
+    const p = v4Plan();
     mutate(p);
     expect(() => decodeWorkflowPlan(p)).toThrow();
   }
-  const p = plan();
+  const p = v4Plan();
   p.tasks[1].after = ["a"];
   p.tasks[1].writes = ["a.txt"];
   expect(
     workflowAncestors(decodeWorkflowPlan(p).tasks, "b").map((t) => t.id),
   ).toEqual(["a"]);
 });
-it("new plans refuse invisible path characters and over-long task IDs; retained 2.0.21 shapes still read", () => {
+
+it("new plans refuse invisible path characters; retained 2.0.21 task shapes still read", () => {
   const strict = { strict: true };
   for (const path of [
     "src/\u202eevil.ts",
@@ -76,13 +81,18 @@ it("new plans refuse invisible path characters and over-long task IDs; retained 
     "src/\ufeffa.ts",
     "src/a\u2028b.ts",
   ]) {
-    const p = plan();
-    p.tasks[0].writes = [path];
-    expect(() => decodeWorkflowPlan(p, strict), JSON.stringify(path)).toThrow();
+    const v5 = plan();
+    v5.areas = [path];
+    expect(
+      () => decodeWorkflowPlan(v5, strict),
+      JSON.stringify(path),
+    ).toThrow();
+    const legacy = v4Plan();
+    legacy.tasks[0].writes = [path];
     // Read decoding keeps accepting what 2.0.21 accepted.
-    expect(decodeWorkflowPlan(p).tasks[0].writes).toEqual([path]);
+    expect(decodeWorkflowPlan(legacy).tasks[0].writes).toEqual([path]);
   }
-  const long = plan();
+  const long = v4Plan();
   long.tasks[0].id = `a${"b".repeat(48)}`;
   expect(() => decodeWorkflowPlan(long, strict)).toThrow();
   expect(decodeWorkflowPlan(long).tasks[0].id).toHaveLength(49);
@@ -103,15 +113,14 @@ it("new plans refuse invisible path characters and over-long task IDs; retained 
   expect(decodeWorkflowProposal(retained).plan.tasks[0].id).toHaveLength(49);
   long.tasks[0].id = `a${"b".repeat(64)}`;
   expect(() => decodeWorkflowPlan(long)).toThrow();
-  long.tasks[0].id = `a${"b".repeat(47)}`;
-  expect(decodeWorkflowPlan(long, strict).tasks[0].id).toHaveLength(48);
-  const nestedScope = plan();
+  const nestedScope = v4Plan();
   nestedScope.tasks[0].writes = ["src"];
   nestedScope.tasks[1].writes = ["src/b.txt"];
   expect(decodeWorkflowPlan(nestedScope).tasks).toHaveLength(2);
   expect(workflowCovers(["src"], "src/b.txt")).toBe(true);
   expect(workflowCovers(["src"], "srcx/b.txt")).toBe(false);
 });
+
 it("unit clipping never leaves a lone surrogate", () => {
   const value = `${"x".repeat(79)}\u{1F9EA} tail`;
   expect(clipUnits(value, 80)).toBe("x".repeat(79));
@@ -123,11 +132,11 @@ it("unit clipping never leaves a lone surrogate", () => {
       epoch: "00000000-0000-4000-8000-000000000001",
       goal: clipUnits(`${"g".repeat(319)}\u{1F600}`, 320),
       status: "running",
-      phase: "implementing",
+      phase: "planning",
       steps: [
         {
           id: `${clipUnits(value, 80)}-00000000-0000-4000-8000-000000000002`,
-          kind: "git",
+          kind: "planning",
           status: "running",
           text: "",
           exitCode: null,
@@ -140,6 +149,7 @@ it("unit clipping never leaves a lone surrogate", () => {
     }),
   ).not.toThrow();
 });
+
 it("rejected is a review verdict only; historical failures stay unchanged", () => {
   const run = {
     id: randomUUID(),
@@ -173,6 +183,7 @@ it("rejected is a review verdict only; historical failures stay unchanged", () =
 it("automatic execution cannot manufacture human-reviewed state", () => {
   expect(() => decodeWorkflowRun({ humanReviewed: true })).toThrow();
 });
+
 it("global preferences persist only exact model choice and never silently replace corrupt files", () => {
   const root = mkdtempSync(join(tmpdir(), "cadence-preferences-")),
     p = new CadencePreferences(root);
@@ -193,9 +204,10 @@ it("global preferences persist only exact model choice and never silently replac
   expect(readFileSync(p.path, "utf8")).toBe('{"schema":"unknown"}');
 });
 
-it("retained agreements remain readable but only a current one authorizes delivery", () => {
+it("retained agreements (v1-v4) remain readable but only a current v5 agreement authorizes delivery", () => {
   const current = plan();
   expect(decodeWorkflowPlan(current, { strict: true })).toEqual(current);
+  const v4 = v4Plan();
   const {
     version: _version,
     assumptions: _assumptions,
@@ -206,9 +218,8 @@ it("retained agreements remain readable but only a current one authorizes delive
     links: _links,
     tasks,
     ...body
-  } = current;
+  } = v4;
   const earlierTasks = tasks.map(({ reads: _reads, ...task }) => task);
-  // The original fixed pipeline, v2 fixed-scope adaptive, and v3 self-revising plans.
   const fixed = {
     ...body,
     tasks: earlierTasks,
@@ -230,7 +241,7 @@ it("retained agreements remain readable but only a current one authorizes delive
     reviewReads: [],
     policy: { installs: false },
   };
-  for (const retained of [fixed, adaptive, v3]) {
+  for (const retained of [fixed, adaptive, v3, v4]) {
     expect(decodeWorkflowPlan(retained)).toEqual(retained);
     expect(() => decodeWorkflowPlan(retained, { strict: true })).toThrow(
       "readonly",
@@ -240,35 +251,42 @@ it("retained agreements remain readable but only a current one authorizes delive
   for (const mixed of [
     { ...current, repairAttempts: 2 },
     { ...current, knowledge: [] },
+    { ...current, reviewReads: [] },
     { ...adaptive, assumptions: "" },
     { ...v3, build: [] },
-    { ...current, version: 5 },
+    { ...current, version: 6 },
   ])
     expect(() => decodeWorkflowPlan(mixed)).toThrow();
-  for (const path of ["../secret.md", ".env", "notes.txt"])
+  for (const path of [
+    "../secret.md",
+    ".env",
+    "notes.txt",
+    ".cadence/project.md",
+    ".cadence/knowledge/topic.md",
+  ])
     expect(() =>
       decodeWorkflowPlan({ ...current, documents: [path] }, { strict: true }),
     ).toThrow();
 });
-it("a current agreement states assumptions, an installation policy and what each worker reads first", () => {
+
+it("a current v5 agreement states assumptions, installation policy, investigations and advisory areas", () => {
   const p = plan();
   p.assumptions = "Keep the public CLI flags unchanged.";
   p.policy = { installs: true };
-  p.reviewReads = [
-    { path: "engineering/limits.md", reason: "Bounds touched by the change" },
-  ];
-  p.tasks[0].reads = [
-    { path: "AGENTS.md", section: "Development", reason: "House rules" },
-    { research: "0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10", reason: "Prior map" },
-  ];
+  p.investigations = ["0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10"];
+  p.areas = ["src/service", "test/workflow-contract.test.ts"];
+  p.documents = ["engineering/limits.md"];
   const decoded = decodeWorkflowPlan(p, { strict: true });
   expect(decoded).toEqual(p);
   const readable = readableWorkflowPlan(decoded);
   expect(readable).toContain("## Assumptions (confirmed by approval)");
   expect(readable).toContain("Keep the public CLI flags unchanged.");
-  expect(readable).toContain("AGENTS.md § Development — House rules");
+  expect(readable).toContain("## Focus areas (advisory for route planning)");
+  expect(readable).toContain("src/service");
+  expect(readable).toContain("## Investigations passed to route planning");
+  expect(readable).toContain("0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10");
   expect(readable).toContain(
-    "works to completion without further confirmation",
+    "After approval the service works to completion without further confirmation. First, a readonly route planner inspects",
   );
   expect(readable).toContain("recorded deviation");
   expect(readable).toContain(
@@ -278,13 +296,10 @@ it("a current agreement states assumptions, an installation policy and what each
     { ...p, policy: {} },
     { ...p, policy: { installs: "yes" } },
     { ...p, assumptions: undefined },
-    { ...p, reviewReads: [{ path: "../x.md", reason: "r" }] },
-    { ...p, reviewReads: [{ path: "a.md" }] },
-    { ...p, reviewReads: [{ research: "not-an-id", reason: "r" }] },
-    {
-      ...p,
-      tasks: [{ ...p.tasks[0], reads: undefined }, p.tasks[1]],
-    },
+    { ...p, investigations: ["not-an-id"] },
+    { ...p, areas: ["../outside"] },
+    { ...p, areas: [".env"] },
+    { ...p, documents: [".cadence/project.md"] },
   ])
     expect(() => decodeWorkflowPlan(invalid, { strict: true })).toThrow();
 });
@@ -310,6 +325,7 @@ it("new setup/check commands default to no timeout without rewriting approved ex
     expect(() => decodeWorkflowPlan(p)).toThrow();
   }
 });
+
 it("a research run carries as many independent questions as the plan needs, within its wire bound", () => {
   const request = (count: number) => ({
     action: "research",
@@ -331,13 +347,18 @@ it("a research run carries as many independent questions as the plan needs, with
   ).toThrow();
   expect(() => decodeWorkflowRequest(request(0))).toThrow();
 });
+
 it("the tool schemas state no count, so only the service's named refusal turns a call down", () => {
-  // The reported failure: Pi refused four questions against a schema bound of
-  // two before the service saw the call. The schema now has no such bound.
   const bounds = JSON.stringify([RESEARCH_PARAMETERS, PLAN_PARAMETERS]).match(
     /"(?:maxItems|minItems|maxLength|minLength|maximum|minimum)"/gu,
   );
   expect(bounds).toBeNull();
+  const planProps = (PLAN_PARAMETERS as { properties: Record<string, unknown> })
+    .properties;
+  expect(planProps).not.toHaveProperty("tasks");
+  expect(planProps).not.toHaveProperty("reviewReads");
+  expect(planProps).toHaveProperty("investigations");
+  expect(planProps).toHaveProperty("areas");
   expect(
     researchInput({
       goal: "Map the project",
@@ -363,11 +384,23 @@ it("the tool schemas state no count, so only the service's named refusal turns a
     }),
   ).toThrow("roots: has 9 directories; at most 8");
 });
-it("a plan input is completed, and each refusal names its field and what is accepted there", () => {
+
+it("a v5 plan input preserves omitted vs empty links, completes defaults and names every refusal field", () => {
   const p = plan();
-  const { version: _version, setup: _setup, ...partial } = p;
-  expect(workflowPlanInput(partial)).toEqual(p);
-  expect(workflowPlanInput({ ...partial, policy: null })).toEqual(p);
+  const {
+    version: _version,
+    setup: _setup,
+    links: _links,
+    tasks: _tasks,
+    ...partial
+  } = p;
+  const completed = workflowPlanInput(partial);
+  expect(completed.links).toBeUndefined();
+  expect({ ...completed, links: [] }).toEqual(p);
+  expect(workflowPlanInput({ ...partial, links: [] }).links).toEqual([]);
+  expect(workflowPlanInput({ ...partial, policy: null }).policy).toEqual({
+    installs: false,
+  });
   expect(investigationId("0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10")).toBe(
     "0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10",
   );
@@ -375,75 +408,29 @@ it("a plan input is completed, and each refusal names its field and what is acce
     investigationId("research-12-0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10"),
   ).toBe("0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10");
   expect(investigationId("research-2")).toBeNull();
+  // Deduplicates investigations and areas automatically.
+  const id = "0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10";
+  const deduped = workflowPlanInput({
+    ...partial,
+    investigations: [id, `research-1-${id}`],
+    areas: ["src/a", "src/a"],
+  });
+  expect(deduped.investigations).toEqual([id]);
+  expect(deduped.areas).toEqual(["src/a"]);
   for (const [mutate, said] of [
     [
       (q: Draft) => {
-        q.version = 2;
+        q.version = 4;
       },
       "earlier agreements are readonly",
     ],
     [
       (q: Draft) => {
-        delete q.tasks;
-      },
-      "plan: is missing tasks",
-    ],
-    [
-      (q: Draft) => {
-        q.tasks = [];
-      },
-      "tasks: needs at least one assignment",
-    ],
-    [
-      (q: Draft) => {
-        q.tasks = Array(17).fill(p.tasks[0]);
-      },
-      "tasks: has 17 entries; at most 16",
-    ],
-    [
-      (q: Draft) => {
-        q.tasks = [p.tasks[0], { ...p.tasks[1], id: "a" }];
-      },
-      'tasks[1].id: "a" is already the id of tasks[0]',
-    ],
-    [
-      (q: Draft) => {
-        q.tasks = [{ ...p.tasks[0], after: ["z"] }];
-      },
-      'tasks[0].after: names "z", which is not the id of an assignment in tasks',
-    ],
-    [
-      (q: Draft) => {
         q.tasks = [
-          { ...p.tasks[0], after: ["b"] },
-          { ...p.tasks[1], after: ["a"] },
+          { id: "a", title: "A", instructions: "Do A", writes: ["a.txt"] },
         ];
       },
-      "tasks: the after lists name a missing assignment or form a cycle",
-    ],
-    [
-      (q: Draft) => {
-        q.tasks = [{ ...p.tasks[0], writes: [] }];
-      },
-      "tasks[0].writes: needs at least one path",
-    ],
-    [
-      (q: Draft) => {
-        q.tasks = [{ ...p.tasks[0], writes: ["/etc/x"] }];
-      },
-      "tasks[0].writes[0]: is not a plain path inside the repository",
-    ],
-    [
-      (q: Draft) => {
-        q.tasks = [{ ...p.tasks[0], id: "Task One" }];
-      },
-      "tasks[0].id: is not an assignment id",
-    ],
-    [
-      (q: Draft) => {
-        q.tasks = [{ ...p.tasks[0], title: "题".repeat(86) }];
-      },
-      "tasks[0].title: is 258 bytes; at most 256",
+      "tasks: v5 delivery agreements do not declare tasks",
     ],
     [
       (q: Draft) => {
@@ -471,6 +458,12 @@ it("a plan input is completed, and each refusal names its field and what is acce
     ],
     [
       (q: Draft) => {
+        q.documents = [".cadence/project.md"];
+      },
+      "documents[0]: is managed automatically under .cadence/ and must not be listed in documents",
+    ],
+    [
+      (q: Draft) => {
         q.delivery = "push";
       },
       "delivery: is local-merge or working-copy",
@@ -483,15 +476,21 @@ it("a plan input is completed, and each refusal names its field and what is acce
     ],
     [
       (q: Draft) => {
-        q.reviewReads = [{ path: "a.md" }];
+        q.investigations = ["research-2"];
       },
-      "reviewReads[0]: is missing reason",
+      'investigations[0]: "research-2" is not an investigation',
     ],
     [
       (q: Draft) => {
-        q.reviewReads = [{ path: "a.md", reason: "因".repeat(342) }];
+        q.areas = ["../outside"];
       },
-      "reviewReads[0].reason: is 1026 bytes; at most 1024",
+      "areas[0]: is not a plain path inside the repository",
+    ],
+    [
+      (q: Draft) => {
+        q.areas = [".env"];
+      },
+      "areas[0]: is not a plain path inside the repository",
     ],
     [
       (q: Draft) => {
@@ -536,7 +535,8 @@ it("setup placement is explicit in new approvals; retained unplaced setup is nev
     }),
   ).toThrow("setup[0].placement");
 });
-it("partial and blocked are assignment reports, not check/review approval or run completion", () => {
+
+it("partial and blocked are assignment/planning reports, not check/review approval or run completion", () => {
   const run = {
     id: randomUUID(),
     epoch: randomUUID(),
@@ -566,7 +566,12 @@ it("partial and blocked are assignment reports, not check/review approval or run
         decodeWorkflowRun({ ...run, steps: [{ ...run.steps[0], kind }] }),
       ).toThrow();
   }
-  // not-run is valid for check steps only (e.g. fail-fast trailing checks or target-skipped checks).
+  expect(
+    decodeWorkflowRun({
+      ...run,
+      steps: [{ ...run.steps[0], kind: "planning", status: "blocked" }],
+    }).steps[0].status,
+  ).toBe("blocked");
   expect(
     decodeWorkflowRun({
       ...run,
@@ -583,7 +588,7 @@ it("partial and blocked are assignment reports, not check/review approval or run
   ).toThrow();
 });
 
-it("v4 plans express build outputs, check tier/target and managed links without extra forms", () => {
+it("v5 plans express build outputs, check tier/target and managed links without extra forms", () => {
   const p = workflowPlanInput({
     ...plan(),
     build: [
@@ -612,7 +617,7 @@ it("v4 plans express build outputs, check tier/target and managed links without 
       },
     ],
   });
-  expect(p.version).toBe(4);
+  expect(p.version).toBe(5);
   expect(p.build?.[0].outputs).toEqual([
     "web/dist",
     "provenance/webui-reuse.json",
@@ -637,4 +642,130 @@ it("v4 plans express build outputs, check tier/target and managed links without 
     { ...p, checks: [{ name: "c", command: "run", target: "always" }] },
   ])
     expect(() => workflowPlanInput(invalid)).toThrow(WorkflowInputError);
+});
+
+it("decodeRoutePlan validates Stage 2 DAGs, blocked replies and rejects unsafe or cyclic routes", () => {
+  const investigation = randomUUID();
+  const valid = decodeRoutePlan(
+    `\`\`\`json\n${JSON.stringify({
+      tasks: [
+        {
+          id: "core",
+          title: "Shared contract",
+          instructions: "Update src/core.ts",
+          writes: ["src/core.ts"],
+          after: [],
+          reads: [
+            { path: "AGENTS.md", section: "Development", reason: "Rules" },
+            { research: investigation, reason: "Prior evidence" },
+          ],
+        },
+        {
+          id: "tests",
+          title: "Unit tests",
+          instructions: "Add coverage",
+          writes: ["test/core.test.ts"],
+          after: ["core"],
+        },
+      ],
+      reviewReads: [
+        { path: "engineering/architecture.md", reason: "Module boundary" },
+      ],
+      documents: ["engineering/architecture.md"],
+    })}\n\`\`\``,
+  );
+  expect(valid).toMatchObject({
+    action: "plan",
+    documents: ["engineering/architecture.md"],
+  });
+  expect(valid.tasks.map((t) => t.id)).toEqual(["core", "tests"]);
+  expect(valid.tasks[1].reads).toEqual([]);
+
+  const blocked = decodeRoutePlan(
+    JSON.stringify({
+      action: "blocked",
+      reason: "Agreement contradicts existing immutable public API.",
+    }),
+  );
+  expect(blocked).toMatchObject({
+    action: "blocked",
+    tasks: [],
+    reason: "Agreement contradicts existing immutable public API.",
+  });
+
+  for (const [reply, match] of [
+    ["not json at all", /JSON object/i],
+    ['{"tasks":[]}', /at least one assignment/],
+    [
+      JSON.stringify({
+        tasks: [
+          {
+            id: "a",
+            title: "A",
+            instructions: "Do A",
+            writes: ["a.ts"],
+            after: ["b"],
+          },
+          {
+            id: "b",
+            title: "B",
+            instructions: "Do B",
+            writes: ["b.ts"],
+            after: ["a"],
+          },
+        ],
+      }),
+      /cycle/,
+    ],
+    [
+      JSON.stringify({
+        tasks: [
+          {
+            id: "a",
+            title: "A",
+            instructions: "Do A",
+            writes: ["a.ts"],
+            after: ["missing"],
+          },
+        ],
+      }),
+      /not in tasks/,
+    ],
+    [
+      JSON.stringify({
+        tasks: [
+          { id: "a", title: "A", instructions: "Do A", writes: [".env"] },
+        ],
+      }),
+      /\.env/,
+    ],
+    [
+      JSON.stringify({
+        tasks: [
+          { id: "a", title: "A", instructions: "Do A", writes: ["../x.ts"] },
+        ],
+      }),
+      /writes\[0\]/,
+    ],
+    [
+      JSON.stringify({
+        tasks: [
+          { id: "a", title: "A", instructions: "Do A", writes: ["a.ts"] },
+        ],
+        documents: [".cadence/project.md"],
+      }),
+      /\.cadence\//,
+    ],
+    [
+      JSON.stringify({
+        tasks: [
+          { id: "a", title: "A", instructions: "Do A", writes: ["a.ts"] },
+        ],
+      }) + JSON.stringify({ tasks: [] }),
+      /more than one|JSON/i,
+    ],
+  ] as const) {
+    expect(() => decodeRoutePlan(reply), String(match)).toThrow(InvalidRoute);
+    expect(() => decodeRoutePlan(reply), String(match)).toThrow(match);
+  }
 });

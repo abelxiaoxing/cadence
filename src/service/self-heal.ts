@@ -22,6 +22,7 @@ import {
   markedKeys,
   type Registration,
   type ServiceCoordination,
+  waitForRegistry,
 } from "./coordination.ts";
 import type { GatewayStore } from "./gateway-store.ts";
 import {
@@ -662,7 +663,7 @@ export async function healProjectAt(
   )
     actions.add("released-locks");
   if (active(s)) {
-    reclaim(c, p, s, archive);
+    await waitForRegistry(c, () => reclaim(c, p, s, archive));
     actions.add("released-locks");
   }
   // Interrupted atomic replacements never became state.

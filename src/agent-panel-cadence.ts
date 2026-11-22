@@ -47,6 +47,7 @@ const DRAIN_LOOKS = 5;
 const WORKFLOW_ACTIVITY_MS = 10_000;
 const WORKFLOW_KINDS: Partial<Record<WorkflowStep["kind"], string>> = {
   research: "Research",
+  planning: "Planning",
   implementation: "Implementation",
   diagnosis: "Diagnosis",
   knowledge: "Knowledge",

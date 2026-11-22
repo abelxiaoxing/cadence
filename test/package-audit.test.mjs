@@ -81,6 +81,7 @@ function sourceFixture() {
     "design-explorer",
     "implementation-worker",
     "diagnosis-worker",
+    "route-planner",
   ];
   let pins = "agents:\n";
   const entries = [];
@@ -108,7 +109,7 @@ function sourceFixture() {
 }
 it("rejects same-member changed bodies and missing members", () => {
   const f = sourceFixture();
-  expect(auditPackage(f.file, f.root, f.expected).members).toHaveLength(4);
+  expect(auditPackage(f.file, f.root, f.expected).members).toHaveLength(5);
   expect(() => auditPackage(f.file, f.root, f.expected.slice(1))).toThrow(
     "member-drift",
   );
@@ -126,7 +127,7 @@ it("rejects extracted extras and linked roots even when selected bodies match", 
     );
   expect(
     auditPackage(f.file, extracted, f.expected, f.root).members,
-  ).toHaveLength(4);
+  ).toHaveLength(5);
   writeFileSync(path.join(extracted, "extra"), "unreviewed");
   expect(() => auditPackage(f.file, extracted, f.expected, f.root)).toThrow(
     "extracted-extra",

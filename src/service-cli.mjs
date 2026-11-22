@@ -3849,6 +3849,26 @@ class ServiceCoordination {
     }
   }
 }
+async function waitForRegistry(c, action, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 2000;
+  const intervalMs = Math.max(1, options.intervalMs ?? 30);
+  const deadline = performance.now() + timeoutMs;
+  for (;; ) {
+    try {
+      return await action();
+    } catch (error) {
+      if (!(error instanceof ContractError) || error.code !== "registry-locked")
+        throw error;
+      const diag = c.registryLockDiagnostic();
+      if (diag && diag.owner !== "live")
+        throw error;
+      const remaining = deadline - performance.now();
+      if (remaining <= 0)
+        throw error;
+      await new Promise((resolve4) => setTimeout(resolve4, Math.min(intervalMs, remaining)));
+    }
+  }
+}
 
 class OwnerLease {
   coordination;
@@ -6462,7 +6482,7 @@ async function healProjectAt(c, root, options = {}) {
   }))
     actions.add("released-locks");
   if (active(s)) {
-    reclaim(c, p, s, archive);
+    await waitForRegistry(c, () => reclaim(c, p, s, archive));
     actions.add("released-locks");
   }
   for (const path2 of snapshotProject(c, p).temporaries) {
@@ -8156,20 +8176,31 @@ async function startService(options, foreground, hostUrl) {
   const network = networkSnapshot(process.env);
   const env = hostEnvironment(process.env);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
-  const blocked = await healProjectForStart(c, () => ownerResponsive(c));
+  let blocked = null;
+  try {
+    await waitForRegistry(c, async () => {
+      blocked = await healProjectForStart(c, () => ownerResponsive(c));
+      if (blocked)
+        return;
+      if (c.registryLockDiagnostic())
+        throw new ContractError("registry-locked");
+    });
+  } catch (error) {
+    if (error instanceof ContractError && error.code === "registry-locked") {
+      process.stderr.write(registryGuidance(c.store.root, c.stateHome));
+      return {
+        status: "refused",
+        error: "registry-locked",
+        stage: "service"
+      };
+    }
+    throw error;
+  }
   if (blocked) {
     process.stderr.write(blocked);
     return {
       status: "refused",
       error: "quarantine",
-      stage: "service"
-    };
-  }
-  if (c.registryLockDiagnostic()) {
-    process.stderr.write(registryGuidance(c.store.root, c.stateHome));
-    return {
-      status: "refused",
-      error: "registry-locked",
       stage: "service"
     };
   }
@@ -8766,7 +8797,14 @@ async function projectMain(argv, hostUrl) {
   }
   effectiveWorkspace(options.workspace, options.stateHome);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
-  await healAccount(new ServiceCoordination(null, options.stateHome));
+  await waitForRegistry(c, async () => {
+    await healAccount(new ServiceCoordination(null, options.stateHome));
+    if (c.registryLockDiagnostic()?.owner === "live")
+      throw new ContractError("registry-locked");
+  }).catch((error) => {
+    if (!(error instanceof ContractError && error.code === "registry-locked"))
+      throw error;
+  });
   const kept = c.registryLockDiagnostic() ? undefined : readHostConfig(c);
   if (!kept)
     options.port = 0;

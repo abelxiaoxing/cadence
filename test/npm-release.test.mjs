@@ -254,6 +254,7 @@ function archiveFixture() {
     "design-explorer",
     "implementation-worker",
     "diagnosis-worker",
+    "route-planner",
   ];
   const bodies = { "notice.txt": "fixture notice" };
   let pins = "agents:\n";
