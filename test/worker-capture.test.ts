@@ -299,7 +299,9 @@ for (const tool of [false, true, "invalid-utf8" as const])
                   .map((part: { text?: string }) => part.text ?? "")
                   .join("\n");
           expect(actual).toBe(
-            `[redacted]${"bash-public-output\n".repeat(4096)}`,
+            tool === "invalid-utf8"
+              ? "\uFFFD"
+              : `[redacted]${"bash-public-output\n".repeat(4096)}`,
           );
           expect(actual).not.toContain(canary);
         }
@@ -396,12 +398,13 @@ for (const tool of [false, true, "invalid-utf8" as const])
       }
       if (tool === "invalid-utf8") {
         expect(result).toMatchObject({
-          outcome: "failed",
+          outcome: "completed",
           closed: true,
-          exitCode: 1,
-          signal: null,
+          exitCode: 0,
+          text: "CAPTURE_OK",
+          output: "",
         });
-        expect(requests).toBe(1);
+        expect(requests).toBe(2);
         expect(readdirSync(root)).toEqual([]);
         return;
       }
