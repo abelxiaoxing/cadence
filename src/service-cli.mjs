@@ -417,12 +417,18 @@ function canonicalJson(value, maximum = LIMITS.controlBytes) {
   }
   return visit(value, 0);
 }
+var WIRE_TOKEN = /(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/y;
 function parseWireJson(source, maximum = LIMITS.controlBytes) {
   text(source, maximum);
   let at = 0;
   const ws = () => {
-    while (/[\x20\t\r\n]/.test(source[at] ?? "!"))
-      at++;
+    while (at < source.length) {
+      const c = source.charCodeAt(at);
+      if (c === 32 || c === 9 || c === 13 || c === 10)
+        at++;
+      else
+        break;
+    }
   };
   function string() {
     const start = at++;
@@ -489,7 +495,8 @@ function parseWireJson(source, maximum = LIMITS.controlBytes) {
       }
       return object2 ? out : arr;
     }
-    const token = /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(source.slice(at))?.[0];
+    WIRE_TOKEN.lastIndex = at;
+    const token = WIRE_TOKEN.exec(source)?.[0];
     if (!token)
       invalid();
     at += token.length;
@@ -2290,7 +2297,7 @@ class PrivateFiles {
     if (current?.identity !== expected?.identity || current?.stamp !== expected?.stamp)
       throw new ContractError("conflict");
   }
-  create(path2, bytes, maximum = METADATA_BYTES) {
+  writeFile(path2, bytes, maximum, syncDir) {
     if (Buffer.byteLength(bytes) > maximum)
       throw new ContractError("oversize");
     this.directory(dirname2(path2), true);
@@ -2301,20 +2308,25 @@ class PrivateFiles {
     } finally {
       closeSync3(fd);
     }
-    this.syncDirectory(dirname2(path2));
+    if (syncDir)
+      this.syncDirectory(dirname2(path2));
+  }
+  create(path2, bytes, maximum = METADATA_BYTES) {
+    this.writeFile(path2, bytes, maximum, true);
     const result = this.read(path2, maximum);
     if (!result || result.identity !== hash(bytes))
       refused();
     return result;
   }
   replace(path2, expected, bytes, maximum = METADATA_BYTES) {
-    this.assert(path2, expected, maximum);
+    const walks = new DirectoryWalks;
+    this.assert(path2, expected, maximum, walks);
     const temporary = join2(dirname2(path2), `pending-${randomUUID()}.json`);
-    this.create(temporary, bytes, maximum);
-    this.assert(path2, expected, maximum);
+    this.writeFile(temporary, bytes, maximum, false);
+    this.assert(path2, expected, maximum, walks);
     retryWindowsFileOperation(() => renameSync(temporary, path2), () => this.assert(path2, expected, maximum));
     this.syncDirectory(dirname2(path2));
-    const result = this.read(path2, maximum);
+    const result = this.read(path2, maximum, walks);
     if (!result || result.identity !== hash(bytes))
       refused();
     return result;

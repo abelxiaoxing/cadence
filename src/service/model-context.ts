@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Api, AuthResult, Model } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { networkKeys } from "../sdk-network.ts";
@@ -23,6 +23,7 @@ import { decodeWorkerRuntime, type WorkerRuntime } from "../worker-model.mjs";
 import type { AuthNetwork } from "./auth-network.ts";
 import {
   exactEnvironment,
+  type PublicIdentifierCheck,
   projectModelCatalog,
   validateCatalogModel,
 } from "./model-catalog.ts";
@@ -237,6 +238,16 @@ export class OwnerModelContext {
   #generation = 0;
   #reload?: Promise<void>;
   #previousLiterals: readonly string[] = [];
+  #catalogCache?: {
+    key: string;
+    providers: readonly string[];
+    envNames: readonly string[];
+    result: {
+      status: "complete" | "capacity";
+      entries: ModelCandidate[];
+      withheld: number;
+    };
+  };
   get catalogGeneration(): number {
     return this.#generation;
   }
@@ -352,12 +363,52 @@ export class OwnerModelContext {
       const current = this.catalogSource(true);
       const runtime = this.#runtime;
       if (!runtime || !this.#thinking) throw new ContractError("unavailable");
+      const cacheKey = this.catalogCacheKey(current);
+      const cached = this.#catalogCache;
+      if (
+        cached &&
+        cached.key === cacheKey &&
+        !runtime.getError() &&
+        cached.providers.every(
+          (provider) =>
+            !runtime.getRegisteredNativeProvider(provider) &&
+            !runtime.getRegisteredProviderConfig(provider),
+        ) &&
+        cached.envNames.every((name) => {
+          const d = Object.getOwnPropertyDescriptor(process.env, name);
+          return !!d && "value" in d && d.value === this.#launch[name];
+        })
+      ) {
+        const after = this.catalogSource(true);
+        if (
+          after.auth.identity !== current.auth.identity ||
+          after.auth.stamp !== current.auth.stamp
+        )
+          throw new ContractError("stale");
+        return structuredClone(cached.result);
+      }
+      const literals = this.catalogLiterals(current);
+      const envNames = new Set<string>();
       const catalog = projectModelCatalog(
         runtime,
         this.#thinking,
         current,
-        this.catalogLiterals(current),
-        (input, snapshot) => this.validateModel(input, snapshot),
+        literals,
+        (input, snapshot) => {
+          // projectModelCatalog already verified provider & model identifiers
+          // against the same `literals` set via publicIdentifierChecker.
+          const validated = this.validateModel(
+            input,
+            snapshot,
+            literals,
+            () => true,
+          );
+          const scoped = snapshot.credentials[input.provider]?.env;
+          const local = scoped === undefined ? {} : environment(scoped);
+          for (const name of Object.keys(validated.env))
+            if (!local[name]) envNames.add(name);
+          return validated;
+        },
       );
       // Re-read original selected sources before returning the projection.
       const after = this.catalogSource(true);
@@ -366,12 +417,40 @@ export class OwnerModelContext {
         after.auth.stamp !== current.auth.stamp
       )
         throw new ContractError("stale");
+      this.#catalogCache = {
+        key: cacheKey,
+        providers: [
+          ...new Set([
+            ...Object.keys(current.credentials),
+            ...Object.keys(current.providers),
+          ]),
+        ].sort(),
+        envNames: [...envNames],
+        result: structuredClone(catalog),
+      };
       return catalog;
     } catch (error) {
       throw new ContractError(
         error instanceof ContractError ? error.code : "corrupt-selected",
       );
     }
+  }
+  private catalogCacheKey(snapshot: PiSnapshot): string {
+    const hash = createHash("sha256");
+    hash.update(String(this.#generation));
+    hash.update("\0");
+    hash.update(snapshot.auth.identity);
+    hash.update("\0");
+    hash.update(snapshot.auth.stamp);
+    hash.update("\0");
+    hash.update(snapshot.models?.identity ?? "");
+    hash.update("\0");
+    hash.update(snapshot.models?.stamp ?? "");
+    for (const literal of this.#options.network?.literals ?? []) {
+      hash.update("\0");
+      hash.update(literal);
+    }
+    return hash.digest("hex");
   }
   private catalogSource(installedOnly = false): PiSnapshot {
     this.alive();
@@ -430,6 +509,7 @@ export class OwnerModelContext {
       this.#previousLiterals = previous;
       this.#runtime = runtime;
       this.#snapshot = after;
+      this.#catalogCache = undefined;
       this.#selected.clear();
       this.#retained.clear();
       ++this.#generation;
@@ -515,6 +595,7 @@ export class OwnerModelContext {
     if (existing && existing !== this) throw new ContractError("conflict");
     runtimeOwners.set(this.#options.owner, this);
     this.#loading = true;
+    this.#catalogCache = undefined;
     this.#selected.clear();
     this.#retained.clear();
     this.#runtime = undefined;
@@ -628,6 +709,8 @@ export class OwnerModelContext {
   private validateModel(
     input: ModelSelector,
     current: PiSnapshot,
+    literals = this.catalogLiterals(current),
+    checkIdentifier?: PublicIdentifierCheck,
   ): Omit<Selected, "selection"> {
     if (!this.#runtime || !this.#thinking)
       throw new ContractError("unavailable");
@@ -637,7 +720,8 @@ export class OwnerModelContext {
       input,
       current,
       this.#launch,
-      this.catalogLiterals(current),
+      literals,
+      checkIdentifier,
     );
   }
   private fresh(

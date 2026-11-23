@@ -21,7 +21,12 @@ import type {
   ModelCatalogRead,
 } from "../../client/use-model-catalog";
 import { type MessageKey, useT } from "../../i18n/locale";
-import type { ModelCandidate, ModelSelector, ServiceClient } from "../../types";
+import type {
+  ModelCandidate,
+  ModelCatalog,
+  ModelSelector,
+  ServiceClient,
+} from "../../types";
 
 type Level = ModelSelector["thinking"];
 const LEVEL_LABELS: Record<Level, MessageKey> = {
@@ -91,7 +96,9 @@ export function ModelPicker({
   onPreviewChoice,
   locked,
   lockReason,
-  open,
+  open: controlledOpen,
+  openSignal = 0,
+  closeSignal = 0,
   onOpenChange,
   onChanged,
   onChosen,
@@ -110,10 +117,15 @@ export function ModelPicker({
   /** This conversation's reply is live; the owner refuses a change now. */
   locked: boolean;
   lockReason?: string;
-  open: boolean;
+  /** Omit to manage popover visibility locally without re-rendering parent workspaces. */
+  open?: boolean;
+  /** Monotonic signal to open an uncontrolled popover programmatically. */
+  openSignal?: number;
+  /** Monotonic signal to close an uncontrolled popover programmatically. */
+  closeSignal?: number;
   onOpenChange(open: boolean, reason?: "chosen"): void;
-  /** An installed choice changed the owner configuration. */
-  onChanged(): void;
+  /** An installed choice changed the owner or conversation configuration. */
+  onChanged(version?: ModelCatalog["version"]): void;
   /** The panel closed on an installed choice. */
   onChosen?(choice: ModelSelector): void;
   /** A Send is waiting for this choice and continues after it. */
@@ -130,8 +142,13 @@ export function ModelPicker({
   const { error: catalogError, loading, reread } = read;
   const liveCatalog = ready ? read.catalog : undefined;
   const catalog = liveCatalog ?? preview;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const lastOpenSignal = useRef(openSignal);
+  const lastCloseSignal = useRef(closeSignal);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [switchingChoice, setSwitchingChoice] = useState<string | null>(null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -139,6 +156,33 @@ export function ModelPicker({
   const list = useRef<HTMLDivElement>(null);
   const changeOpen = useRef(onOpenChange);
   changeOpen.current = onOpenChange;
+  const setOpen = useCallback(
+    (next: boolean, reason?: "chosen") => {
+      if (controlledOpen === undefined) setInternalOpen(next);
+      if (reason) changeOpen.current(next, reason);
+      else changeOpen.current(next);
+    },
+    [controlledOpen],
+  );
+  useEffect(() => {
+    if (openSignal !== lastOpenSignal.current) {
+      lastOpenSignal.current = openSignal;
+      if (controlledOpen === undefined) {
+        setError("");
+        setInternalOpen(true);
+      }
+    }
+  }, [openSignal, controlledOpen]);
+  useEffect(() => {
+    if (closeSignal !== lastCloseSignal.current) {
+      lastCloseSignal.current = closeSignal;
+      if (controlledOpen === undefined) {
+        setInternalOpen(false);
+        setExpandedKey(null);
+        setError("");
+      }
+    }
+  }, [closeSignal, controlledOpen]);
   // A refusal from an earlier owner/context is not a failure of this one.
   useEffect(() => {
     void client;
@@ -147,13 +191,15 @@ export function ModelPicker({
     setError("");
     setExpandedKey(null);
   }, [client, epoch, attachment]);
-  const close = useCallback((focus = true, reason?: "chosen") => {
-    if (reason) changeOpen.current(false, reason);
-    else changeOpen.current(false);
-    setExpandedKey(null);
-    setError("");
-    if (focus) trigger.current?.focus({ preventScroll: true });
-  }, []);
+  const close = useCallback(
+    (focus = true, reason?: "chosen") => {
+      setOpen(false, reason);
+      setExpandedKey(null);
+      setError("");
+      if (focus) trigger.current?.focus({ preventScroll: true });
+    },
+    [setOpen],
+  );
   useEffect(() => {
     if (!open) {
       setExpandedKey(null);
@@ -166,6 +212,9 @@ export function ModelPicker({
         "(max-width: 900px), ((pointer: coarse) and (hover: none))",
       ).matches;
     if (!mobileSheet) popover.current?.focus({ preventScroll: true });
+    list.current
+      ?.querySelector<HTMLElement>(".model-item.current")
+      ?.scrollIntoView?.({ block: "nearest" });
     const outside = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) close(false);
     };
@@ -182,7 +231,12 @@ export function ModelPicker({
   const groups = useMemo(() => {
     const map = new Map<string, ModelCandidate[]>();
     for (const entry of catalog?.entries ?? []) {
-      map.set(entry.provider, [...(map.get(entry.provider) ?? []), entry]);
+      let bucket = map.get(entry.provider);
+      if (!bucket) {
+        bucket = [];
+        map.set(entry.provider, bucket);
+      }
+      bucket.push(entry);
     }
     return [...map];
   }, [catalog]);
@@ -232,6 +286,7 @@ export function ModelPicker({
       return;
     }
     setPending(true);
+    setSwitchingChoice(`${entryKey(entry)}:${level}`);
     setError("");
     try {
       const reply = await client.chooseModel({
@@ -250,7 +305,7 @@ export function ModelPicker({
         selected: reply.value.selected,
       };
       if (!read.accept(next)) return;
-      onChanged();
+      onChanged(reply.value.version);
       close(true, "chosen");
       onChosen?.(choice);
     } catch {
@@ -260,6 +315,7 @@ export function ModelPicker({
       }
     } finally {
       setPending(false);
+      setSwitchingChoice(null);
     }
   };
   const onOptionClick = (entry: ModelCandidate, isExpanded: boolean) => {
@@ -402,7 +458,7 @@ export function ModelPicker({
           if (open) close();
           else {
             setError("");
-            onOpenChange(true);
+            setOpen(true);
           }
         }}
       >
@@ -488,6 +544,10 @@ export function ModelPicker({
                             type="button"
                             role="option"
                             aria-selected={isCurrent}
+                            aria-busy={
+                              switchingChoice?.startsWith(`${key}:`) ||
+                              undefined
+                            }
                             className="model-option"
                             disabled={
                               !selectionEnabled || !usable || pending || locked
@@ -541,6 +601,10 @@ export function ModelPicker({
                                   aria-pressed={
                                     isCurrent &&
                                     current?.thinking === level.level
+                                  }
+                                  aria-busy={
+                                    switchingChoice ===
+                                      `${key}:${level.level}` || undefined
                                   }
                                   disabled={
                                     !selectionEnabled ||

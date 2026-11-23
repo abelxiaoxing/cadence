@@ -81,7 +81,10 @@ import {
   GatewayConversations,
   unpreparedDirectory,
 } from "./gateway-conversations.ts";
-import { readGatewayModels } from "./gateway-models.ts";
+import {
+  GatewayModelPreviewCache,
+  readGatewayModels,
+} from "./gateway-models.ts";
 import {
   decodeGatewayInput,
   type GatewayInput,
@@ -358,7 +361,11 @@ export async function createGateway(
     closed: (pid) => previewLedger?.remove(pid),
     unconfirmed: () => stop(),
   });
-  acquired.access.onRevoke(() => modelPreviews.invalidate());
+  const previewCache = new GatewayModelPreviewCache();
+  acquired.access.onRevoke(() => {
+    modelPreviews.invalidate();
+    previewCache.clear();
+  });
   const root = dirname(dirname(fileURLToPath(hostUrl))),
     version = installedVersion(root),
     record = new MaintenanceRecord(store);
@@ -1495,6 +1502,7 @@ export async function createGateway(
           input,
           acquired.access.redactionLiterals(),
           (source) => modelPreviews.read(source),
+          previewCache,
         );
         auth.current(caller);
         assert();

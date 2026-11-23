@@ -705,7 +705,15 @@ for (const locale of ["en", "zh"] as const) {
     const readyLabel = zh ? "可以开始对话" : "Chat ready";
     expect(render(locale, options).summary).toContain(readyLabel);
     expect(chatProps.actionsReady).toBe(true);
+    // Switching a conversation model stays local to ConversationContexts and
+    // must not tear down project/viewer readiness or flash Connection.
     chatProps.onModelChanged?.();
+    expect(reads.project).not.toHaveBeenCalled();
+    expect(reads.viewer).not.toHaveBeenCalled();
+    expect(render(locale, options).summary).toContain(readyLabel);
+    expect(chatProps.actionsReady).toBe(true);
+    // An explicit refresh still checks both project and viewer observations.
+    connectionAction();
     expect(reads.project).toHaveBeenCalledTimes(1);
     expect(reads.viewer).toHaveBeenCalledTimes(1);
     execution.fresh = false;

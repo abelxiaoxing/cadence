@@ -5441,6 +5441,7 @@ button.file-item:hover:not(:disabled),
   flex-direction: column;
   gap: 6px;
   padding: 6px;
+  contain: layout style;
 }
 .model-group {
   display: flex;
@@ -5468,6 +5469,7 @@ button.file-item:hover:not(:disabled),
 .model-item {
   border: 1px solid transparent;
   border-radius: 10px;
+  contain: layout style;
 }
 .model-item.current {
   background: var(--accent-soft);
@@ -5508,6 +5510,10 @@ button.file-item:hover:not(:disabled),
   background: var(--glow-04);
 }
 .model-option[aria-selected="true"] {
+  color: var(--accent-text);
+}
+.model-option[aria-busy="true"] {
+  background: var(--accent-soft);
   color: var(--accent-text);
 }
 .model-option-name {
@@ -5583,7 +5589,8 @@ button.file-item:hover:not(:disabled),
   background: var(--accent-soft);
   color: var(--accent-text);
 }
-.model-thinking button[aria-pressed="true"] {
+.model-thinking button[aria-pressed="true"],
+.model-thinking button[aria-busy="true"] {
   border-color: var(--accent-strong);
   background: var(--accent-soft);
   color: var(--accent-text);

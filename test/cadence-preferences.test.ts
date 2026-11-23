@@ -62,3 +62,16 @@ it("an explicit choice atomically replaces a corrupt file; implicit saving never
   p.choose({ ...model, thinking: "high" });
   expect(p.read()).toEqual({ ...model, thinking: "high" });
 });
+it("saveAsync preserves corrupt-file refusal and atomically persists updates", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cadence-preferences-async-"));
+  const p = new CadencePreferences(root);
+  await p.saveAsync(model);
+  expect(p.read()).toEqual(model);
+  // Unchanged save is a no-op; a changed choice atomically replaces.
+  await p.saveAsync(model);
+  await p.saveAsync({ ...model, thinking: "high" });
+  expect(p.read()).toEqual({ ...model, thinking: "high" });
+  writeFileSync(p.path, "{corrupt");
+  await expect(p.saveAsync(model)).rejects.toThrow();
+  expect(readFileSync(p.path, "utf8")).toBe("{corrupt");
+});

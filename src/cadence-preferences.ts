@@ -1,9 +1,18 @@
 /** User-owned model preference, never auth, approval or a reusable source-selection ID. */
-import { realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { constants, realpathSync } from "node:fs";
+import { open, rename } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { closed } from "./service/contracts/core.ts";
-import { PrivateFiles } from "./service/private-files.ts";
 import {
+  type FileSnapshot,
+  hash,
+  METADATA_BYTES,
+  PrivateFiles,
+  refused,
+} from "./service/private-files.ts";
+import {
+  ContractError,
   canonicalJson,
   decodeModelSelector,
   type ModelSelector,
@@ -37,9 +46,10 @@ export class CadencePreferences {
     this.path = join(namespace, "cadence", "settings.json");
     this.files = new PrivateFiles(namespace, false);
   }
-  read(): ModelSelector | null {
-    const saved = this.files.read(this.path);
-    if (!saved) return null;
+  snapshot(): FileSnapshot | undefined {
+    return this.files.read(this.path);
+  }
+  private decode(saved: FileSnapshot): ModelSelector {
     const o = closed(parseWireJson(saved.bytes.toString("utf8")), [
       "schema",
       "model",
@@ -47,6 +57,11 @@ export class CadencePreferences {
     if (o.schema !== "cadence-preferences/1")
       throw new Error("Unsupported Cadence preferences");
     return decodeModelSelector(o.model);
+  }
+  read(): ModelSelector | null {
+    const saved = this.files.read(this.path);
+    if (!saved) return null;
+    return this.decode(saved);
   }
   private encode(model: ModelSelector): string {
     return canonicalJson({
@@ -59,11 +74,60 @@ export class CadencePreferences {
   save(model: ModelSelector): void {
     const selected = decodeModelSelector(model);
     const previous = this.files.read(this.path);
-    if (previous && canonicalJson(this.read()) === canonicalJson(selected))
+    if (
+      previous &&
+      canonicalJson(this.decode(previous)) === canonicalJson(selected)
+    )
       return;
     const bytes = this.encode(selected);
     if (previous) this.files.replace(this.path, previous, bytes);
     else this.files.create(this.path, bytes);
+  }
+  /** Non-blocking best-effort remembering for live service model switches:
+   * keeps the exact same safety/schema guards while offloading fsync off the
+   * event loop so chooseModel replies return immediately. */
+  async saveAsync(model: ModelSelector): Promise<void> {
+    if (process.platform === "win32") {
+      this.save(model);
+      return;
+    }
+    const selected = decodeModelSelector(model);
+    const previous = this.files.read(this.path);
+    if (
+      previous &&
+      canonicalJson(this.decode(previous)) === canonicalJson(selected)
+    )
+      return;
+    const bytes = this.encode(selected);
+    if (Buffer.byteLength(bytes) > METADATA_BYTES)
+      throw new ContractError("oversize");
+    const dir = dirname(this.path);
+    this.files.directory(dir, true);
+    const target = previous
+      ? join(dir, `pending-${randomUUID()}.json`)
+      : this.path;
+    const fh = await open(target, "wx", 0o600);
+    try {
+      await fh.writeFile(bytes);
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+    if (previous) {
+      this.files.assert(this.path, previous);
+      await rename(target, this.path);
+    }
+    const dirHandle = await open(
+      dir,
+      constants.O_RDONLY | constants.O_DIRECTORY,
+    );
+    try {
+      await dirHandle.sync();
+    } finally {
+      await dirHandle.close();
+    }
+    const result = this.files.read(this.path);
+    if (!result || result.identity !== hash(bytes)) refused();
   }
   /** An explicit user model selection. It atomically replaces a regular file
    * whose contents are corrupt or unsupported, since the user just chose the

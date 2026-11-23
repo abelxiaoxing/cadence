@@ -240,6 +240,7 @@ it("expands a multi-thinking model inline on first click and commits model + cho
     },
   });
   expect(onChanged).toHaveBeenCalledOnce();
+  expect(onChanged).toHaveBeenCalledWith(cat.version);
   expect(onChosen).toHaveBeenCalledOnce();
   expect(onOpenChange).toHaveBeenCalledWith(false, "chosen");
 });

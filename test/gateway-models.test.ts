@@ -2,8 +2,12 @@ import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { CadencePreferences } from "../src/cadence-preferences.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
-import { readGatewayModels } from "../src/service/gateway-models.ts";
+import {
+  GatewayModelPreviewCache,
+  readGatewayModels,
+} from "../src/service/gateway-models.ts";
 import { readHostConfig } from "../src/service/runtime.ts";
 
 const readModelPreview = vi.fn(async () => ({
@@ -138,4 +142,70 @@ it("source changes after a child projection but before native close refuse the w
     "stale",
   );
   expect(readdirSync(f.input.stateHome)).toEqual([]);
+});
+it("GatewayModelPreviewCache reuses unchanged projections and invalidates on auth, models, preferences or secret changes", async () => {
+  const f = fixture();
+  const cache = new GatewayModelPreviewCache();
+  let version = 0;
+  const read = vi.fn(async () => ({
+    status: "complete" as const,
+    entries: [
+      {
+        provider: "fixture",
+        model: `m-${++version}`,
+        api: "openai-completions" as const,
+        thinking: [{ level: "off" as const, selectable: true }],
+        images: false,
+        eligibility: "candidate" as const,
+      },
+    ],
+    withheld: 0,
+    remembered: null,
+  }));
+  const first = await readGatewayModels(
+    f.project,
+    f.input,
+    ["sec-a"],
+    read,
+    cache,
+  );
+  const second = await readGatewayModels(
+    f.project,
+    f.input,
+    ["sec-a"],
+    read,
+    cache,
+  );
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(second).toEqual(first);
+  // Mutating the returned copy must not corrupt cached entries.
+  second.entries.pop();
+  expect(
+    (await readGatewayModels(f.project, f.input, ["sec-a"], read, cache))
+      .entries,
+  ).toHaveLength(1);
+  expect(read).toHaveBeenCalledTimes(1);
+  // Secret rotation invalidates cache immediately.
+  await readGatewayModels(f.project, f.input, ["sec-b"], read, cache);
+  expect(read).toHaveBeenCalledTimes(2);
+  // Changing preferences invalidates cache.
+  new CadencePreferences(f.input.agentDir).save({
+    provider: "fixture",
+    model: "m-1",
+    api: "openai-completions",
+    thinking: "off",
+  });
+  await readGatewayModels(f.project, f.input, ["sec-b"], read, cache);
+  expect(read).toHaveBeenCalledTimes(3);
+  // Changing auth.json invalidates cache.
+  writeFileSync(
+    join(f.input.agentDir, "auth.json"),
+    JSON.stringify({ fixture: { type: "api_key", key: "rotated" } }),
+  );
+  await readGatewayModels(f.project, f.input, ["sec-b"], read, cache);
+  expect(read).toHaveBeenCalledTimes(4);
+  // Clearing cache forces a fresh read.
+  cache.clear();
+  await readGatewayModels(f.project, f.input, ["sec-b"], read, cache);
+  expect(read).toHaveBeenCalledTimes(5);
 });

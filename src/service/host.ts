@@ -367,8 +367,9 @@ export async function createServiceHost(
         if (ready && !stopRequested) endAfterFault(true);
       },
       quiesce: () => http.quiesce(),
-      flush: () => {
+      flush: async () => {
         if (!writer) throw new ContractError("unavailable");
+        await workbench?.flushPreferences();
         return writer.flush();
       },
       closeListener: async () => {

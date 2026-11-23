@@ -107,6 +107,9 @@ export class Workbench implements WorkbenchPort {
     this.workflows.closeHistory();
     this.conversations.records.closeReads();
   }
+  flushPreferences(): Promise<void> {
+    return this.contexts.flushPreferences();
+  }
   read(value: WorkbenchRead): WorkbenchResult | Promise<WorkbenchResult> {
     const request = decodeWorkbenchRead(value);
     this.o.owner.lease.assert();

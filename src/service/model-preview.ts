@@ -87,6 +87,7 @@ export async function readModelPreview(input: {
         snapshot,
         input.environment,
         literals,
+        () => true,
       ),
   );
   let remembered = null;

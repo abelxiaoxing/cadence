@@ -13,7 +13,7 @@ import {
   thinkingLevels,
 } from "../service-contract.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
-import { sanitizeText } from "../worker-redaction.mjs";
+import { sanitizeText, TextSanitizer } from "../worker-redaction.mjs";
 import {
   environment,
   type LaunchEnvironment,
@@ -32,6 +32,34 @@ export type CatalogModels = Pick<
   | "getProvider"
 >;
 export type ModelThinking = (model: Model<Api>) => readonly string[];
+export type PublicIdentifierCheck = (value: string) => boolean;
+const UNSAFE_IDENTIFIER = /[\p{Cc}\p{Cf}\p{Cs}]/u;
+const HEURISTIC_IDENTIFIER =
+  /(?:Bearer\s+|(?:api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*[:=]\s*|https?:\/\/)/i;
+/** Pre-validated identifier checker for a batch of models sharing one secret
+ * literal set: validates secret bounds once instead of per-model O(M*S). */
+export function publicIdentifierChecker(
+  literals: readonly string[],
+): PublicIdentifierCheck {
+  // Enforce the exact TextSanitizer secret validation and byte ceiling once.
+  new TextSanitizer([...literals]);
+  const prepared = [...new Set(literals)]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  return (value: string) => {
+    if (UNSAFE_IDENTIFIER.test(value)) return false;
+    if (
+      Buffer.byteLength(value) <= 512 &&
+      !HEURISTIC_IDENTIFIER.test(value) &&
+      !prepared.some((secret) => value.includes(secret))
+    )
+      return true;
+    return (
+      diagnosticText(value, 512, prepared) === value &&
+      sanitizeText(value, prepared) === value
+    );
+  };
+}
 export function publicModelIdentifier(
   value: string,
   literals: readonly string[],
@@ -69,6 +97,7 @@ export function validateCatalogModel(
   current: PiSnapshot,
   launch: LaunchEnvironment,
   literals: readonly string[],
+  checkIdentifier?: PublicIdentifierCheck,
 ) {
   if (!runtime || !thinking) throw new ContractError("unavailable");
   if (
@@ -86,11 +115,11 @@ export function validateCatalogModel(
     !thinking(model).includes(input.thinking)
   )
     throw new ContractError("unsupported-context");
-  if (
-    !publicModelIdentifier(input.provider, literals) ||
-    !publicModelIdentifier(input.model, literals)
-  )
-    throw new ContractError("unsupported-context");
+  const safeId = checkIdentifier
+    ? checkIdentifier(input.provider) && checkIdentifier(input.model)
+    : publicModelIdentifier(input.provider, literals) &&
+      publicModelIdentifier(input.model, literals);
+  if (!safeId) throw new ContractError("unsupported-context");
   const credential = current.credentials[input.provider];
   const provider = runtime.getProvider(input.provider);
   if (
@@ -144,21 +173,20 @@ export function projectModelCatalog(
     if (count > LIMITS.maxPageEntries)
       return { status: "capacity", entries: [], withheld: 0 };
   }
+  const isPublicId = publicIdentifierChecker(literals);
   const entries: ModelCandidate[] = [];
   let withheld = 0;
   for (const provider of providers) {
     const models = runtime.getModels(provider);
     if (entries.length + withheld + models.length > LIMITS.maxPageEntries)
       throw new ContractError("capacity");
+    const providerSafe = isPublicId(provider);
     for (const model of models) {
       if (model.provider !== provider)
         throw new ContractError("unsupported-context");
       // An ID that would reveal a credential literal (an Ollama apiKey
       // "ollama" equal to its provider ID) withholds only that entry.
-      if (
-        !publicModelIdentifier(provider, literals) ||
-        !publicModelIdentifier(model.id, literals)
-      ) {
+      if (!providerSafe || !isPublicId(model.id)) {
         withheld++;
         continue;
       }

@@ -1,7 +1,7 @@
 /* Replaces the pi-web-ui-adapted entry. MIT (c) 2026 xing-shuyin.
  * The conversation shell's initial/missing-folder state, not a project home.
  * No project client or Send exists until a directory has been selected. */
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { FiArrowUp, FiFolder } from "react-icons/fi";
 import { emptyFolderDraft, type FolderDraft } from "../../client/folder-draft";
 import type { PreviewModels } from "../../client/model-preview";
@@ -55,7 +55,6 @@ export function FolderSetup({
 }) {
   const { t } = useT();
   const panels = usePanelLayout();
-  const [modelOpen, setModelOpen] = useState(false);
   const draftInput = useRef<HTMLTextAreaElement>(null);
   const modelRead = useModelCatalog(
     null,
@@ -169,10 +168,8 @@ export function FolderSetup({
                       : undefined
                   }
                   locked={!ready}
-                  open={modelOpen}
                   onOpenChange={(open) => {
-                    if (open) modelRead.reread();
-                    setModelOpen(open);
+                    if (open) modelRead.reread(false, { background: true });
                   }}
                   onChanged={() => {}}
                 />

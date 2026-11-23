@@ -432,3 +432,64 @@ it("cold read errors have a readonly retry without asking execution to start", a
   );
   expect(client.models).not.toHaveBeenCalled();
 });
+it("background reread keeps the confirmed catalog visible, updates in place, and yields to accept()", async () => {
+  const { client, requests } = fixture();
+  const live = ready();
+  render(client, live);
+  commit();
+  const initial = catalog("epoch-a", "m1");
+  requests[0].resolve({ kind: "ok", value: initial });
+  await settle();
+  const shown = render(client, live);
+  expect(shown.catalog?.entries[0].model).toBe("m1");
+
+  // Reopening the picker reloads in the background without blanking the list.
+  shown.reread(true, { background: true });
+  const whileReloading = render(client, live);
+  expect(whileReloading.loading).toBe(false);
+  expect(whileReloading.catalog?.entries[0].model).toBe("m1");
+  expect(whileReloading.isCurrent()).toBe(true);
+  expect(requests).toHaveLength(2);
+  expect(client.models).toHaveBeenLastCalledWith(expect.any(AbortSignal), true);
+
+  // A changed catalog replaces the displayed list in place.
+  const updated = catalog("epoch-a", "m2");
+  requests[1].resolve({ kind: "ok", value: updated });
+  await settle();
+  const afterReload = render(client, live);
+  expect(afterReload.catalog?.entries[0].model).toBe("m2");
+
+  // If a choice is accepted while a background reload is in flight, the stale
+  // reload is aborted and cannot overwrite the accepted selection.
+  afterReload.reread(true, { background: true });
+  expect(requests).toHaveLength(3);
+  const chosen: ModelCatalog = {
+    ...updated,
+    version: { ...updated.version, configRev: 2 },
+    selected: {
+      sourceSelectionId: "src-chosen",
+      provider: "fixture",
+      model: "m2",
+      api: "openai-completions",
+      thinking: "off",
+    },
+  };
+  expect(afterReload.accept(chosen)).toBe(true);
+  expect(requests[2].signal?.aborted).toBe(true);
+  requests[2].resolve({ kind: "ok", value: initial });
+  await settle();
+  expect(render(client, live).catalog?.selected?.sourceSelectionId).toBe(
+    "src-chosen",
+  );
+});
+it("connecting never invokes cold preview discovery", () => {
+  const { client } = fixture();
+  const { version: _version, selected: _selected, ...preview } = catalog();
+  const reader = vi.fn(async () => preview);
+  const state = render(client, { status: "connecting" }, "0", reader);
+  commit();
+  expect(reader).not.toHaveBeenCalled();
+  expect(client.models).not.toHaveBeenCalled();
+  expect(state.loading).toBe(false);
+  expect(state.preview).toBeUndefined();
+});

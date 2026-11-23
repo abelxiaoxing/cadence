@@ -306,12 +306,18 @@ export function canonicalJson(value, maximum = LIMITS.controlBytes) {
   }
   return visit(value, 0);
 }
+const WIRE_TOKEN =
+  /(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/y;
 /** JSON.parse alone loses duplicate keys. All HTTP/worker text adapters must use this before a DTO decoder. */
 export function parseWireJson(source, maximum = LIMITS.controlBytes) {
   text(source, maximum);
   let at = 0;
   const ws = () => {
-    while (/[\x20\t\r\n]/.test(source[at] ?? "!")) at++;
+    while (at < source.length) {
+      const c = source.charCodeAt(at);
+      if (c === 32 || c === 9 || c === 13 || c === 10) at++;
+      else break;
+    }
   };
   function string() {
     const start = at++;
@@ -367,10 +373,8 @@ export function parseWireJson(source, maximum = LIMITS.controlBytes) {
       }
       return object ? out : arr;
     }
-    const token =
-      /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(
-        source.slice(at),
-      )?.[0];
+    WIRE_TOKEN.lastIndex = at;
+    const token = WIRE_TOKEN.exec(source)?.[0];
     if (!token) invalid();
     at += token.length;
     const result = JSON.parse(token);

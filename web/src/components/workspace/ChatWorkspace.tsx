@@ -503,11 +503,18 @@ export function ChatWorkspace({
   const [modelCommand, setModelCommand] = useState(() =>
     stored(`${draftKey}:model-command`),
   );
-  const [modelOpen, setModelOpen] = useState(false);
+  const [modelOpenSignal, setModelOpenSignal] = useState(0);
+  const [modelCloseSignal, setModelCloseSignal] = useState(0);
   // A Send found no model: it continues once one is explicitly chosen.
   const [awaitingModel, setAwaitingModel] = useState(false);
   const [resume, setResume] = useState(false);
   const [modelReads, setModelReads] = useState(0);
+  const [syncedContext, setSyncedContext] = useState<{
+    epoch: string;
+    from: number | "unobserved";
+    min: number;
+    max: number;
+  } | null>(null);
   const waitingSend = useRef<PendingSend | null>(null);
   const waitingViewer = useRef<ViewerTicket>(undefined);
   const sending = useRef(false);
@@ -641,11 +648,23 @@ export function ChatWorkspace({
       : modelAvailability;
   const latestAvailability = useRef(availability);
   latestAvailability.current = availability;
+  const observedContextRev: number | "unobserved" =
+    context?.revision ?? (readyForFreshModels ? 0 : "unobserved");
+  const catalogContextRev =
+    syncedContext &&
+    availability.status === "ready" &&
+    syncedContext.epoch === availability.epoch &&
+    typeof observedContextRev === "number" &&
+    observedContextRev >= syncedContext.min &&
+    observedContextRev <= syncedContext.max
+      ? syncedContext.from
+      : observedContextRev;
   const modelRead = useModelCatalog(
     modelClient,
     availability,
-    `${modelReads}:${context?.revision ?? (readyForFreshModels ? 0 : "unobserved")}`,
-    modelAvailability.status === "ready" && available && !contextRead.error
+    `${modelReads}:${catalogContextRev}`,
+    (modelAvailability.status === "ready" && available && !contextRead.error) ||
+      availability.status === "connecting"
       ? undefined
       : previewModels,
   );
@@ -655,9 +674,8 @@ export function ChatWorkspace({
     setResume(false);
   };
   const openModels = (open: boolean, reason?: "chosen") => {
-    if (open) modelRead.reread(true);
+    if (open) modelRead.reread(true, { background: true });
     else if (!open && reason !== "chosen") clearModelWait();
-    setModelOpen(open);
   };
   const chosenModel = (choice: ModelSelector, installed: boolean) => {
     setDraftModel(installed ? null : choice);
@@ -2073,6 +2091,7 @@ export function ChatWorkspace({
           );
         }
         openModels(true);
+        setModelOpenSignal((n) => n + 1);
       };
       let catalog = await client.models(undefined, intent.location);
       if (!current()) return;
@@ -2395,7 +2414,7 @@ export function ChatWorkspace({
     wasEmpty.current = false;
     setAwaitingModel(false);
     setResume(false);
-    setModelOpen(false);
+    setModelCloseSignal((n) => n + 1);
     setBusy(false);
     setPreparing(false);
     releaseAnchor();
@@ -3236,9 +3255,39 @@ export function ChatWorkspace({
               ? undefined
               : (waitingReason ??
                 t("Current action context unavailable; observe again.")),
-            open: modelOpen,
+            openSignal: modelOpenSignal,
+            closeSignal: modelCloseSignal,
             onOpenChange: openModels,
-            onChanged: () => {
+            onChanged: (version) => {
+              if (
+                version &&
+                availability.status === "ready" &&
+                version.epoch === availability.epoch &&
+                version.conversation?.id === id &&
+                version.configRev >= 1
+              ) {
+                const targetRev = version.configRev - 1;
+                setSyncedContext((prev) => {
+                  const base =
+                    prev && prev.epoch === version.epoch
+                      ? prev
+                      : {
+                          epoch: version.epoch,
+                          from: observedContextRev,
+                          min:
+                            typeof observedContextRev === "number"
+                              ? observedContextRev
+                              : targetRev,
+                          max: targetRev,
+                        };
+                  return {
+                    epoch: version.epoch,
+                    from: base.from,
+                    min: Math.min(base.min, targetRev),
+                    max: Math.max(base.max, targetRev),
+                  };
+                });
+              }
               contextRead.refresh();
               onModelChanged();
             },

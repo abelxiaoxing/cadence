@@ -229,7 +229,12 @@ export class PrivateFiles {
     )
       throw new ContractError("conflict");
   }
-  create(path: string, bytes: string, maximum = METADATA_BYTES): FileSnapshot {
+  private writeFile(
+    path: string,
+    bytes: string,
+    maximum: number,
+    syncDir: boolean,
+  ): void {
     if (Buffer.byteLength(bytes) > maximum) throw new ContractError("oversize");
     this.directory(dirname(path), true);
     const fd = retryWindowsFileOperation(() => openSync(path, "wx", 0o600));
@@ -239,7 +244,10 @@ export class PrivateFiles {
     } finally {
       closeSync(fd);
     }
-    this.syncDirectory(dirname(path));
+    if (syncDir) this.syncDirectory(dirname(path));
+  }
+  create(path: string, bytes: string, maximum = METADATA_BYTES): FileSnapshot {
+    this.writeFile(path, bytes, maximum, true);
     const result = this.read(path, maximum);
     if (!result || result.identity !== hash(bytes)) refused();
     return result;
@@ -250,16 +258,19 @@ export class PrivateFiles {
     bytes: string,
     maximum = METADATA_BYTES,
   ): FileSnapshot {
-    this.assert(path, expected, maximum);
+    const walks = new DirectoryWalks();
+    this.assert(path, expected, maximum, walks);
     const temporary = join(dirname(path), `pending-${randomUUID()}.json`);
-    this.create(temporary, bytes, maximum);
-    this.assert(path, expected, maximum);
+    // Durability of an atomic replace requires fsync on the temp file, rename,
+    // then one fsync on the parent directory after rename (not twice).
+    this.writeFile(temporary, bytes, maximum, false);
+    this.assert(path, expected, maximum, walks);
     retryWindowsFileOperation(
       () => renameSync(temporary, path),
       () => this.assert(path, expected, maximum),
     );
     this.syncDirectory(dirname(path));
-    const result = this.read(path, maximum);
+    const result = this.read(path, maximum, walks);
     if (!result || result.identity !== hash(bytes)) refused();
     return result;
   }

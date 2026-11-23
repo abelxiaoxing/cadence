@@ -3,11 +3,12 @@
  * in ServiceCoordination/CheckoutGate, independently of a conversation's cwd. */
 
 import { randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { CadencePreferences } from "../cadence-preferences.ts";
 import { conversationIdentity } from "../conversation-identity.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
-import { resolveWorkspace, withinWorkspace } from "../workspace.ts";
+import { absent, resolveWorkspace, withinWorkspace } from "../workspace.ts";
 import {
   ContractError,
   canonicalJson,
@@ -89,6 +90,72 @@ export class ConversationContextRecords {
     return { context, file };
   }
 }
+interface VerifiedGitRoot {
+  root: string;
+  gitDev: number;
+  gitIno: number;
+  headDev: number;
+  headIno: number;
+  configStamp: string;
+}
+function readGitRootStamp(root: string): VerifiedGitRoot | null {
+  try {
+    const git = lstatSync(join(root, ".git"));
+    if (!git.isDirectory() || git.isSymbolicLink()) return null;
+    const head = lstatSync(join(root, ".git", "HEAD"));
+    if (!head.isFile() || head.isSymbolicLink()) return null;
+    const config = lstatSync(join(root, ".git", "config"));
+    if (!config.isFile() || config.isSymbolicLink()) return null;
+    return {
+      root,
+      gitDev: git.dev,
+      gitIno: git.ino,
+      headDev: head.dev,
+      headIno: head.ino,
+      configStamp: `${config.dev}:${config.ino}:${config.size}:${config.ctimeMs}:${config.mtimeMs}`,
+    };
+  } catch {
+    return null;
+  }
+}
+/** Fast-path verification when a previously confirmed `.git` directory checkout
+ * and every intermediate ancestor between `cwd` and `root` are unchanged. Any
+ * mismatch, symlink, worktree `.git` file or nested `.git` falls back to git. */
+function fastVerifiedGitDirectory(
+  root: string,
+  cwd: string,
+  verified: VerifiedGitRoot | null,
+): boolean {
+  if (!verified || verified.root !== root) return false;
+  try {
+    if (realpathSync(cwd) !== cwd || !withinWorkspace(root, cwd)) return false;
+    const current = readGitRootStamp(root);
+    if (
+      !current ||
+      current.gitDev !== verified.gitDev ||
+      current.gitIno !== verified.gitIno ||
+      current.headDev !== verified.headDev ||
+      current.headIno !== verified.headIno ||
+      current.configStamp !== verified.configStamp
+    )
+      return false;
+    let at = cwd;
+    while (at !== root) {
+      try {
+        lstatSync(join(at, ".git"));
+        return false;
+      } catch (error) {
+        if (!absent(error)) return false;
+      }
+      const parent = dirname(at);
+      if (parent === at) return false;
+      at = parent;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 /** A conversation's directory is exactly one existing directory of this
  * checkout, named by a path that needs no redaction. The live owner and the
  * stopped-owner readers share this rule. */
@@ -96,21 +163,31 @@ export function assertConversationDirectory(
   root: string,
   cwd: string,
   secrets?: readonly string[],
+  verifiedGit?: { current: VerifiedGitRoot | null },
 ): void {
-  let actual: ReturnType<typeof resolveWorkspace>;
-  try {
-    actual = resolveWorkspace(cwd);
-  } catch {
-    throw new ContractError("stale");
+  if (!fastVerifiedGitDirectory(root, cwd, verifiedGit?.current ?? null)) {
+    let actual: ReturnType<typeof resolveWorkspace>;
+    try {
+      actual = resolveWorkspace(cwd);
+    } catch {
+      throw new ContractError("stale");
+    }
+    if (actual.cwd !== cwd || actual.root !== root)
+      throw new ContractError("stale");
+    if (verifiedGit) verifiedGit.current = readGitRootStamp(root);
   }
-  if (actual.cwd !== cwd || actual.root !== root)
-    throw new ContractError("stale");
   if (secrets && sanitizeText(cwd, secrets) !== cwd)
     throw new ContractError("forbidden");
 }
 export class ConversationContexts {
   readonly records: ConversationContextRecords;
   private readonly seed = randomUUID();
+  private readonly verifiedGit: { current: VerifiedGitRoot | null } = {
+    current: null,
+  };
+  private preferencePending: ModelSelector | null = null;
+  private preferenceInFlight: ModelSelector | null = null;
+  private preferenceWrite: Promise<void> | undefined;
   constructor(
     private readonly o: {
       coordination: ServiceCoordination;
@@ -132,7 +209,35 @@ export class ConversationContexts {
       this.o.coordination.store.root,
       cwd,
       checkSecrets ? this.o.secrets() : undefined,
+      this.verifiedGit,
     );
+  }
+  private queuePreference(model: ModelSelector): void {
+    if (!this.o.agentDir) return;
+    this.preferencePending = model;
+    if (this.preferenceWrite) return;
+    const agentDir = this.o.agentDir;
+    const run = (async () => {
+      while (this.preferencePending) {
+        const next = this.preferencePending;
+        this.preferencePending = null;
+        this.preferenceInFlight = next;
+        try {
+          await new CadencePreferences(agentDir).saveAsync(next);
+        } catch {
+          /* Best effort; the conversation selection is authoritative. */
+        } finally {
+          this.preferenceInFlight = null;
+        }
+      }
+    })().finally(() => {
+      if (this.preferenceWrite === run) this.preferenceWrite = undefined;
+      if (this.preferencePending) this.queuePreference(this.preferencePending);
+    });
+    this.preferenceWrite = run;
+  }
+  async flushPreferences(): Promise<void> {
+    while (this.preferenceWrite) await this.preferenceWrite;
   }
   directory(location?: ConversationLocation): string {
     const cwd = location ? this.records.read(location).context.cwd : this.o.cwd;
@@ -178,12 +283,16 @@ export class ConversationContexts {
     if (canonicalJson(before) !== canonicalJson(this.snapshotOf(context)))
       throw new ContractError("stale");
     let remembered: ModelSelector | null = context.model;
-    if (!remembered && this.o.agentDir)
-      try {
-        remembered = new CadencePreferences(this.o.agentDir).read();
-      } catch {
-        /* No fallback installation. */
-      }
+    if (!remembered) {
+      const queued = this.preferencePending ?? this.preferenceInFlight;
+      if (queued) remembered = queued;
+      else if (this.o.agentDir)
+        try {
+          remembered = new CadencePreferences(this.o.agentDir).read();
+        } catch {
+          /* No fallback installation. */
+        }
+    }
     if (remembered && !catalogOffers(catalog.entries, remembered))
       remembered = null;
     return { ...before, ...catalog, remembered };
@@ -242,12 +351,7 @@ export class ConversationContexts {
         throw error;
       }
     }
-    try {
-      if (remember && this.o.agentDir)
-        new CadencePreferences(this.o.agentDir).save(model);
-    } catch {
-      /* Best effort; the conversation selection is authoritative. */
-    }
+    if (remember && this.o.agentDir) this.queuePreference(model);
     this.o.owner.lease.assert();
     return this.snapshotOf(next ?? context);
   }
@@ -271,6 +375,8 @@ export class ConversationContexts {
     const selected =
       context.model ??
       intended ??
+      this.preferencePending ??
+      this.preferenceInFlight ??
       (this.o.agentDir ? new CadencePreferences(this.o.agentDir).read() : null);
     if (!selected) throw new ContractError("unavailable");
     return this.choose(location, before.version, selected, false);

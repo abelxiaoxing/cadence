@@ -1534,7 +1534,9 @@ export function App({
                 }
                 onDraftApplied={() => onDraftApplied?.(chatId)}
                 onModelChanged={() => {
-                  refreshConnection();
+                  // Conversation model choices are scoped to ConversationContexts
+                  // and installed in-place via chooseModel's confirmed version;
+                  // never tear down the project/workspace observation on switch.
                 }}
                 onChanged={() => {
                   chats.refresh();

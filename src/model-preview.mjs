@@ -250,12 +250,18 @@ function canonicalJson(value, maximum = LIMITS.controlBytes) {
   }
   return visit(value, 0);
 }
+var WIRE_TOKEN = /(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/y;
 function parseWireJson(source, maximum = LIMITS.controlBytes) {
   text(source, maximum);
   let at = 0;
   const ws = () => {
-    while (/[\x20\t\r\n]/.test(source[at] ?? "!"))
-      at++;
+    while (at < source.length) {
+      const c = source.charCodeAt(at);
+      if (c === 32 || c === 9 || c === 13 || c === 10)
+        at++;
+      else
+        break;
+    }
   };
   function string() {
     const start = at++;
@@ -322,7 +328,8 @@ function parseWireJson(source, maximum = LIMITS.controlBytes) {
       }
       return object ? out : arr;
     }
-    const token = /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(source.slice(at))?.[0];
+    WIRE_TOKEN.lastIndex = at;
+    const token = WIRE_TOKEN.exec(source)?.[0];
     if (!token)
       invalid();
     at += token.length;
@@ -1974,7 +1981,7 @@ class PrivateFiles {
     if (current?.identity !== expected?.identity || current?.stamp !== expected?.stamp)
       throw new ContractError("conflict");
   }
-  create(path, bytes, maximum = METADATA_BYTES) {
+  writeFile(path, bytes, maximum, syncDir) {
     if (Buffer.byteLength(bytes) > maximum)
       throw new ContractError("oversize");
     this.directory(dirname2(path), true);
@@ -1985,20 +1992,25 @@ class PrivateFiles {
     } finally {
       closeSync2(fd);
     }
-    this.syncDirectory(dirname2(path));
+    if (syncDir)
+      this.syncDirectory(dirname2(path));
+  }
+  create(path, bytes, maximum = METADATA_BYTES) {
+    this.writeFile(path, bytes, maximum, true);
     const result = this.read(path, maximum);
     if (!result || result.identity !== hash(bytes))
       refused();
     return result;
   }
   replace(path, expected, bytes, maximum = METADATA_BYTES) {
-    this.assert(path, expected, maximum);
+    const walks = new DirectoryWalks;
+    this.assert(path, expected, maximum, walks);
     const temporary = join2(dirname2(path), `pending-${randomUUID()}.json`);
-    this.create(temporary, bytes, maximum);
-    this.assert(path, expected, maximum);
+    this.writeFile(temporary, bytes, maximum, false);
+    this.assert(path, expected, maximum, walks);
     retryWindowsFileOperation(() => renameSync(temporary, path), () => this.assert(path, expected, maximum));
     this.syncDirectory(dirname2(path));
-    const result = this.read(path, maximum);
+    const result = this.read(path, maximum, walks);
     if (!result || result.identity !== hash(bytes))
       refused();
     return result;
@@ -2777,7 +2789,9 @@ function snapshotLiterals(snapshot, launch, routes = []) {
 }
 
 // src/cadence-preferences.ts
-import { realpathSync as realpathSync3 } from "node:fs";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { constants as constants3, realpathSync as realpathSync3 } from "node:fs";
+import { open, rename } from "node:fs/promises";
 import { basename, dirname as dirname4, join as join4, resolve as resolve4 } from "node:path";
 function agentNamespace(agentDir) {
   let at = resolve4(agentDir);
@@ -2803,10 +2817,10 @@ class CadencePreferences {
     this.path = join4(namespace, "cadence", "settings.json");
     this.files = new PrivateFiles(namespace, false);
   }
-  read() {
-    const saved = this.files.read(this.path);
-    if (!saved)
-      return null;
+  snapshot() {
+    return this.files.read(this.path);
+  }
+  decode(saved) {
     const o = closed(parseWireJson(saved.bytes.toString("utf8")), [
       "schema",
       "model"
@@ -2814,6 +2828,12 @@ class CadencePreferences {
     if (o.schema !== "cadence-preferences/1")
       throw new Error("Unsupported Cadence preferences");
     return decodeModelSelector(o.model);
+  }
+  read() {
+    const saved = this.files.read(this.path);
+    if (!saved)
+      return null;
+    return this.decode(saved);
   }
   encode(model2) {
     return canonicalJson({
@@ -2824,13 +2844,49 @@ class CadencePreferences {
   save(model2) {
     const selected = decodeModelSelector(model2);
     const previous = this.files.read(this.path);
-    if (previous && canonicalJson(this.read()) === canonicalJson(selected))
+    if (previous && canonicalJson(this.decode(previous)) === canonicalJson(selected))
       return;
     const bytes = this.encode(selected);
     if (previous)
       this.files.replace(this.path, previous, bytes);
     else
       this.files.create(this.path, bytes);
+  }
+  async saveAsync(model2) {
+    if (process.platform === "win32") {
+      this.save(model2);
+      return;
+    }
+    const selected = decodeModelSelector(model2);
+    const previous = this.files.read(this.path);
+    if (previous && canonicalJson(this.decode(previous)) === canonicalJson(selected))
+      return;
+    const bytes = this.encode(selected);
+    if (Buffer.byteLength(bytes) > METADATA_BYTES)
+      throw new ContractError("oversize");
+    const dir = dirname4(this.path);
+    this.files.directory(dir, true);
+    const target = previous ? join4(dir, `pending-${randomUUID2()}.json`) : this.path;
+    const fh = await open(target, "wx", 384);
+    try {
+      await fh.writeFile(bytes);
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+    if (previous) {
+      this.files.assert(this.path, previous);
+      await rename(target, this.path);
+    }
+    const dirHandle = await open(dir, constants3.O_RDONLY | constants3.O_DIRECTORY);
+    try {
+      await dirHandle.sync();
+    } finally {
+      await dirHandle.close();
+    }
+    const result = this.files.read(this.path);
+    if (!result || result.identity !== hash(bytes))
+      refused();
   }
   choose(model2) {
     const bytes = this.encode(model2);
@@ -3015,6 +3071,19 @@ function sanitizeText(value, secrets = []) {
 }
 
 // src/service/model-catalog.ts
+var UNSAFE_IDENTIFIER = /[\p{Cc}\p{Cf}\p{Cs}]/u;
+var HEURISTIC_IDENTIFIER = /(?:Bearer\s+|(?:api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*[:=]\s*|https?:\/\/)/i;
+function publicIdentifierChecker(literals) {
+  new TextSanitizer([...literals]);
+  const prepared = [...new Set(literals)].filter(Boolean).sort((a, b) => b.length - a.length);
+  return (value) => {
+    if (UNSAFE_IDENTIFIER.test(value))
+      return false;
+    if (Buffer.byteLength(value) <= 512 && !HEURISTIC_IDENTIFIER.test(value) && !prepared.some((secret) => value.includes(secret)))
+      return true;
+    return diagnosticText(value, 512, prepared) === value && sanitizeText(value, prepared) === value;
+  };
+}
 function publicModelIdentifier(value, literals) {
   return !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) && diagnosticText(value, 512, literals) === value && sanitizeText(value, literals) === value;
 }
@@ -3029,7 +3098,7 @@ function exactEnvironment(launch, selected, snapshot) {
       throw new ContractError("stale");
   }
 }
-function validateCatalogModel(runtime, thinking, input, current, launch, literals) {
+function validateCatalogModel(runtime, thinking, input, current, launch, literals, checkIdentifier) {
   if (!runtime || !thinking)
     throw new ContractError("unavailable");
   if (runtime.getError() || runtime.getRegisteredNativeProvider(input.provider) || runtime.getRegisteredProviderConfig(input.provider))
@@ -3037,7 +3106,8 @@ function validateCatalogModel(runtime, thinking, input, current, launch, literal
   const model2 = runtime.getModel(input.provider, input.model);
   if (!model2 || model2.api !== input.api || model2.provider !== input.provider || model2.id !== input.model || !thinking(model2).includes(input.thinking))
     throw new ContractError("unsupported-context");
-  if (!publicModelIdentifier(input.provider, literals) || !publicModelIdentifier(input.model, literals))
+  const safeId = checkIdentifier ? checkIdentifier(input.provider) && checkIdentifier(input.model) : publicModelIdentifier(input.provider, literals) && publicModelIdentifier(input.model, literals);
+  if (!safeId)
     throw new ContractError("unsupported-context");
   const credential2 = current.credentials[input.provider];
   const provider = runtime.getProvider(input.provider);
@@ -3069,16 +3139,18 @@ function projectModelCatalog(runtime, supportedThinking, current, literals, vali
     if (count > LIMITS.maxPageEntries)
       return { status: "capacity", entries: [], withheld: 0 };
   }
+  const isPublicId = publicIdentifierChecker(literals);
   const entries = [];
   let withheld = 0;
   for (const provider of providers) {
     const models2 = runtime.getModels(provider);
     if (entries.length + withheld + models2.length > LIMITS.maxPageEntries)
       throw new ContractError("capacity");
+    const providerSafe = isPublicId(provider);
     for (const model2 of models2) {
       if (model2.provider !== provider)
         throw new ContractError("unsupported-context");
-      if (!publicModelIdentifier(provider, literals) || !publicModelIdentifier(model2.id, literals)) {
+      if (!providerSafe || !isPublicId(model2.id)) {
         withheld++;
         continue;
       }
@@ -3167,7 +3239,7 @@ async function readModelPreview(input) {
   if (error)
     throw sdkRefusal(error);
   const literals = snapshotLiterals(before, input.environment, input.secrets ?? []);
-  const catalog = projectModelCatalog(runtime, getSupportedThinkingLevels, before, literals, (selector, snapshot) => validateCatalogModel(runtime, getSupportedThinkingLevels, selector, snapshot, input.environment, literals));
+  const catalog = projectModelCatalog(runtime, getSupportedThinkingLevels, before, literals, (selector, snapshot) => validateCatalogModel(runtime, getSupportedThinkingLevels, selector, snapshot, input.environment, literals, () => true));
   let remembered = null;
   try {
     const saved = new CadencePreferences(source.directory).read();
