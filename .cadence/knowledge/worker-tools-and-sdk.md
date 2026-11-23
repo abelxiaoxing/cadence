@@ -12,6 +12,17 @@ Anchors: `src/worker-toolkit.mjs#createWorkerToolkit`, `src/sdk-worker.mjs`, `te
 
 Source: internalized from engineering/worker-tools.md, 2026-11-22
 
+### Shell display output uses nonfatal UTF-8 replacement without bypassing bounds
+
+Kind: contract
+
+Why: `captureShell` decodes `bash`/`powershell` display output with streaming nonfatal `TextDecoder("utf-8")` so legacy encodings (e.g. GBK) and incomplete EOF bytes become `\uFFFD` rather than aborting commands or surfacing `ContractError("capacity")` / `event-projection-failed`.
+Native exit codes, split-secret redaction, queue capacity and original settlement stay authoritative; strict UTF-8 remains for protocol streams.
+
+Anchors: `src/worker-tools.mjs#captureShell`, `test/worker-shell-encoding.test.mjs`, `test/worker-capture.test.ts`
+
+Source: PR #6 adaptation, 2026-11-22
+
 ### Readonly search tools stay offline and bind relative operations to the first root
 
 Kind: contract
