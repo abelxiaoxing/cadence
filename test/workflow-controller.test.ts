@@ -1128,3 +1128,81 @@ it("VerificationGate calls onRepairBatchComplete only after every work item in a
   // First batch failed at step-2, so onRepairBatchComplete fired ONLY once the full replacement batch finished.
   expect(completedBatches).toEqual(["replan"]);
 });
+
+it("decodeRecoveryDecision names evidence field violations instead of misreporting valid JSON as malformed", () => {
+  const step = "implementation-fixture-1234";
+  const b = bounds({ evidence: [step] });
+  const pattern = /evidence.*exact failed step IDs.*cause.*strategy/u;
+  const reply = (evidence: unknown) =>
+    JSON.stringify({
+      ...decision(),
+      evidence,
+      work: [
+        {
+          title: "Finish",
+          instructions: "Edit only missing behavior",
+          writes: ["src"],
+        },
+      ],
+    });
+  for (const invalid of [
+    [`${step}: ${"诊断说明".repeat(80)}`],
+    [`${step}: failed`],
+    ["other-step"],
+    [],
+    null,
+    step,
+    [null],
+    Array(33).fill(step),
+  ]) {
+    let thrown: unknown;
+    try {
+      decodeRecoveryDecision(reply(invalid), b);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(InvalidDecision);
+    expect((thrown as Error).message).toMatch(pattern);
+    expect((thrown as Error).message).not.toContain("诊断说明");
+  }
+  expect(decodeRecoveryDecision(reply([step]), b).evidence).toEqual([step]);
+});
+
+it("VerificationGate delivers the field-specific evidence objection before admitting only the corrected decision", async () => {
+  const step = "implementation-fixture-1234";
+  const b = bounds({ evidence: [step] });
+  const objections: (string | undefined)[] = [];
+  let diagnoses = 0;
+  let attempts = 0;
+  const f = fixture({
+    diagnose: vi.fn(async (_failure, _previous, _floor, objection) => {
+      objections.push(objection);
+      return decodeRecoveryDecision(
+        JSON.stringify({
+          ...decision(),
+          evidence:
+            ++diagnoses === 1 ? [`${step}: ${"detail ".repeat(40)}`] : [step],
+          work: [
+            {
+              title: "Finish",
+              instructions: "Edit only missing behavior",
+              writes: ["src"],
+            },
+          ],
+        }),
+        b,
+      );
+    }),
+  });
+  await f.controller.verify("implementation", async () => {
+    if (++attempts === 1) throw new AttemptFailure("capture failure", [step]);
+  });
+  expect(diagnoses).toBe(2);
+  expect(objections[0]).toBeUndefined();
+  expect(objections[1]).toMatch(
+    /evidence.*exact failed step IDs.*cause.*strategy/u,
+  );
+  expect(f.records).toHaveLength(1);
+  expect(f.records[0].decision.evidence).toEqual([step]);
+  expect(f.ports.execute).toHaveBeenCalledTimes(1);
+});
