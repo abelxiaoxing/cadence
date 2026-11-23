@@ -7,6 +7,7 @@ import {
 import { FolderSetup } from "../../web/src/components/workspace/FolderSetup";
 import { ResizeHandle } from "../../web/src/layout/ResizeHandle";
 import { swipeShouldOpen } from "../../web/src/layout/swipe-drawer";
+import { mobileViewportMetrics } from "../../web/src/layout/use-mobile-viewport";
 import {
   CHAT_MIN,
   DEFAULT_LAYOUT,
@@ -173,4 +174,35 @@ it("keeps the 80px follow boundary, pauses on up-scroll, and follows growth only
   followLatest(viewport, true);
   expect(viewport.scrollTop).toBe(viewport.scrollHeight);
   expect(() => followLatest(null, true)).not.toThrow();
+});
+
+it("mobile shell moves statusbar and folder controls into the topbar detail sheet and tracks soft keyboards", () => {
+  expect(mobileViewportMetrics(844, 844, 0)).toEqual({
+    height: 844,
+    offsetTop: 0,
+    keyboardOpen: false,
+  });
+  expect(mobileViewportMetrics(844, 780, 0)).toEqual({
+    height: 780,
+    offsetTop: 0,
+    keyboardOpen: false,
+  });
+  expect(mobileViewportMetrics(844, 520, 12)).toEqual({
+    height: 520,
+    offsetTop: 12,
+    keyboardOpen: true,
+  });
+
+  vi.stubGlobal("window", { innerWidth: 390 });
+  const html = renderToStaticMarkup(
+    <FolderSetup ready onChooseFolder={() => {}} onRefresh={() => {}} />,
+  );
+  expect(html).toContain("is-mobile");
+  expect(html).toContain('class="topbar mobile-topbar"');
+  expect(html).toContain('class="mobile-title-trigger"');
+  expect(html).toContain('class="mobile-details-sheet"');
+  expect(html).toContain('class="mobile-details-folder"');
+  expect(html).toContain('class="mobile-details-status"');
+  expect(html).toContain('aria-label="Switch working folder"');
+  expect(html).not.toContain('<footer class="statusbar">');
 });

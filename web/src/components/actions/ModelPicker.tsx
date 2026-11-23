@@ -152,7 +152,14 @@ export function ModelPicker({
   }, []);
   useEffect(() => {
     if (!open) return;
-    if (browsable) search.current?.focus({ preventScroll: true });
+    const mobileSheet =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia(
+        "(max-width: 900px), ((pointer: coarse) and (hover: none))",
+      ).matches;
+    if (browsable && !mobileSheet)
+      search.current?.focus({ preventScroll: true });
     const outside = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) close(false);
     };
@@ -347,236 +354,250 @@ export function ModelPicker({
         <FiChevronDown aria-hidden="true" />
       </button>
       {open && (
-        <div
-          className="model-popover"
-          role="dialog"
-          aria-label={t("Choose a model")}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.stopPropagation();
-              close();
-            }
-          }}
-        >
-          {awaitingSend && (
-            <p className="model-popover-lead">
-              {t("Choose a model; your message is sent right after.")}
-            </p>
-          )}
-          {preview && (
-            <p className="model-popover-lead">
-              {t("Choose now; the model is verified when you send.")}
-            </p>
-          )}
-          {!browsable && !catalogError && (
-            <p className="model-popover-lead" role="status">
-              {availability.status === "preparing"
-                ? t(
-                    "Execution is being prepared for your Send. Models will load when it is ready.",
-                  )
-                : t(
-                    "Model selection is unavailable until the current conversation and execution state are observed.",
-                  )}
-            </p>
-          )}
-          {history && (
-            <p className="model-popover-lead">
-              {t("Last used: {model}", { model: label(history) })}
-              <br />
-              {t("Last used model; availability is checked when you send.")}
-            </p>
-          )}
-          {browsable && (
-            <label className="model-search">
-              <FiSearch aria-hidden="true" />
-              <input
-                ref={search}
-                type="search"
-                aria-label={t("Search models")}
-                placeholder={t("Search models…")}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    options()[0]?.focus();
-                  } else if (event.key === "Enter") {
-                    event.preventDefault();
-                    options()[0]?.click();
-                  }
-                }}
-              />
-            </label>
-          )}
-          {browsable && (
-            <div
-              className="model-list"
-              role="listbox"
-              aria-label={t("Models")}
-              ref={list}
-              onKeyDown={onListKey}
-            >
-              {loading && (
-                <p className="model-empty" role="status">
-                  {t("Reading models…")}
+        <>
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label={t("Close")}
+            className="model-popover-backdrop"
+            onClick={() => close(false)}
+          />
+          <div
+            className="model-popover"
+            role="dialog"
+            aria-label={t("Choose a model")}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                close();
+              }
+            }}
+          >
+            {awaitingSend && (
+              <p className="model-popover-lead">
+                {t("Choose a model; your message is sent right after.")}
+              </p>
+            )}
+            {preview && (
+              <p className="model-popover-lead">
+                {t("Choose now; the model is verified when you send.")}
+              </p>
+            )}
+            {!browsable && !catalogError && (
+              <p className="model-popover-lead" role="status">
+                {availability.status === "preparing"
+                  ? t(
+                      "Execution is being prepared for your Send. Models will load when it is ready.",
+                    )
+                  : t(
+                      "Model selection is unavailable until the current conversation and execution state are observed.",
+                    )}
+              </p>
+            )}
+            {history && (
+              <p className="model-popover-lead">
+                {t("Last used: {model}", { model: label(history) })}
+                <br />
+                {t("Last used model; availability is checked when you send.")}
+              </p>
+            )}
+            {browsable && (
+              <label className="model-search">
+                <FiSearch aria-hidden="true" />
+                <input
+                  ref={search}
+                  type="search"
+                  aria-label={t("Search models")}
+                  placeholder={t("Search models…")}
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      options()[0]?.focus();
+                    } else if (event.key === "Enter") {
+                      event.preventDefault();
+                      options()[0]?.click();
+                    }
+                  }}
+                />
+              </label>
+            )}
+            {browsable && (
+              <div
+                className="model-list"
+                role="listbox"
+                aria-label={t("Models")}
+                ref={list}
+                onKeyDown={onListKey}
+              >
+                {loading && (
+                  <p className="model-empty" role="status">
+                    {t("Reading models…")}
+                  </p>
+                )}
+                {groups.map(([provider, entries]) => (
+                  <fieldset key={provider} className="model-group">
+                    <legend className="model-group-label">{provider}</legend>
+                    {entries.map((entry) => {
+                      const usable = entry.eligibility === "candidate";
+                      const isCurrent = sameModel(entry, current);
+                      return (
+                        <button
+                          key={`${entry.provider}/${entry.model}`}
+                          type="button"
+                          role="option"
+                          aria-selected={isCurrent}
+                          className="model-option"
+                          disabled={
+                            !selectionEnabled || !usable || pending || locked
+                          }
+                          title={`${entry.provider}/${entry.model}${entry.api ? ` · ${entry.api}` : ""}`}
+                          onClick={() =>
+                            void choose(
+                              entry,
+                              nearestLevel(
+                                entry,
+                                current?.thinking ?? "medium",
+                              ),
+                            )
+                          }
+                        >
+                          <span className="model-option-name">
+                            {entry.model}
+                          </span>
+                          {!usable && (
+                            <span className="model-option-note">
+                              {entry.eligibility === "auth-unavailable"
+                                ? t("Credentials unavailable")
+                                : t("Not supported")}
+                            </span>
+                          )}
+                          {isCurrent && (!selected || !!draftModel) && (
+                            <span className="model-option-note">
+                              {t("Used when you send")}
+                            </span>
+                          )}
+                          {isCurrent && (
+                            <FiCheck
+                              className="model-option-check"
+                              aria-hidden="true"
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </fieldset>
+                ))}
+                {catalog?.status === "complete" && groups.length === 0 && (
+                  <p className="model-empty">
+                    {query.trim()
+                      ? t("No matching models.")
+                      : t(
+                          preview
+                            ? "No models are configured. Add a provider to Pi's models.json or auth.json, then read the list again."
+                            : "No models are configured. Add a provider to Pi's models.json or auth.json, then reopen the model picker.",
+                        )}
+                  </p>
+                )}
+              </div>
+            )}
+            {browsable && currentEntry && currentEntry.thinking.length > 1 && (
+              <div className="model-thinking">
+                <span className="model-thinking-label">{t("Thinking")}</span>
+                {currentEntry.thinking.map((level) => (
+                  <button
+                    key={level.level}
+                    type="button"
+                    aria-label={t("Thinking level: {level}", {
+                      level: t(LEVEL_LABELS[level.level]),
+                    })}
+                    aria-pressed={current?.thinking === level.level}
+                    disabled={
+                      !selectionEnabled ||
+                      currentEntry.eligibility !== "candidate" ||
+                      !level.selectable ||
+                      pending ||
+                      locked
+                    }
+                    onClick={() => void choose(currentEntry, level.level)}
+                  >
+                    {t(LEVEL_LABELS[level.level])}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="model-popover-notes">
+              {preview && !catalogError && (
+                <button
+                  type="button"
+                  className="link"
+                  disabled={loading || pending}
+                  onClick={() => reread(true)}
+                >
+                  {t("Refresh models")}
+                </button>
+              )}
+              {locked && (
+                <p>
+                  {lockReason ??
+                    t("Switch models after the current reply finishes.")}
                 </p>
               )}
-              {groups.map(([provider, entries]) => (
-                <fieldset key={provider} className="model-group">
-                  <legend className="model-group-label">{provider}</legend>
-                  {entries.map((entry) => {
-                    const usable = entry.eligibility === "candidate";
-                    const isCurrent = sameModel(entry, current);
-                    return (
-                      <button
-                        key={`${entry.provider}/${entry.model}`}
-                        type="button"
-                        role="option"
-                        aria-selected={isCurrent}
-                        className="model-option"
-                        disabled={
-                          !selectionEnabled || !usable || pending || locked
-                        }
-                        title={`${entry.provider}/${entry.model}${entry.api ? ` · ${entry.api}` : ""}`}
-                        onClick={() =>
-                          void choose(
-                            entry,
-                            nearestLevel(entry, current?.thinking ?? "medium"),
-                          )
-                        }
-                      >
-                        <span className="model-option-name">{entry.model}</span>
-                        {!usable && (
-                          <span className="model-option-note">
-                            {entry.eligibility === "auth-unavailable"
-                              ? t("Credentials unavailable")
-                              : t("Not supported")}
-                          </span>
-                        )}
-                        {isCurrent && (!selected || !!draftModel) && (
-                          <span className="model-option-note">
-                            {t("Used when you send")}
-                          </span>
-                        )}
-                        {isCurrent && (
-                          <FiCheck
-                            className="model-option-check"
-                            aria-hidden="true"
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </fieldset>
-              ))}
-              {catalog?.status === "complete" && groups.length === 0 && (
-                <p className="model-empty">
-                  {query.trim()
-                    ? t("No matching models.")
+              {catalog?.status === "capacity" && (
+                <p role="alert">
+                  {t(
+                    "Catalog capacity exceeded; no partial model list is selectable.",
+                  )}
+                </p>
+              )}
+              {!!catalog?.withheld && (
+                <p role="alert">
+                  {t(
+                    catalog.withheld === 1
+                      ? "{count} model withheld: its provider or model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json."
+                      : "{count} models withheld: their provider or model IDs contain a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json.",
+                    { count: catalog.withheld },
+                  )}
+                </p>
+              )}
+              {(ready || !!onPreviewChoice) && catalogError && (
+                <p role="alert">
+                  {t("The model list could not be read ({code}).", {
+                    code: catalogError,
+                  })}{" "}
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => reread(true)}
+                  >
+                    {t("Read again")}
+                  </button>
+                </p>
+              )}
+              {error && (
+                <p role="alert">
+                  {MODEL_ERRORS[error]
+                    ? t(MODEL_ERRORS[error])
+                    : t("The model was not changed ({code}).", {
+                        code: error,
+                      })}
+                </p>
+              )}
+              {selectionEnabled && (
+                <p className="model-popover-scope">
+                  {pending
+                    ? t("Switching model…")
                     : t(
-                        preview
-                          ? "No models are configured. Add a provider to Pi's models.json or auth.json, then read the list again."
-                          : "No models are configured. Add a provider to Pi's models.json or auth.json, then reopen the model picker.",
+                        scope === "next-conversation"
+                          ? "Used for your next new conversation after choosing a folder."
+                          : "This model is used for future messages in this conversation. Work already started keeps its original model.",
                       )}
                 </p>
               )}
             </div>
-          )}
-          {browsable && currentEntry && currentEntry.thinking.length > 1 && (
-            <div className="model-thinking">
-              <span className="model-thinking-label">{t("Thinking")}</span>
-              {currentEntry.thinking.map((level) => (
-                <button
-                  key={level.level}
-                  type="button"
-                  aria-label={t("Thinking level: {level}", {
-                    level: t(LEVEL_LABELS[level.level]),
-                  })}
-                  aria-pressed={current?.thinking === level.level}
-                  disabled={
-                    !selectionEnabled ||
-                    currentEntry.eligibility !== "candidate" ||
-                    !level.selectable ||
-                    pending ||
-                    locked
-                  }
-                  onClick={() => void choose(currentEntry, level.level)}
-                >
-                  {t(LEVEL_LABELS[level.level])}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="model-popover-notes">
-            {preview && !catalogError && (
-              <button
-                type="button"
-                className="link"
-                disabled={loading || pending}
-                onClick={() => reread(true)}
-              >
-                {t("Refresh models")}
-              </button>
-            )}
-            {locked && (
-              <p>
-                {lockReason ??
-                  t("Switch models after the current reply finishes.")}
-              </p>
-            )}
-            {catalog?.status === "capacity" && (
-              <p role="alert">
-                {t(
-                  "Catalog capacity exceeded; no partial model list is selectable.",
-                )}
-              </p>
-            )}
-            {!!catalog?.withheld && (
-              <p role="alert">
-                {t(
-                  catalog.withheld === 1
-                    ? "{count} model withheld: its provider or model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json."
-                    : "{count} models withheld: their provider or model IDs contain a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json.",
-                  { count: catalog.withheld },
-                )}
-              </p>
-            )}
-            {(ready || !!onPreviewChoice) && catalogError && (
-              <p role="alert">
-                {t("The model list could not be read ({code}).", {
-                  code: catalogError,
-                })}{" "}
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => reread(true)}
-                >
-                  {t("Read again")}
-                </button>
-              </p>
-            )}
-            {error && (
-              <p role="alert">
-                {MODEL_ERRORS[error]
-                  ? t(MODEL_ERRORS[error])
-                  : t("The model was not changed ({code}).", {
-                      code: error,
-                    })}
-              </p>
-            )}
-            {selectionEnabled && (
-              <p className="model-popover-scope">
-                {pending
-                  ? t("Switching model…")
-                  : t(
-                      scope === "next-conversation"
-                        ? "Used for your next new conversation after choosing a folder."
-                        : "This model is used for future messages in this conversation. Work already started keeps its original model.",
-                    )}
-              </p>
-            )}
           </div>
-        </div>
+        </>
       )}
     </div>
   );

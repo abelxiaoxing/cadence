@@ -7,35 +7,16 @@ import { Crystal } from "../../optics/Crystal";
 export function ChatWelcome({
   hint,
   children,
-  onStart,
 }: {
   hint?: string;
-  onStart?(prompt: string): void;
   children?: ReactNode;
 }) {
-  const { t } = useT();
   return (
     <div className="empty-state chat-welcome">
       <span className="empty-logo" aria-hidden="true">
         <Crystal />
       </span>
-      <h2>{t("What would you like to work on?")}</h2>
       {hint && <p>{hint}</p>}
-      {onStart && (
-        <div className="entry-starters">
-          {(["Explain this project", "Help me plan a change"] as const).map(
-            (prompt) => (
-              <button
-                key={prompt}
-                type="button"
-                onClick={() => onStart(t(prompt))}
-              >
-                {t(prompt)}
-              </button>
-            ),
-          )}
-        </div>
-      )}
       {children}
     </div>
   );

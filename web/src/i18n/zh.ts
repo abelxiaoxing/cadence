@@ -2,8 +2,6 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
-  "Explain this project": "介绍一下这个项目",
-  "Help me plan a change": "帮我规划一项改动",
   "Message received": "消息已接收",
   "{count} messages received": "已接收 {count} 条消息",
   "Conversation updated": "会话已更新",
@@ -555,7 +553,6 @@ export const zh = {
   "Cadence task": "Cadence 任务",
   "Conversation mode": "对话模式",
   "Back to ordinary conversation": "返回普通对话",
-  "What would you like to work on?": "今天想做些什么？",
   "Chat normally, or start with /cadence to prepare a task. Nothing starts until you send.":
     "直接聊天，或以 /cadence 开头准备任务。发送前不会启动任何工作。",
   "Message, or /cadence followed by a task…":
@@ -746,8 +743,6 @@ export const zh = {
   "No active runs": "没有活动运行",
   "Active roster unavailable; absence is not proof of settlement.":
     "活动运行列表不可用；没有记录不代表已结束。",
-  "unbuilt source": "未构建的源码",
-  "Local browser build: {build}.": "本地浏览器构建：{build}。",
   "Service unavailable": "服务不可用",
   "Task snapshot not observed yet": "尚未观察到任务快照",
   "No task selected": "未选择任务",
@@ -1446,6 +1441,12 @@ export const zh = {
   "Files to reference": "可引用的文件",
   "Files in the conversation folder": "对话文件夹里的文件",
   "Enter inserts the path · Esc closes": "回车插入路径 · Esc 关闭",
+  "Session details": "会话详情",
+  "Working folder": "工作目录",
+  Status: "状态",
+  Preferences: "偏好设置",
+  "Close details": "关闭详情",
+  "New conversation runs in this folder": "新会话将在这个目录中运行",
   "This Cadence conversation format is no longer supported. Start a new conversation; existing files are kept ({code}).":
     "此版本不再支持这类旧 Cadence 会话。请新建会话；原有文件会保留（{code}）。",
 } satisfies Record<string, string>;

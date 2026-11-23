@@ -238,7 +238,7 @@ button:focus-visible {
 }
 `;
 
-export const AUTH_PAGE_CSP = `default-src 'none'; style-src 'sha256-${createHash("sha256").update(styles).digest("base64")}'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
+export const AUTH_PAGE_CSP = `default-src 'none'; style-src 'sha256-${createHash("sha256").update(styles).digest("base64")}'; img-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
 
 function escapeAttr(value: string): string {
   return value
@@ -259,8 +259,17 @@ export function renderAuthPage(options: AuthPageOptions): string {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9fc">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#080a0f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Cadence">
+<link rel="manifest" href="/assets/app.webmanifest">
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>Cadence</title>
 <style>${styles}</style>
 </head>

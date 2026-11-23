@@ -8,9 +8,21 @@ import { readBounded, safeDirectory } from "./workspace.ts";
 
 export const ASSET_MEMBER_BYTES = 16 * 1024 * 1024;
 export const ASSET_TOTAL_BYTES = 64 * 1024 * 1024;
+export const PUBLIC_PWA_ASSETS: ReadonlySet<string> = new Set([
+  "assets/app.webmanifest",
+  "assets/icon.svg",
+  "assets/icon-192.png",
+  "assets/icon-512.png",
+  "assets/icon-maskable-512.png",
+  "assets/apple-touch-icon.png",
+]);
+export const PUBLIC_PWA_PATHS: ReadonlySet<string> = new Set(
+  [...PUBLIC_PWA_ASSETS].map((name) => `/${name}`),
+);
 const fixed = new Set([
   "index.html",
   "assets/start.js",
+  ...PUBLIC_PWA_ASSETS,
   "assets/cadence.js",
   "assets/cadence.css",
   "assets/react.js",
@@ -31,6 +43,10 @@ export function assetMime(name: string): StaticAsset["contentType"] {
   if (name === "index.html") return "text/html; charset=utf-8";
   if (name.endsWith(".js")) return "text/javascript; charset=utf-8";
   if (name.endsWith(".css")) return "text/css; charset=utf-8";
+  if (name.endsWith(".webmanifest"))
+    return "application/manifest+json; charset=utf-8";
+  if (name.endsWith(".svg")) return "image/svg+xml";
+  if (name.endsWith(".png")) return "image/png";
   if (name.endsWith(".woff2")) return "font/woff2";
   if (name.endsWith(".woff")) return "font/woff";
   return "font/ttf";
@@ -183,7 +199,7 @@ export function loadWebAssets(
       path:
         a.name === "index.html"
           ? "/app"
-          : a.name === "assets/start.js"
+          : a.name === "assets/start.js" || PUBLIC_PWA_ASSETS.has(a.name)
             ? `/${a.name}`
             : `${webBuildBase(manifest.buildId)}${a.name}`,
       contentType: assetMime(a.name),

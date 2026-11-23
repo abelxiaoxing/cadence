@@ -18,7 +18,6 @@ const f = vi.hoisted(() => ({
   cells: [] as { value: unknown }[],
   composer: undefined as ChatComposerProps | undefined,
   keyDown: undefined as ((event: unknown) => void) | undefined,
-  start: undefined as ((text: string) => void) | undefined,
   summary: null as ChatSummary | null | undefined,
   contextLoaded: true,
   modeLoaded: true,
@@ -70,19 +69,6 @@ vi.mock("../../web/src/components/workspace/ChatComposer", async (load) => {
         throw Error("missing textarea");
       f.keyDown = field.props.onKeyDown;
       return form;
-    },
-  };
-});
-vi.mock("../../web/src/components/workspace/ChatWelcome", async (load) => {
-  const actual =
-    await load<
-      typeof import("../../web/src/components/workspace/ChatWelcome")
-    >();
-  return {
-    ...actual,
-    ChatWelcome(props: Parameters<typeof actual.ChatWelcome>[0]) {
-      f.start = props.onStart;
-      return <actual.ChatWelcome {...props} />;
     },
   };
 });
@@ -189,9 +175,11 @@ function workspace(wire = transport()) {
   function Probe({
     actionsReady,
     freshNew,
+    mobile = false,
   }: {
     actionsReady: boolean;
     freshNew: boolean;
+    mobile?: boolean;
   }) {
     f.cursor = 0;
     try {
@@ -201,6 +189,9 @@ function workspace(wire = transport()) {
         workspaceId: "workspace",
         initialCwd: "/fixture",
         freshNew,
+        mobile,
+        workingFolder: "/fixture/cadence",
+        onOpenFolder: f.no,
         enabled: true,
         actionsReady,
         viewer: {
@@ -222,11 +213,15 @@ function workspace(wire = transport()) {
     actionsReady = true,
     locale: "en" | "zh" = "en",
     freshNew = false,
+    mobile = false,
   ) => {
-    f.start = undefined;
     const html = renderToStaticMarkup(
       <LocaleProvider initial={locale}>
-        <Probe actionsReady={actionsReady} freshNew={freshNew} />
+        <Probe
+          actionsReady={actionsReady}
+          freshNew={freshNew}
+          mobile={mobile}
+        />
       </LocaleProvider>,
     );
     if (!f.composer) throw Error("composer missing");
@@ -235,32 +230,20 @@ function workspace(wire = transport()) {
   return { draw, command, epoch };
 }
 
-it("only an observed new session offers local starters; they never replace text or attachments", () => {
+it("only an observed new session renders the minimal welcome without redundant headings or starters", () => {
   const w = workspace();
   f.summary = undefined;
-  expect(w.draw().html).not.toContain("entry-starters");
+  expect(w.draw().html).not.toContain("chat-welcome");
   f.summary = null;
   f.error = "unavailable";
-  expect(w.draw().html).not.toContain("entry-starters");
+  expect(w.draw().html).not.toContain("chat-welcome");
   f.error = "";
-  const { html, input } = w.draw();
+  const { html } = w.draw();
   expect(html).toContain('data-entry="new"');
+  expect(html).toContain("chat-welcome");
   expect(html.match(/<textarea\b/g)).toHaveLength(1);
-  expect(html).toContain("Explain this project");
-  if (!f.start) throw Error("starter missing");
-  const start = f.start;
-  start("Explain this project");
-  expect(w.draw().input.draft).toBe("Explain this project");
-  input.onDraft(" ");
-  start("Must not overwrite whitespace");
-  expect(w.draw().input.draft).toBe(" ");
-  expect(f.start).toBeUndefined();
-  input.onDraft("");
-  const photo = new File(["image"], "draft.png", { type: "image/png" });
-  input.onAddImages([photo]);
-  const withPhoto = w.draw();
-  expect(withPhoto.input.images).toEqual([photo]);
-  expect(withPhoto.html).not.toContain("entry-starters");
+  expect(html).not.toContain("entry-starters");
+  expect(html).not.toContain("What would you like to work on?");
   expect(w.command).not.toHaveBeenCalled();
 });
 it.each([
@@ -513,14 +496,14 @@ it("mode toggle defers entering and exiting Cadence until explicit Send, and /ca
   expect(initial.html).toContain(
     '<span class="mode-switch" aria-hidden="true">',
   );
-  expect(initial.html).not.toContain("composer-hint mode-pending");
+  expect(initial.html).not.toContain("mode-pending");
   initial.input.cadence.onClick();
   const armed = w.draw(true, "zh");
   expect(w.command).not.toHaveBeenCalled();
   expect(armed.html).toContain('class="mode-toggle on armed"');
   expect(armed.html).toContain('aria-pressed="true"');
-  expect(armed.html).toContain('class="composer-hint mode-pending"');
-  expect(armed.html).toContain("发送下一条消息时将开启 Cadence 模式。");
+  expect(armed.html).toContain('<span class="composer-hint"></span>');
+  expect(armed.html).not.toContain("mode-pending");
   // Clicking again cancels cleanly without sending.
   armed.input.cadence.onClick();
   expect(w.draw(true, "zh").html).toContain('class="mode-toggle off"');
@@ -543,7 +526,7 @@ it("mode toggle defers entering and exiting Cadence until explicit Send, and /ca
   w.draw(true, "zh").input.onDraft("/cadence 手动进入目标");
   const prefixed = w.draw(true, "zh");
   expect(prefixed.html).toContain('class="mode-toggle on armed"');
-  expect(prefixed.html).toContain("发送下一条消息时将开启 Cadence 模式。");
+  expect(prefixed.html).toContain('<span class="composer-hint"></span>');
   prefixed.input.cadence.onClick();
   expect(w.draw(true, "zh").input.draft).toBe("/cadence 手动进入目标");
   expect(currentToasts().at(-1)?.text).toContain("/cadence");
@@ -565,9 +548,7 @@ it("mode toggle defers entering and exiting Cadence until explicit Send, and /ca
   const leaving = w.draw(true, "zh");
   expect(w.command).not.toHaveBeenCalled();
   expect(leaving.html).toContain('class="mode-toggle off leaving"');
-  expect(leaving.html).toContain(
-    "发送下一条消息时将退出 Cadence 并按普通对话发送。",
-  );
+  expect(leaving.html).toContain('<span class="composer-hint"></span>');
   // Typing /cadence while pending exit overrides back to ON.
   leaving.input.onDraft("/cadence 继续保持");
   expect(w.draw(true, "zh").html).toContain('class="mode-toggle on"');
@@ -593,7 +574,7 @@ it("mode toggle defers entering and exiting Cadence until explicit Send, and /ca
   w.draw(true, "zh").input.onDraft("退出 Cadence");
   const phraseLeaving = w.draw(true, "zh");
   expect(phraseLeaving.html).toContain('class="mode-toggle off leaving"');
-  expect(phraseLeaving.html).toContain("发送下一条消息时将退出 Cadence 模式。");
+  expect(phraseLeaving.html).toContain('<span class="composer-hint"></span>');
   phraseLeaving.input.onSend();
   await vi.waitFor(() => expect(w.command).toHaveBeenCalledTimes(1));
   expect(w.command.mock.calls[0][0]).toMatchObject({
@@ -622,7 +603,8 @@ it("freshNew opens directly in the centered new-conversation layout without flas
   expect(fresh.html).not.toContain('class="conversation-header"');
   expect(fresh.html).not.toContain("新对话");
   expect(fresh.html).not.toContain("普通对话");
-  expect(fresh.html).toContain("entry-starters");
+  expect(fresh.html).toContain("chat-welcome");
+  expect(fresh.html).not.toContain("entry-starters");
   expect(fresh.html).toContain('class="mode-toggle off"');
   expect(fresh.html).not.toContain("正在读取对话…");
   expect(fresh.html).not.toContain("读取当前上下文后才能发送");
@@ -634,7 +616,7 @@ it("freshNew opens directly in the centered new-conversation layout without flas
   f.error = "unavailable";
   const failed = w.draw(true, "zh", true);
   expect(failed.html).not.toContain('data-entry="new"');
-  expect(failed.html).not.toContain("entry-starters");
+  expect(failed.html).not.toContain("chat-welcome");
   expect(failed.html).toContain("读取当前上下文后才能发送");
 });
 
@@ -724,4 +706,14 @@ it("lingering pending mode reconciles with server state and can be cancelled dur
   expect(w.draw(true, "zh").html).toContain('class="mode-toggle on armed"');
   f.cadence = true;
   expect(w.draw(true, "zh").html).toContain('class="mode-toggle on"');
+});
+
+it("mobile new conversation surfaces a centered working-folder pill while desktop omits it", () => {
+  const w = workspace();
+  const desktop = w.draw(true, "zh", false, false).html;
+  expect(desktop).not.toContain("mobile-welcome-folder");
+  const mobile = w.draw(true, "zh", false, true).html;
+  expect(mobile).toContain('class="mobile-welcome-folder"');
+  expect(mobile).toContain("新会话将在这个目录中运行");
+  expect(mobile).toContain("<span>cadence</span>");
 });

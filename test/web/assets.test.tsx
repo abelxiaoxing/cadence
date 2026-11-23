@@ -30,6 +30,8 @@ import {
   assetMime,
   decodeAssetManifest,
   loadWebAssets,
+  PUBLIC_PWA_ASSETS,
+  PUBLIC_PWA_PATHS,
 } from "../../src/service-assets.ts";
 import * as store from "../../src/workspace.ts";
 import { extractVisStyles } from "../../web/build-vis-style";
@@ -132,13 +134,33 @@ it("loads exact compiled closure and all 60 actual KaTeX fonts, preserving full 
   );
   expect(urls[0]).toBe("/assets/start.js");
   expect(
-    urls.slice(1).every((url) => url.startsWith(base) && paths.has(url)),
+    urls
+      .slice(1)
+      .every(
+        (url) =>
+          (url.startsWith(base) || PUBLIC_PWA_PATHS.has(url)) && paths.has(url),
+      ),
   ).toBe(true);
   expect(urls).toContain(`${base}vis-timeline.css`);
+  expect(urls).toContain("/assets/app.webmanifest");
+  expect(urls).toContain("/assets/icon.svg");
+  expect(urls).toContain("/assets/apple-touch-icon.png");
+  expect(html).not.toContain('crossorigin="use-credentials"');
+  expect(html).toContain("interactive-widget=resizes-content");
+  expect(html).toContain('name="apple-mobile-web-app-capable" content="yes"');
+  expect(html).toContain(
+    'name="apple-mobile-web-app-status-bar-style" content="default"',
+  );
+  expect(html).toContain('name="theme-color"');
   for (const file of manifest.assets.filter(
-    (file) => file.name !== "index.html" && file.name !== "assets/start.js",
+    (file) =>
+      file.name !== "index.html" &&
+      file.name !== "assets/start.js" &&
+      !PUBLIC_PWA_ASSETS.has(file.name),
   ))
     expect(paths.has(`/ui/${manifest.buildId}/${file.name}`)).toBe(true);
+  for (const name of PUBLIC_PWA_ASSETS)
+    expect(paths.has(`/${name}`)).toBe(true);
   for (const a of manifest.assets)
     for (const ref of a.references)
       expect(manifest.assets.some((b) => b.name === ref)).toBe(true);
@@ -231,6 +253,9 @@ it("serves compiled flat fonts/JS/CSS behind auth with exact MIME and explicit C
     "script-src 'self'",
   );
   expect(response.headers["content-security-policy"]).toContain(
+    "manifest-src 'self'",
+  );
+  expect(response.headers["content-security-policy"]).toContain(
     "style-src-elem 'self'; style-src-attr 'unsafe-inline'",
   );
   expect(response.headers["content-security-policy"]).not.toContain(
@@ -264,6 +289,21 @@ it("serves compiled flat fonts/JS/CSS behind auth with exact MIME and explicit C
       (await request(origin, old, { headers: { "x-cadence-local": f.local } }))
         .status,
     ).not.toBe(200);
+  for (const pwaPath of PUBLIC_PWA_PATHS) {
+    const first = await request(origin, pwaPath);
+    expect(first.status).toBe(200);
+    expect(first.headers["cache-control"]).toBe("public, no-cache");
+    const etag = first.headers.etag;
+    expect(etag).toMatch(/^"[a-f0-9]{64}"$/);
+    const cached = await request(origin, pwaPath, {
+      headers: { "if-none-match": etag as string },
+    });
+    expect(cached.status).toBe(304);
+  }
+  expect((await request(origin, "/assets/start.js")).status).toBe(401);
+  expect(
+    (await request(origin, `/ui/${manifest.buildId}/assets/cadence.js`)).status,
+  ).toBe(401);
   expect((await request(origin, "/assets/KaTeX_Main-Regular.ttf")).status).toBe(
     401,
   );

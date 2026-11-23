@@ -46,6 +46,7 @@ import {
   stepHistory,
 } from "../../composer/prompt-history";
 import { describeError, useT } from "../../i18n/locale";
+import { DRAWER_BREAKPOINT } from "../../layout/workspace-layout";
 import { ModelPicker } from "../actions/ModelPicker";
 import { CadenceModeButton } from "./CadenceModeButton";
 import { DraftImage } from "./ChatImages";
@@ -54,6 +55,8 @@ import { DraftImage } from "./ChatImages";
  * lower bound means automatic again. */
 export const COMPOSER_MIN_HEIGHT = 64;
 export const COMPOSER_MAX_HEIGHT = 320;
+export const COMPOSER_MOBILE_MIN_HEIGHT = 34;
+export const COMPOSER_MOBILE_MAX_HEIGHT = 132;
 export const COMPOSER_HEIGHT_KEY = "cadence:composer-height";
 const STEP = 16;
 
@@ -72,8 +75,34 @@ export const composerHeightCap = (viewport: number): number =>
   viewport > 0
     ? Math.max(160, Math.min(COMPOSER_MAX_HEIGHT, Math.floor(viewport * 0.42)))
     : COMPOSER_MAX_HEIGHT;
-const heightCap = () =>
-  composerHeightCap(typeof window === "undefined" ? 0 : window.innerHeight);
+/** Mobile keeps a compact single-line entry capped so messages stay visible above the soft keyboard. */
+export const composerMobileHeightCap = (viewport: number): number =>
+  viewport > 0
+    ? Math.max(
+        88,
+        Math.min(COMPOSER_MOBILE_MAX_HEIGHT, Math.floor(viewport * 0.28)),
+      )
+    : COMPOSER_MOBILE_MAX_HEIGHT;
+export const composerMinHeight = (viewportWidth: number): number =>
+  viewportWidth > 0 && viewportWidth <= DRAWER_BREAKPOINT
+    ? COMPOSER_MOBILE_MIN_HEIGHT
+    : COMPOSER_MIN_HEIGHT;
+const isMobileViewport = () =>
+  typeof window !== "undefined" &&
+  window.innerWidth > 0 &&
+  window.innerWidth <= DRAWER_BREAKPOINT;
+const isTouchOnlyKeyboard = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(pointer: coarse) and (hover: none)").matches;
+const viewportHeight = () => {
+  if (typeof window === "undefined") return 0;
+  const vv = window.visualViewport?.height;
+  return Number.isFinite(vv) && vv && vv > 0
+    ? Math.round(vv)
+    : window.innerHeight;
+};
+const heightCap = () => composerHeightCap(viewportHeight());
 
 export interface ChatComposerProps {
   inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -171,13 +200,17 @@ export function ChatComposer({
     void frame;
     const ta = inputRef.current;
     if (!ta) return;
-    const cap = heightCap();
+    const compact = isMobileViewport();
+    const minHeight = composerMinHeight(window.innerWidth);
+    const cap = compact
+      ? composerMobileHeightCap(viewportHeight())
+      : heightCap();
     ta.style.height = "auto";
     const natural = ta.scrollHeight;
     const next =
-      manual !== null
+      !compact && manual !== null
         ? Math.min(manual, cap)
-        : Math.min(Math.max(natural, COMPOSER_MIN_HEIGHT), cap);
+        : Math.min(Math.max(natural, minHeight), cap);
     ta.style.height = `${next}px`;
     ta.style.overflowY = natural > next ? "auto" : "hidden";
     setHeight(next);
@@ -189,17 +222,22 @@ export function ChatComposer({
     if (!el || typeof ResizeObserver === "undefined") return;
     let last = el.offsetHeight;
     const measure = () => {
-      setFrame(`${el.clientWidth}:${window.innerHeight}`);
+      setFrame(
+        `${el.clientWidth}:${viewportHeight()}:${isMobileViewport() ? "m" : "d"}`,
+      );
       if (el.offsetHeight === last) return;
       last = el.offsetHeight;
       resized.current?.();
     };
     const observer = new ResizeObserver(measure);
     observer.observe(el);
+    const vv = typeof window === "undefined" ? null : window.visualViewport;
     window.addEventListener("resize", measure);
+    vv?.addEventListener("resize", measure);
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", measure);
+      vv?.removeEventListener("resize", measure);
     };
   }, []);
   const chooseHeight = (value: number | null, remember: boolean) => {
@@ -340,6 +378,9 @@ export function ChatComposer({
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
+      // Touch virtual keyboards lack Shift+Enter: let Enter insert a newline
+      // while the circular Send control next to the field submits explicitly.
+      if (isTouchOnlyKeyboard()) return;
       event.preventDefault();
       if (event.repeat) return;
       // Into the running reply: Enter steers, Alt+Enter queues behind it.
@@ -536,7 +577,7 @@ export function ChatComposer({
         aria-activedescendant={open ? rowId : undefined}
         value={draft}
         placeholder={t("Message")}
-        rows={2}
+        rows={1}
         onInput={(event) => {
           const { inputType, data } = event.nativeEvent as InputEvent;
           const { value, selectionStart } = event.currentTarget;
@@ -572,7 +613,7 @@ export function ChatComposer({
       <div className="composer-toolbar">
         <button
           type="button"
-          className="ghost icon"
+          className="ghost icon composer-attach"
           disabled={imagesLocked}
           aria-label={t("Add images")}
           title={imageLockReason ?? t("Add images")}
@@ -582,20 +623,12 @@ export function ChatComposer({
           <FiImage aria-hidden="true" />
         </button>
         <ModelPicker {...model} />
-        <span
-          className={`composer-hint${
-            !running && cadence.known && cadence.armed !== cadence.active
-              ? " mode-pending"
-              : ""
-          }`}
-        >
-          {(running && input?.enabled) ||
-          (!running && cadence.known && cadence.armed !== cadence.active)
-            ? hint
-            : null}
+        <span className="composer-hint">
+          {running && input?.enabled ? hint : null}
         </span>
+        <CadenceModeButton {...cadence} />
+        <span className="composer-mobile-sep" aria-hidden="true" />
         <div className="composer-toolbar composer-delivery">
-          <CadenceModeButton {...cadence} />
           {running && input?.enabled && (
             <span className="composer-split">
               <button

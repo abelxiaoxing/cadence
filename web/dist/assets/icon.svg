@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Cadence</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#141b29" />
+      <stop offset="100%" stop-color="#080a0f" />
+    </linearGradient>
+    <linearGradient id="crystal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#648dff" />
+      <stop offset="100%" stop-color="#305bb9" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+  <g transform="translate(94 94) scale(9)">
+    <path
+      d="m18 2 13 9-4 16-9 7-9-7-4-16Z"
+      fill="url(#crystal)"
+      opacity=".34"
+    />
+    <g
+      fill="none"
+      stroke="#eef2f8"
+      stroke-width="1.65"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="m18 2 13 9-4 16-9 7-9-7-4-16Z" />
+      <path d="m5 11 13 5 13-5M18 2v14l-9 11m9-11 9 11m-9-11v18" />
+    </g>
+  </g>
+</svg>

@@ -29,6 +29,20 @@ export default defineConfig({
             "utf8",
           ),
         });
+        for (const file of [
+          "app.webmanifest",
+          "icon.svg",
+          "icon-192.png",
+          "icon-512.png",
+          "icon-maskable-512.png",
+          "apple-touch-icon.png",
+        ]) {
+          this.emitFile({
+            type: "asset",
+            fileName: `assets/${file}`,
+            source: readFileSync(new URL(`./src/pwa/${file}`, import.meta.url)),
+          });
+        }
       },
       transformIndexHtml: {
         order: "post",
@@ -37,6 +51,31 @@ export default defineConfig({
             tag: "script",
             attrs: { src: "/assets/start.js" },
             injectTo: "head-prepend" as const,
+          },
+          {
+            tag: "link",
+            attrs: {
+              rel: "manifest",
+              href: "/assets/app.webmanifest",
+            },
+            injectTo: "head" as const,
+          },
+          {
+            tag: "link",
+            attrs: {
+              rel: "icon",
+              type: "image/svg+xml",
+              href: "/assets/icon.svg",
+            },
+            injectTo: "head" as const,
+          },
+          {
+            tag: "link",
+            attrs: {
+              rel: "apple-touch-icon",
+              href: "/assets/apple-touch-icon.png",
+            },
+            injectTo: "head" as const,
           },
         ],
       },

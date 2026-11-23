@@ -1,13 +1,30 @@
 {
   "schema": "cadence-web-assets/1",
-  "sourceHash": "6fd6b83f9145987de27bf47ba2586fcee995ad90c9d1c41aceeadef1129397cf",
+  "sourceHash": "12176ad9c657cbb466afce61b9e25a3c0abfa03eecfb3ba008903f1c60659205",
   "contractHash": "ccf4728f55f59f55de234c1ff1a5f3e19cc86f0053579142b02d72e3d45b9667",
-  "buildId": "136796e960a299aeb843dd017815f748cf2aa8620e719d8c8dfb9bcc18711bf0",
+  "buildId": "0279f27f9acd0efda21480db80d0a74b769995e0726b185b3a78fa47ba32ca01",
   "assets": [
     {
+      "name": "assets/app.webmanifest",
+      "bytes": 762,
+      "sha256": "e3fec1701c0a81a5edd3808f2e84be08e07aa09294b931551f3fdf3623f3a494",
+      "references": [
+        "assets/icon-192.png",
+        "assets/icon-512.png",
+        "assets/icon-maskable-512.png",
+        "assets/icon.svg"
+      ]
+    },
+    {
+      "name": "assets/apple-touch-icon.png",
+      "bytes": 6511,
+      "sha256": "d448a83dde52c1ad4adb0317aec7fda3f82ecb12c002bb53b1bbe80886baf62f",
+      "references": []
+    },
+    {
       "name": "assets/cadence.css",
-      "bytes": 207048,
-      "sha256": "18b99f91f7b7168e9982aaece780155b088beeb3d7f0aed0954df40c61196dfb",
+      "bytes": 214686,
+      "sha256": "5e4c1ddab610b83160244db5c233e0ea6fdb233e452563904cc81d26ca7f3aa8",
       "references": [
         "assets/KaTeX_AMS-Regular.ttf",
         "assets/KaTeX_AMS-Regular.woff",
@@ -73,14 +90,38 @@
     },
     {
       "name": "assets/cadence.js",
-      "bytes": 603725,
-      "sha256": "931bcfba6789fcd3d5843855721d07c7cf538de2c54b0cf5dd867e5121c4d7da",
+      "bytes": 610736,
+      "sha256": "423c0082fc9b101e16049a5e4eeb6d9379e5c270ebcab34a7a74b0bd543a4702",
       "references": [
         "assets/markdown.js",
         "assets/react.js",
         "assets/rolldown-runtime.js",
         "assets/timeline-client.js"
       ]
+    },
+    {
+      "name": "assets/icon-192.png",
+      "bytes": 13504,
+      "sha256": "37c7e182b88f95d0e855c037a7bd311b50d64e30584224a200fd7d20b104cbb0",
+      "references": []
+    },
+    {
+      "name": "assets/icon-512.png",
+      "bytes": 37688,
+      "sha256": "8e5accda90d1e205f89abb7fa8ae9c01743e338d6a8a5490bc347478fc33f424",
+      "references": []
+    },
+    {
+      "name": "assets/icon-maskable-512.png",
+      "bytes": 17075,
+      "sha256": "54a1527912cabaabbfdd812a95660dafdb6bd2ca43e030f45ac3f1cea0c6fea9",
+      "references": []
+    },
+    {
+      "name": "assets/icon.svg",
+      "bytes": 954,
+      "sha256": "c6a41e2236a1e8b0dd1cf49027537d9737f143a97585271f210c6e0933f12346",
+      "references": []
     },
     {
       "name": "assets/KaTeX_AMS-Regular.ttf",
@@ -496,11 +537,14 @@
     },
     {
       "name": "index.html",
-      "bytes": 1298,
-      "sha256": "a6334d00a2e113ebc087373661809b50b0ae403c0c11507ed0ba376c079c84cf",
+      "bytes": 1963,
+      "sha256": "f36ecd104341566c269380f5e0324604cb6b966aeb1af0635d015f34b8ce2104",
       "references": [
+        "assets/app.webmanifest",
+        "assets/apple-touch-icon.png",
         "assets/cadence.css",
         "assets/cadence.js",
+        "assets/icon.svg",
         "assets/markdown.js",
         "assets/react.js",
         "assets/rolldown-runtime.js",

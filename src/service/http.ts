@@ -10,6 +10,7 @@ import {
 import type { Socket } from "node:net";
 import { gzipSync, constants as zlib } from "node:zlib";
 import { type WebSocket, WebSocketServer } from "ws";
+import { PUBLIC_PWA_PATHS } from "../service-assets.ts";
 import {
   ContractError,
   canonicalJson,
@@ -120,10 +121,12 @@ export interface StaticAsset {
     | "text/html; charset=utf-8"
     | "text/javascript; charset=utf-8"
     | "text/css; charset=utf-8"
+    | "application/manifest+json; charset=utf-8"
     | "font/woff2"
     | "font/woff"
     | "font/ttf"
-    | "image/svg+xml";
+    | "image/svg+xml"
+    | "image/png";
   bytes: Uint8Array;
 }
 interface Attachment {
@@ -170,7 +173,7 @@ export function fixedHeaders(response: ServerResponse): void {
   response.setHeader("X-Frame-Options", "DENY");
   response.setHeader(
     "Content-Security-Policy",
-    "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
   );
 }
 function send(
@@ -248,7 +251,12 @@ export class ServiceHttpServer {
       if (
         !/^\/(?:app|assets\/start\.js|ui\/[a-f0-9]{64}\/assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf))$/.test(
           asset.path,
-        ) ||
+        ) &&
+        !PUBLIC_PWA_PATHS.has(asset.path)
+      ) {
+        throw new ContractError("invalid");
+      }
+      if (
         this.assets.has(asset.path) ||
         asset.bytes.byteLength > 16 * 1024 * 1024 ||
         total > 64 * 1024 * 1024
@@ -556,6 +564,21 @@ export class ServiceHttpServer {
       }
       if (target === "/healthz" && req.method === "GET") {
         send(res, 200, { status: "ok" });
+        return;
+      }
+      if (req.method === "GET" && PUBLIC_PWA_PATHS.has(target)) {
+        if (!this.accepting) unavailable();
+        const asset = this.assets.get(target);
+        if (!asset) throw new ContractError("invalid");
+        res.setHeader("Content-Type", asset.contentType);
+        res.setHeader("Cache-Control", "public, no-cache");
+        res.setHeader("ETag", asset.etag);
+        if (boundary.headers.get("if-none-match") === asset.etag) {
+          res.statusCode = 304;
+          res.end();
+          return;
+        }
+        res.end(asset.bytes);
         return;
       }
       if (target === "/" && req.method === "GET") {

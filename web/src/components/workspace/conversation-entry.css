@@ -13,24 +13,6 @@
   padding: 8px 14px 18px;
   gap: 8px;
 }
-.chat-workspace[data-entry] > .chat-welcome h2 {
-  margin: 2px 0;
-}
-.entry-starters {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px;
-}
-.chat-welcome .entry-starters > button {
-  min-height: 30px;
-  margin: 0;
-  padding: 4px 11px;
-  border-radius: 999px;
-  background: var(--bg-elev);
-  color: var(--text-dim);
-  font-size: 12px;
-}
 
 /* Precision optical scanline: only shown after the grace period when a
  * conversation read is genuinely taking time. Zero layout height. */
@@ -111,12 +93,6 @@
    * settles completely still without idle motion or layout shift. */
   .chat-workspace[data-entry="new"] > .chat-welcome > .empty-logo {
     animation: optical-focus 240ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
-  }
-  .chat-workspace[data-entry="new"] > .chat-welcome > h2 {
-    animation: optical-rise 200ms cubic-bezier(0.22, 1, 0.36, 1) 25ms backwards;
-  }
-  .chat-workspace[data-entry="new"] > .chat-welcome > .entry-starters {
-    animation: optical-rise 200ms cubic-bezier(0.22, 1, 0.36, 1) 55ms backwards;
   }
   .chat-workspace[data-entry="new"] .chat-composer:not([data-flow])::before {
     animation: prism-ignite 340ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
@@ -225,8 +201,60 @@
   border: 0;
   justify-content: flex-end;
 }
+.composer-toolbar > .mode-toggle {
+  margin-inline-start: auto;
+}
+.composer-toolbar > .mode-toggle + .composer-mobile-sep + .composer-delivery {
+  margin-inline-start: 0;
+}
 .composer-delivery > :is(.primary, .danger) {
   margin-inline-start: 0;
+}
+.mobile-welcome-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(100%, 280px);
+  min-height: 38px;
+  margin-top: 4px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.mobile-welcome-folder > svg {
+  flex: none;
+  color: var(--text-dim);
+}
+.mobile-welcome-folder > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .chat-workspace[data-entry="new"]::after {
+    display: none;
+  }
+  .chat-workspace[data-entry="new"] > .chat-messages-wrap {
+    flex: 0 0 auto;
+  }
+  .chat-workspace[data-entry="new"] > .chat-welcome {
+    flex: 1 1 auto;
+    justify-content: center;
+    padding: 16px 20px;
+    gap: 10px;
+  }
+  .chat-workspace[data-entry="new"] > .chat-welcome > p {
+    margin: 0;
+    background: transparent;
+    padding: 0;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
 }
 @media (min-width: 901px) {
   .chat-workspace[data-entry="new"] .model-popover {

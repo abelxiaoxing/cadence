@@ -724,7 +724,9 @@ it("folder setup uses the conversation shell, keeps input editable and cannot se
     "Choose a working folder to see its conversation history.",
   );
   expect(html).not.toContain("No conversations yet.");
-  expect(html).toContain("What would you like to work on?");
+  expect(html).toContain("chat-welcome");
+  expect(html).not.toContain("What would you like to work on?");
+  expect(html).not.toContain("more-menu-build");
   expect(html).toContain('class="panel files-panel"');
   expect(html).toMatch(/<textarea aria-label="Message"/);
   expect(html).not.toMatch(/<textarea[^>]*disabled/);
@@ -758,7 +760,8 @@ it("folder setup uses the conversation shell, keeps input editable and cannot se
 
 it("the shared empty conversation has no central task creation shortcut", () => {
   const html = renderToStaticMarkup(<ChatWelcome hint="Type below." />);
-  expect(html).toContain("What would you like to work on?");
+  expect(html).toContain("chat-welcome");
+  expect(html).not.toContain("<h2");
   expect(html).toContain("Type below.");
   expect(html).not.toContain("<button");
 });
@@ -1387,7 +1390,7 @@ it.each([false, true])(
     expect(input).toBeDefined();
     expect(input?.includes('disabled=""')).toBe(pending);
     expect(html).toMatch(/type="submit" class="primary" disabled=""/);
-    expect(html).not.toContain("What would you like to work on?");
+    expect(html).not.toContain("chat-welcome");
     expect(html).not.toContain("New conversation");
     if (pending) expect(html).toContain("original-command");
     expect(send).not.toHaveBeenCalled();

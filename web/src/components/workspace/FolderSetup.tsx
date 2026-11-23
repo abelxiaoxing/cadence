@@ -1,7 +1,7 @@
 /* Replaces the pi-web-ui-adapted entry. MIT (c) 2026 xing-shuyin.
  * The conversation shell's initial/missing-folder state, not a project home.
  * No project client or Send exists until a directory has been selected. */
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { FiArrowUp, FiFolder } from "react-icons/fi";
 import { emptyFolderDraft, type FolderDraft } from "../../client/folder-draft";
 import type { PreviewModels } from "../../client/model-preview";
@@ -11,6 +11,11 @@ import { AppShell } from "../../layout/AppShell";
 import { usePanelLayout } from "../../layout/use-panel-layout";
 import { ModelPicker } from "../actions/ModelPicker";
 import { ActivityList, type ActivityListProps } from "./ActivityList";
+import {
+  composerHeightCap,
+  composerMinHeight,
+  composerMobileHeightCap,
+} from "./ChatComposer";
 import { ChatWelcome } from "./ChatWelcome";
 import { ConversationActions } from "./ConversationActions";
 import { WorkingFolderButton } from "./WorkingFolderButton";
@@ -51,12 +56,33 @@ export function FolderSetup({
   const { t } = useT();
   const panels = usePanelLayout();
   const [modelOpen, setModelOpen] = useState(false);
+  const draftInput = useRef<HTMLTextAreaElement>(null);
   const modelRead = useModelCatalog(
     null,
     { status: "not-started" },
     "folder-setup",
     previewModels,
   );
+  useLayoutEffect(() => {
+    void draft.text;
+    const ta = draftInput.current;
+    if (!ta) return;
+    const vh =
+      typeof window === "undefined"
+        ? 0
+        : Math.round(window.visualViewport?.height || window.innerHeight);
+    const min = composerMinHeight(
+      typeof window === "undefined" ? 0 : window.innerWidth,
+    );
+    const cap = panels.mobile
+      ? composerMobileHeightCap(vh)
+      : composerHeightCap(vh);
+    ta.style.height = "auto";
+    const natural = ta.scrollHeight;
+    const next = Math.min(Math.max(natural, min), cap);
+    ta.style.height = `${next}px`;
+    ta.style.overflowY = natural > next ? "auto" : "hidden";
+  }, [draft.text, panels.mobile]);
   const choose = () => {
     panels.closeDrawer();
     onChooseFolder();
@@ -64,6 +90,10 @@ export function FolderSetup({
   return (
     <AppShell
       panels={panels}
+      mobileTitle="Cadence"
+      mobileStatusDot={
+        entryError || restoreError ? "error" : pending ? "busy" : ""
+      }
       onRefresh={onRefresh}
       onOpenService={onOpenService}
       notices={notices}
@@ -117,8 +147,9 @@ export function FolderSetup({
           <div className="composer-dock">
             <div className="chat-composer">
               <textarea
+                ref={draftInput}
                 aria-label={t("Message")}
-                rows={3}
+                rows={1}
                 value={draft.text}
                 onChange={(event) =>
                   onDraftChange?.({ ...draft, text: event.target.value })
@@ -149,15 +180,18 @@ export function FolderSetup({
                 <span className="composer-hint">
                   {t("Choose a folder before sending.")}
                 </span>
-                <button
-                  type="button"
-                  className="primary"
-                  aria-label={t("Send")}
-                  title={t("Send")}
-                  disabled
-                >
-                  <FiArrowUp aria-hidden="true" />
-                </button>
+                <span className="composer-mobile-sep" aria-hidden="true" />
+                <div className="composer-toolbar composer-delivery">
+                  <button
+                    type="button"
+                    className="primary"
+                    aria-label={t("Send")}
+                    title={t("Send")}
+                    disabled
+                  >
+                    <FiArrowUp aria-hidden="true" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>

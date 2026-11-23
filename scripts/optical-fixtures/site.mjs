@@ -123,7 +123,7 @@ export function fixture(root, { actions = false } = {}) {
     if (p === "/app") {
       res.setHeader(
         "content-security-policy",
-        "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+        "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
       );
       res.setHeader("X-Cadence-Web-Build", manifest.buildId);
     }

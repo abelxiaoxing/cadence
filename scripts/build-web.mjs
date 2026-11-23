@@ -17,6 +17,7 @@ import {
   assetMime,
   decodeAssetManifest,
   loadWebAssets,
+  PUBLIC_PWA_PATHS,
   webBuildBase,
 } from "../src/service-assets.ts";
 import { auditNotices } from "./audit-notices.mjs";
@@ -85,15 +86,19 @@ if (process.argv[2] === "--produce") {
         )
       : name === "index.html"
         ? [...text.matchAll(/(?:src|href)="([^"]+)"/g)].map((m) => m[1])
-        : [];
+        : name.endsWith(".webmanifest")
+          ? (JSON.parse(text).icons ?? [])
+              .map((icon) => icon?.src)
+              .filter((src) => typeof src === "string")
+          : [];
     for (const ref of raw) {
       if (/^(?:data:|https?:|\/\/|#)/.test(ref))
         throw new Error("nonlocal-asset-reference");
       refs.add(
         ref.startsWith(webBuildBase(identity.buildId))
           ? ref.slice(webBuildBase(identity.buildId).length)
-          : ref === "/assets/start.js"
-            ? "assets/start.js"
+          : ref === "/assets/start.js" || PUBLIC_PWA_PATHS.has(ref)
+            ? ref.slice(1)
             : posix.join(posix.dirname(name), ref),
       );
     }

@@ -12,7 +12,11 @@ import {
   type ChatComposerProps,
   COMPOSER_MAX_HEIGHT,
   COMPOSER_MIN_HEIGHT,
+  COMPOSER_MOBILE_MAX_HEIGHT,
+  COMPOSER_MOBILE_MIN_HEIGHT,
   composerHeightCap,
+  composerMinHeight,
+  composerMobileHeightCap,
   readComposerHeight,
 } from "../../web/src/components/workspace/ChatComposer";
 import {
@@ -287,6 +291,15 @@ it("a remembered height is a bounded manual height, anything else is automatic",
   expect(composerHeightCap(2000)).toBe(COMPOSER_MAX_HEIGHT);
   expect(composerHeightCap(600)).toBe(252);
   expect(composerHeightCap(200)).toBe(160);
+  // Mobile uses a compact single-line floor and a tighter cap for soft keyboards.
+  expect(composerMinHeight(390)).toBe(COMPOSER_MOBILE_MIN_HEIGHT);
+  expect(composerMinHeight(900)).toBe(COMPOSER_MOBILE_MIN_HEIGHT);
+  expect(composerMinHeight(901)).toBe(COMPOSER_MIN_HEIGHT);
+  expect(composerMinHeight(0)).toBe(COMPOSER_MIN_HEIGHT);
+  expect(composerMobileHeightCap(0)).toBe(COMPOSER_MOBILE_MAX_HEIGHT);
+  expect(composerMobileHeightCap(900)).toBe(COMPOSER_MOBILE_MAX_HEIGHT);
+  expect(composerMobileHeightCap(400)).toBe(112);
+  expect(composerMobileHeightCap(200)).toBe(88);
 });
 
 const props = (fields: Partial<ChatComposerProps> = {}): ChatComposerProps => ({
@@ -399,4 +412,59 @@ it("the composer states what the next message continues and why Send waits, abov
   expect(html).toMatch(
     /class="composer-anchor">Rewriting a message<\/div><p class="composer-status" role="status">Sending…<\/p><textarea/,
   );
+  expect(html).toContain('class="ghost icon composer-attach"');
+  expect(html).toContain('class="composer-mobile-sep"');
+});
+
+it("touch-only mobile keyboards insert newlines on Enter instead of submitting", () => {
+  const onSend = vi.fn();
+  const preventDefault = vi.fn();
+  let onKeyDown: ((e: unknown) => void) | undefined;
+  vi.stubGlobal("window", {
+    matchMedia: (query: string) => ({
+      matches: query === "(pointer: coarse) and (hover: none)",
+    }),
+  });
+  function Probe() {
+    const form = ChatComposer(
+      props({ draft: "line 1", canSend: true, onSend }),
+    );
+    const field = (
+      form.props.children as readonly {
+        type?: unknown;
+        props?: { onKeyDown?(e: unknown): void };
+      }[]
+    ).find((el) => el && typeof el === "object" && el.type === "textarea");
+    onKeyDown = field?.props?.onKeyDown;
+    return form;
+  }
+  renderToStaticMarkup(
+    <LocaleProvider initial="en">
+      <Probe />
+    </LocaleProvider>,
+  );
+  if (!onKeyDown) throw new Error("missing textarea");
+  onKeyDown({
+    key: "Enter",
+    shiftKey: false,
+    repeat: false,
+    nativeEvent: { isComposing: false },
+    preventDefault,
+  });
+  expect(preventDefault).not.toHaveBeenCalled();
+  expect(onSend).not.toHaveBeenCalled();
+
+  // Desktop/hardware keyboards still submit on Enter.
+  vi.stubGlobal("window", {
+    matchMedia: () => ({ matches: false }),
+  });
+  onKeyDown({
+    key: "Enter",
+    shiftKey: false,
+    repeat: false,
+    nativeEvent: { isComposing: false },
+    preventDefault,
+  });
+  expect(preventDefault).toHaveBeenCalledOnce();
+  expect(onSend).toHaveBeenCalledOnce();
 });

@@ -19,11 +19,40 @@ export function preferredTheme(): ThemeChoice {
   } catch {}
   return "system";
 }
+const THEME_COLORS: Readonly<Record<"light" | "dark", string>> = {
+  light: "#f7f9fc",
+  dark: "#080a0f",
+};
+function syncThemeColor(choice: ThemeChoice): void {
+  if (typeof document.querySelectorAll !== "function") return;
+  const metas = document.querySelectorAll<HTMLMetaElement>(
+    'meta[name="theme-color"]',
+  );
+  for (const meta of metas) {
+    const scheme =
+      meta.dataset.scheme ??
+      (meta.media.includes("dark")
+        ? "dark"
+        : meta.media.includes("light")
+          ? "light"
+          : "");
+    if (!scheme) continue;
+    meta.dataset.scheme = scheme;
+    if (choice === "system") {
+      meta.media = `(prefers-color-scheme: ${scheme})`;
+      meta.content = THEME_COLORS[scheme === "dark" ? "dark" : "light"];
+    } else {
+      meta.removeAttribute("media");
+      meta.content = THEME_COLORS[choice];
+    }
+  }
+}
 /** `data-theme` forces a scheme; without it the stylesheet follows the system. */
 export function applyTheme(choice: ThemeChoice): void {
   if (typeof document === "undefined") return;
   if (choice === "system") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = choice;
+  syncThemeColor(choice);
 }
 /** What is applied now: it outlives blocked storage for as long as the page. */
 export function currentTheme(): ThemeChoice {

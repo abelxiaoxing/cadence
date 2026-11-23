@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/service/gateway.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { createHash as createHash15, randomUUID as randomUUID14 } from "node:crypto";
 import { opendirSync as opendirSync10 } from "node:fs";
 import {
   createServer as createServer2,
@@ -5146,9 +5146,19 @@ import { join as join4 } from "node:path";
 import { fileURLToPath } from "node:url";
 var ASSET_MEMBER_BYTES = 16 * 1024 * 1024;
 var ASSET_TOTAL_BYTES = 64 * 1024 * 1024;
+var PUBLIC_PWA_ASSETS = new Set([
+  "assets/app.webmanifest",
+  "assets/icon.svg",
+  "assets/icon-192.png",
+  "assets/icon-512.png",
+  "assets/icon-maskable-512.png",
+  "assets/apple-touch-icon.png"
+]);
+var PUBLIC_PWA_PATHS = new Set([...PUBLIC_PWA_ASSETS].map((name) => `/${name}`));
 var fixed = new Set([
   "index.html",
   "assets/start.js",
+  ...PUBLIC_PWA_ASSETS,
   "assets/cadence.js",
   "assets/cadence.css",
   "assets/react.js",
@@ -5169,6 +5179,12 @@ function assetMime(name) {
     return "text/javascript; charset=utf-8";
   if (name.endsWith(".css"))
     return "text/css; charset=utf-8";
+  if (name.endsWith(".webmanifest"))
+    return "application/manifest+json; charset=utf-8";
+  if (name.endsWith(".svg"))
+    return "image/svg+xml";
+  if (name.endsWith(".png"))
+    return "image/png";
   if (name.endsWith(".woff2"))
     return "font/woff2";
   if (name.endsWith(".woff"))
@@ -5260,7 +5276,7 @@ function loadWebAssets(directory = fileURLToPath(new URL("../web/dist/", import.
     if (!body || body.length !== a.bytes || createHash6("sha256").update(body).digest("hex") !== a.sha256)
       throw new Error("asset-body-refused");
     return {
-      path: a.name === "index.html" ? "/app" : a.name === "assets/start.js" ? `/${a.name}` : `${webBuildBase(manifest.buildId)}${a.name}`,
+      path: a.name === "index.html" ? "/app" : a.name === "assets/start.js" || PUBLIC_PWA_ASSETS.has(a.name) ? `/${a.name}` : `${webBuildBase(manifest.buildId)}${a.name}`,
       contentType: assetMime(a.name),
       bytes: body
     };
@@ -11878,7 +11894,7 @@ button:focus-visible {
   :focus-visible { outline: 2px solid Highlight !important; outline-offset: 2px; }
 }
 `;
-var AUTH_PAGE_CSP = `default-src 'none'; style-src 'sha256-${createHash9("sha256").update(styles).digest("base64")}'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
+var AUTH_PAGE_CSP = `default-src 'none'; style-src 'sha256-${createHash9("sha256").update(styles).digest("base64")}'; img-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
 function escapeAttr(value) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -11887,8 +11903,17 @@ function renderAuthPage(options) {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9fc">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#080a0f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Cadence">
+<link rel="manifest" href="/assets/app.webmanifest">
+<link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <title>Cadence</title>
 <style>${styles}</style>
 </head>
@@ -17212,7 +17237,7 @@ function fixedHeaders(response) {
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
-  response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 }
 function send(response, status, value, gzip = false) {
   if (response.destroyed || response.writableEnded)
@@ -17273,7 +17298,10 @@ class ServiceHttpServer {
     let total = 0;
     for (const asset of options.assets ?? []) {
       total += asset.bytes.byteLength;
-      if (!/^\/(?:app|assets\/start\.js|ui\/[a-f0-9]{64}\/assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf))$/.test(asset.path) || this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
+      if (!/^\/(?:app|assets\/start\.js|ui\/[a-f0-9]{64}\/assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf))$/.test(asset.path) && !PUBLIC_PWA_PATHS.has(asset.path)) {
+        throw new ContractError("invalid");
+      }
+      if (this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
         throw new ContractError("invalid");
       this.assets.set(asset.path, {
         ...asset,
@@ -17530,6 +17558,23 @@ Content-Length: 0\r
       }
       if (target === "/healthz" && req.method === "GET") {
         send(res, 200, { status: "ok" });
+        return;
+      }
+      if (req.method === "GET" && PUBLIC_PWA_PATHS.has(target)) {
+        if (!this.accepting)
+          unavailable();
+        const asset = this.assets.get(target);
+        if (!asset)
+          throw new ContractError("invalid");
+        res.setHeader("Content-Type", asset.contentType);
+        res.setHeader("Cache-Control", "public, no-cache");
+        res.setHeader("ETag", asset.etag);
+        if (boundary.headers.get("if-none-match") === asset.etag) {
+          res.statusCode = 304;
+          res.end();
+          return;
+        }
+        res.end(asset.bytes);
         return;
       }
       if (target === "/" && req.method === "GET") {
@@ -19068,6 +19113,22 @@ Content-Length: 0\r
         reply(res, 200, { status: "ok" });
         return;
       }
+      if (req.method === "GET" && PUBLIC_PWA_PATHS.has(raw)) {
+        const asset2 = assets.get(raw);
+        if (!asset2)
+          throw new ContractError("invalid");
+        const etag = `"${createHash15("sha256").update(asset2.bytes).digest("hex")}"`;
+        res.setHeader("Content-Type", asset2.contentType);
+        res.setHeader("Cache-Control", "public, no-cache");
+        res.setHeader("ETag", etag);
+        if (boundary.headers.get("if-none-match") === etag) {
+          res.statusCode = 304;
+          res.end();
+          return;
+        }
+        res.end(asset2.bytes);
+        return;
+      }
       store.assert();
       if (url.searchParams.has("token")) {
         if (req.method !== "GET" || !raw.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
@@ -19585,7 +19646,7 @@ import { join as join46 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
 // src/agent-registry.ts
-import { createHash as createHash15 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 var AGENT_FILES = [
   "design-explorer.md",
@@ -19603,7 +19664,7 @@ function loadAgentDefinitions() {
       role: fileName.replace(/\.md$/, ""),
       fileName,
       path,
-      sha256: createHash15("sha256").update(data2).digest("hex"),
+      sha256: createHash16("sha256").update(data2).digest("hex"),
       bytes: data2.length,
       content: data2.toString("utf8")
     };
@@ -19858,7 +19919,7 @@ class HistoryLive {
 }
 
 // src/history/navigation.ts
-import { createHash as createHash16 } from "node:crypto";
+import { createHash as createHash17 } from "node:crypto";
 import { lstatSync as lstatSync18 } from "node:fs";
 import { dirname as dirname18, join as join29 } from "node:path";
 
@@ -21085,7 +21146,7 @@ class HistoryNavigation {
         continue;
       }
       let pending = Buffer.alloc(0), at2 = offset, bodyBytes = 0;
-      const checksum = createHash16("sha256"), rows = [];
+      const checksum = createHash17("sha256"), rows = [];
       while (at2 < size2) {
         const chunk = this.block(path, at2, size2, budget);
         at2 += chunk.length;
@@ -21588,7 +21649,7 @@ function navigationKeys(row) {
 }
 
 // src/history/projection.ts
-import { createHash as createHash22 } from "node:crypto";
+import { createHash as createHash23 } from "node:crypto";
 
 // src/history/task-folds.ts
 var TASKS = 1024;
@@ -21931,17 +21992,17 @@ function materializeEntity(s, sources) {
 }
 
 // src/history/export.ts
-import { createHash as createHash20, randomUUID as randomUUID15 } from "node:crypto";
+import { createHash as createHash21, randomUUID as randomUUID15 } from "node:crypto";
 import { readFileSync as readFileSync5 } from "node:fs";
 
 // src/history/search.ts
-import { createHash as createHash19 } from "node:crypto";
+import { createHash as createHash20 } from "node:crypto";
 
 // src/history/read-proof.ts
 import {
   createCipheriv,
   createDecipheriv,
-  createHash as createHash17,
+  createHash as createHash18,
   randomBytes as randomBytes5
 } from "node:crypto";
 var PREFIX = "rp1.";
@@ -21993,7 +22054,7 @@ class HistoryReadProof {
       root: this.files.format.rootIdentity,
       format: material.formatStamp,
       key: material.keyStamp,
-      request: createHash17("sha256").update(canonicalJson(readIdentity(request3))).digest("hex")
+      request: createHash18("sha256").update(canonicalJson(readIdentity(request3))).digest("hex")
     }));
   }
   seal(context, plaintext, budget) {
@@ -22765,11 +22826,11 @@ function decodeRetainedProgress(value) {
 }
 
 // src/history/retained-traversal.ts
-import { createHash as createHash18 } from "node:crypto";
+import { createHash as createHash19 } from "node:crypto";
 function bad5() {
   throw new ContractError("corrupt-selected");
 }
-var fingerprint = (v) => createHash18("sha256").update(canonicalJson(v)).digest("hex");
+var fingerprint = (v) => createHash19("sha256").update(canonicalJson(v)).digest("hex");
 var ready = (v) => {
   const s = v.state;
   if (s.phase !== "ready")
@@ -23125,11 +23186,11 @@ var digits = (id) => {
   return s.slice(0, 12) + s.slice(13, 16) + s.slice(17);
 };
 var publicTextRef = (id, label2, text2, field, batch, row, slot) => ({
-  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash19("sha256").update(`${id}/${label2}`).digest("hex").slice(0, 16)),
+  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash20("sha256").update(`${id}/${label2}`).digest("hex").slice(0, 16)),
   version: batch.rows.indexOf(row) * EVENT_SLOTS + slot + 1,
   field,
   bytes: Buffer.byteLength(text2),
-  sha256: createHash19("sha256").update(text2).digest("hex")
+  sha256: createHash20("sha256").update(text2).digest("hex")
 });
 var initial = () => ({
   pos: { segment: 1, offset: 0 },
@@ -23145,7 +23206,7 @@ function scanCursor(base, p) {
   const snapshot = p.snapshot.toString(16).padStart(14, "0");
   if (snapshot.length !== 14)
     throw new ContractError("capacity");
-  const binding = createHash19("sha256").update(canonicalJson({
+  const binding = createHash20("sha256").update(canonicalJson({
     ...readIdentity(base),
     recordId: null,
     recordVersion: version,
@@ -23486,7 +23547,7 @@ class RetainedScan {
             graph: {
               recordId: v.intent.operationId,
               revision: graph.revision,
-              sha256: createHash19("sha256").update(canonicalJson(graph)).digest("hex")
+              sha256: createHash20("sha256").update(canonicalJson(graph)).digest("hex")
             }
           },
           graph
@@ -23785,7 +23846,7 @@ async function searchQuantum(reader, value, limit = LIMITS.pageEntries) {
 // src/history/export.ts
 var exporterIdentity;
 function buildIdentity() {
-  exporterIdentity ??= createHash20("sha256").update(readFileSync5(new URL(import.meta.url))).digest("hex");
+  exporterIdentity ??= createHash21("sha256").update(readFileSync5(new URL(import.meta.url))).digest("hex");
   return exporterIdentity;
 }
 function aborted(signal) {
@@ -23845,7 +23906,7 @@ Coverage: ${canonicalJson(event.coverage)}
   }
 }
 async function* exportHistory(projection, input, signal) {
-  const request3 = decodeExportRequest(input), exportId = randomUUID15(), digest = createHash20("sha256");
+  const request3 = decodeExportRequest(input), exportId = randomUUID15(), digest = createHash21("sha256");
   let ordinal = 0, encodedBytes = 0, coverage = { ...COMPLETE, omissions: [] };
   const frame = (event) => {
     aborted(signal);
@@ -23914,7 +23975,7 @@ async function* exportHistory(projection, input, signal) {
       const { detail, owner } = item, original = open2.get(detail.content.recordId);
       if (detail.content.bytes ? !original || original.bytes !== detail.content.bytes || original.content !== canonicalJson(detail.content) : original !== undefined)
         throw new ContractError("corrupt-selected");
-      if ((original?.hash ?? createHash20("sha256")).digest("hex") !== detail.content.sha256)
+      if ((original?.hash ?? createHash21("sha256")).digest("hex") !== detail.content.sha256)
         throw new ContractError("corrupt-selected");
       open2.delete(detail.content.recordId);
       const events = [];
@@ -23945,7 +24006,7 @@ async function* exportHistory(projection, input, signal) {
     coverage = combineCoverage(coverage, item.coverage);
     const length = Buffer.byteLength(item.text);
     if (item.inline) {
-      if (item.start !== 0 || length !== item.content.bytes || createHash20("sha256").update(item.text).digest("hex") !== item.content.sha256)
+      if (item.start !== 0 || length !== item.content.bytes || createHash21("sha256").update(item.text).digest("hex") !== item.content.sha256)
         throw new ContractError("corrupt-selected");
     } else {
       let original = open2.get(item.content.recordId);
@@ -23955,7 +24016,7 @@ async function* exportHistory(projection, input, signal) {
         original = {
           bytes: 0,
           content: canonicalJson(item.content),
-          hash: createHash20("sha256")
+          hash: createHash21("sha256")
         };
         open2.set(item.content.recordId, original);
       }
@@ -24070,7 +24131,7 @@ async function* exportHistory(projection, input, signal) {
 }
 
 // src/history/list-progress.ts
-import { createHash as createHash21 } from "node:crypto";
+import { createHash as createHash22 } from "node:crypto";
 
 // src/history/detail-progress.ts
 function bad7() {
@@ -24544,7 +24605,7 @@ function fits(link, scope) {
   return scope.kind === "workspace" || (scope.kind === "task" ? link.taskId === scope.id : scope.kind === "run" ? link.runId === scope.id : link.childRunId === scope.id);
 }
 function nextAfter(request3, n) {
-  const h = createHash21("sha256").update(canonicalJson({ ...readIdentity(request3), after: null, ordinal: n })).digest("hex");
+  const h = createHash22("sha256").update(canonicalJson({ ...readIdentity(request3), after: null, ordinal: n })).digest("hex");
   return {
     recordId: `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`,
     version: 1,
@@ -24928,7 +24989,7 @@ async function read(p, request3, entity) {
       const tasks = [...p.environment.legacyTasks(budget)].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
       if (tasks.length > 1000)
         throw new ContractError("capacity");
-      const sum = createHash21("sha256");
+      const sum = createHash22("sha256");
       for (const task2 of tasks) {
         budget.reserve(0);
         sum.update(JSON.stringify({
@@ -24941,7 +25002,7 @@ async function read(p, request3, entity) {
       if (s.legacy > tasks.length)
         bad9();
       if (!s.legacyIdentity && request3.after?.version === Number.MAX_SAFE_INTEGER) {
-        const h = createHash21("sha256").update(canonicalJson({
+        const h = createHash22("sha256").update(canonicalJson({
           ...readIdentity(request3),
           after: null,
           legacy: s.legacy === 0 ? "begin" : identity,
@@ -25221,7 +25282,7 @@ class HistoryProjection {
   };
   cursor(request3, pos, row, item) {
     const offset = pos.offset * (LIMITS.segmentRecords + 1) * ROW_SLOTS + row * ROW_SLOTS + item;
-    const digest = createHash22("sha256").update(canonicalJson({
+    const digest = createHash23("sha256").update(canonicalJson({
       ...readIdentity(request3),
       after: null,
       position: { ...pos, row, item }
@@ -25412,7 +25473,7 @@ class HistoryProjection {
     if (legacyPhase)
       this.navigation.snapshot(snapshot, budget);
     const cursor = (offset2, identity2) => {
-      const digest2 = createHash22("sha256").update(canonicalJson({ ...request3, after: null, legacy: identity2, offset: offset2 })).digest("hex");
+      const digest2 = createHash23("sha256").update(canonicalJson({ ...request3, after: null, legacy: identity2, offset: offset2 })).digest("hex");
       return {
         recordId: `${digest2.slice(0, 8)}-${digest2.slice(8, 12)}-4${digest2.slice(13, 16)}-8${digest2.slice(17, 20)}-${digest2.slice(20, 32)}`,
         version: legacyVersion,
@@ -25439,7 +25500,7 @@ class HistoryProjection {
     }
     if (legacy.length > 1000)
       throw new ContractError("capacity");
-    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash22("sha256");
+    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash23("sha256");
     for (const item of items) {
       budget.reserve(0);
       if (Buffer.byteLength(item.goal) > 8192)
@@ -25629,7 +25690,7 @@ class HistoryProjection {
 }
 
 // src/history/reader.ts
-import { createHash as createHash23 } from "node:crypto";
+import { createHash as createHash24 } from "node:crypto";
 import { existsSync as existsSync3 } from "node:fs";
 import { join as join30 } from "node:path";
 
@@ -26291,7 +26352,7 @@ class HistoryReader {
         }
       }
       const text2 = Buffer.concat(pieces);
-      if (end !== detail.content.bytes || createHash23("sha256").update(text2).digest("hex") !== detail.content.sha256)
+      if (end !== detail.content.bytes || createHash24("sha256").update(text2).digest("hex") !== detail.content.sha256)
         return;
       return { detail, bytes: text2 };
     } catch {
@@ -26326,7 +26387,7 @@ class HistoryReader {
       if (!current2 || current2.length < expected.bytes || hash(current2.subarray(0, expected.bytes)) !== expected.identity)
         throw new ContractError("corrupt-selected");
     }
-    const checksum = createHash23("sha256");
+    const checksum = createHash24("sha256");
     let bytes = 0;
     let cached;
     for (const e of locator.chunks) {
@@ -26600,16 +26661,16 @@ class HistoryReader {
 }
 
 // src/history/recovery.ts
-import { createHash as createHash27, randomUUID as randomUUID19 } from "node:crypto";
+import { createHash as createHash28, randomUUID as randomUUID19 } from "node:crypto";
 import { lstatSync as lstatSync19, opendirSync as opendirSync11 } from "node:fs";
 import { join as join34, relative as relative7 } from "node:path";
 
 // src/history/writer.ts
-import { createHash as createHash26, randomUUID as randomUUID18 } from "node:crypto";
+import { createHash as createHash27, randomUUID as randomUUID18 } from "node:crypto";
 import { join as join33 } from "node:path";
 
 // src/task-store.ts
-import { createHash as createHash24, randomUUID as randomUUID16 } from "node:crypto";
+import { createHash as createHash25, randomUUID as randomUUID16 } from "node:crypto";
 import {
   closeSync as closeSync8,
   fsyncSync as fsyncSync4,
@@ -26697,7 +26758,7 @@ function recordText(record3) {
 `;
 }
 function contentIdentity(text2) {
-  return createHash24("sha256").update(text2).digest("hex");
+  return createHash25("sha256").update(text2).digest("hex");
 }
 function savedRecordIdentity(record3) {
   return contentIdentity(recordText(record3));
@@ -26842,11 +26903,11 @@ function legacyTaskStore(c) {
 }
 
 // src/history/plans.ts
-import { createHash as createHash25, randomUUID as randomUUID17 } from "node:crypto";
+import { createHash as createHash26, randomUUID as randomUUID17 } from "node:crypto";
 function assertPlanContent(plan, reference, secrets) {
   text(plan, 32768);
   const ref = decodeContentRef(reference);
-  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash25("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
+  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash26("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
     throw new ContractError("invalid");
 }
 function planRecording(plan, graph, operationId, epoch) {
@@ -28495,7 +28556,7 @@ class HistoryWriter {
       recordId: randomUUID18(),
       version: 1,
       bytes: 0,
-      hash: createHash26("sha256"),
+      hash: createHash27("sha256"),
       parts: 0,
       ended: null,
       committedSeq: null
@@ -28873,7 +28934,7 @@ function readOperationStateForPublication(files, operationId) {
 // src/history/recovery.ts
 function digestHistory(files, exclude) {
   files.assertFormat();
-  const digest = createHash27("sha256");
+  const digest = createHash28("sha256");
   let count2 = 0;
   const walk = (path, depth) => {
     if (depth > 8 || !files.files.directory(path))
@@ -28985,7 +29046,7 @@ async function healHistory(lease, log) {
 
 // src/subagent-process.ts
 import { spawn as spawn5 } from "node:child_process";
-import { createHash as createHash29, randomUUID as randomUUID22 } from "node:crypto";
+import { createHash as createHash30, randomUUID as randomUUID22 } from "node:crypto";
 import { join as join36 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
@@ -29127,7 +29188,7 @@ class RunEnvironment {
 }
 
 // src/worker-capture.mjs
-import { createHash as createHash28, randomUUID as randomUUID21 } from "node:crypto";
+import { createHash as createHash29, randomUUID as randomUUID21 } from "node:crypto";
 var completeCoverage = () => ({
   observed: "complete",
   source: "complete",
@@ -29231,7 +29292,7 @@ class CaptureState {
           final: null,
           stopReason: null,
           finalIndices: new Set,
-          finalHash: createHash28("sha256"),
+          finalHash: createHash29("sha256"),
           finalBytes: 0,
           finalIndex: -1,
           thinking: new Map
@@ -29259,7 +29320,7 @@ class CaptureState {
         }
         this.details.set(e.detailId, {
           descriptor: e.descriptor,
-          hash: createHash28("sha256"),
+          hash: createHash29("sha256"),
           bytes: 0,
           ended: false,
           preview: ""
@@ -30351,7 +30412,7 @@ function launchConversation(prepared, conversation, signal, options) {
   const imageInput = options.images?.length ? JSON.stringify(options.images) : undefined;
   const imageDescriptor = imageInput === undefined ? undefined : {
     bytes: Buffer.byteLength(imageInput),
-    sha256: createHash29("sha256").update(imageInput).digest("hex")
+    sha256: createHash30("sha256").update(imageInput).digest("hex")
   };
   return prepared.consume((material) => {
     encoded2 = encodeEnvelope({
@@ -32089,7 +32150,7 @@ During accepted work, report actual cadence_status observations: child failure o
 
 // src/service/project-knowledge.ts
 import { isUtf8 } from "node:buffer";
-import { createHash as createHash31 } from "node:crypto";
+import { createHash as createHash32 } from "node:crypto";
 import {
   closeSync as closeSync11,
   constants as constants11,
@@ -32107,7 +32168,7 @@ import { dirname as dirname22, posix } from "node:path";
 
 // src/service/workflow-git.ts
 import { spawn as spawn6, spawnSync as spawnSync6 } from "node:child_process";
-import { createHash as createHash30 } from "node:crypto";
+import { createHash as createHash31 } from "node:crypto";
 import {
   closeSync as closeSync10,
   constants as constants10,
@@ -32269,7 +32330,7 @@ function fileIdentity(p, st, hashBytes) {
   try {
     if (!fstatSync7(fd).isFile())
       throw new ContractError("stale");
-    const digest = createHash30("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash31("sha256"), buffer = Buffer.alloc(CHUNK);
     for (let n = readSync6(fd, buffer);n > 0; n = readSync6(fd, buffer))
       digest.update(buffer.subarray(0, n));
     return `sha256:${digest.digest("hex")}`;
@@ -32296,7 +32357,7 @@ async function fileIdentityAsync(p, st, hashBytes, signal) {
     const same2 = (a, b) => a.isFile() && b.isFile() && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
     if (!same2(st, before))
       throw new ContractError("stale");
-    const digest = createHash30("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash31("sha256"), buffer = Buffer.alloc(CHUNK);
     let remaining = before.size;
     while (remaining > 0) {
       if (signal?.aborted)
@@ -33037,7 +33098,7 @@ ${line}`;
 `);
 }
 var roots = ["engineering", "docs", ".trellis/spec", ".cadence/knowledge"];
-var digest = (s) => createHash31("sha256").update(s).digest("hex");
+var digest = (s) => createHash32("sha256").update(s).digest("hex");
 var markdown2 = (p) => /\.md$/iu.test(p) && !/^(?:\.cadence\/assistant|\.trellis\/(?:workspace|tasks))(?:\/|$)/u.test(p) && !p.split("/").some((part) => part === ".." || part === ".git" || part === "node_modules" || part.startsWith(".env") || part.startsWith(".") && part !== ".cadence" && part !== ".trellis");
 function readKnowledgeFile(root, path) {
   if (!markdown2(path))
@@ -35430,14 +35491,14 @@ import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync7 } from "node:child_process";
-import { createHash as createHash32 } from "node:crypto";
+import { createHash as createHash33 } from "node:crypto";
 import { lstatSync as lstatSync25, readdirSync as readdirSync5, readlinkSync as readlinkSync2 } from "node:fs";
 import { join as join41, relative as relative10 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
   const deadline = Date.now() + 3000;
-  const hash3 = createHash32("sha256");
+  const hash3 = createHash33("sha256");
   const parts = [];
   let complete = true;
   const limits = [];
@@ -35495,7 +35556,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       fileBytes += data2.length;
       add(name, data2);
       const binary = data2.includes(0);
-      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash32("sha256").update(data2).digest("hex")})`);
+      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash33("sha256").update(data2).digest("hex")})`);
     } catch {
       complete = false;
       limits.push(`Unreadable/changing: ${name}`);
@@ -35671,7 +35732,7 @@ function executionDirectory(execution, tree) {
 }
 
 // src/service/investigations.ts
-import { createHash as createHash33 } from "node:crypto";
+import { createHash as createHash34 } from "node:crypto";
 import { readFileSync as readFileSync7, statSync as statSync4 } from "node:fs";
 var INVESTIGATIONS = {
   cited: 32,
@@ -35687,7 +35748,7 @@ function fileDigest(root, path) {
     const st = statSync4(file);
     if (!st.isFile() || st.size > INVESTIGATIONS.fileBytes)
       return null;
-    return createHash33("sha256").update(readFileSync7(file)).digest("hex");
+    return createHash34("sha256").update(readFileSync7(file)).digest("hex");
   } catch {
     return null;
   }
@@ -35715,14 +35776,14 @@ function changedFiles(root, files) {
   return files.filter((file) => fileDigest(root, file.path) !== file.digest).map((file) => file.path);
 }
 function questionKey(question, roots2) {
-  return createHash33("sha256").update(JSON.stringify([
+  return createHash34("sha256").update(JSON.stringify([
     question.trim().replace(/\s+/gu, " "),
     [...roots2 ?? []].sort()
   ])).digest("hex");
 }
 
 // src/service/workflow-controller.ts
-import { createHash as createHash34 } from "node:crypto";
+import { createHash as createHash35 } from "node:crypto";
 
 // src/service/turn-capture.ts
 var TURN_BYTES = 384 * 1024;
@@ -36754,7 +36815,7 @@ Starting location hints from review (not a write ceiling; update any related fil
 var OBJECTIONS = 2;
 var MAX_DIRECT_PARTIALS = 3;
 function failureFingerprint(stage, observation, attempt2, level) {
-  return createHash34("sha256").update(canonicalJson({
+  return createHash35("sha256").update(canonicalJson({
     stage,
     observation,
     failure: attempt2.identity ?? attempt2.message.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gu, "<step>"),
@@ -38352,8 +38413,8 @@ ${lines.join(`
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.3.4",
-  build: "07db9d0072df3d1deccde9faf5a68e11af6e75785d37c23dcbc4088aeef03ed3",
+  version: "2.3.5",
+  build: "15d1fd4fed94416a0cb2a1ba157e370e5ce2a5c07b25374d10070a51bf86d26a",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

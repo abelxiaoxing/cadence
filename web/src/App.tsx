@@ -1088,10 +1088,39 @@ export function App({
     if (observeExecution) workspace.refresh();
     execution.refresh();
   };
+  const openFolderPicker = () =>
+    onChooseFolder ? onChooseFolder(workingFolder) : setProjectOpen("");
+  const listedChatTitle = chatId
+    ? chats.value?.entries.find((entry) => entry.id === chatId)?.title
+    : undefined;
+  const mobileTitle = agent
+    ? agent.label
+    : chatId
+      ? (activity?.title ??
+        listedChatTitle ??
+        (activity?.empty || freshChatId === chatId
+          ? t("New conversation")
+          : t("Conversation")))
+      : scope
+        ? taskTitle || scopeTitle || "Cadence"
+        : "Cadence";
+  const mobileStatusDot: "ok" | "busy" | "error" | "" =
+    signInRequired || projectError || viewerError
+      ? "error"
+      : (activity && typeof activity.replyClock === "number") ||
+          activeRuns.length > 0 ||
+          entryObservation?.pending ||
+          connecting
+        ? "busy"
+        : observationFresh && !executionStopped && !independent
+          ? "ok"
+          : "";
   return (
     <>
       <AppShell
         panels={panels}
+        mobileTitle={mobileTitle}
+        mobileStatusDot={mobileStatusDot}
         onOpenService={onOpenService}
         onRefresh={refreshConnection}
         onDisconnect={() => {
@@ -1449,6 +1478,11 @@ export function App({
                 key={`${project?.id ?? draftNamespace}:${chatId}:${activitySelection.leaf ?? ""}`}
                 client={api.client}
                 id={chatId}
+                mobile={panels.mobile}
+                workingFolder={workingFolder}
+                onOpenFolder={
+                  workspace.workspace || project ? openFolderPicker : undefined
+                }
                 freshNew={
                   !!chatId &&
                   freshChatId === chatId &&
@@ -1846,11 +1880,7 @@ export function App({
           (workspace.workspace || project) && (
             <WorkingFolderButton
               path={workingFolder}
-              onClick={() =>
-                onChooseFolder
-                  ? onChooseFolder(workingFolder)
-                  : setProjectOpen("")
-              }
+              onClick={openFolderPicker}
             />
           )
         }

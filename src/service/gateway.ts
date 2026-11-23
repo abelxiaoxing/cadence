@@ -2,7 +2,7 @@
  * Project traffic remains browser-authority traffic on the real owner; the gateway
  * never turns a browser command into a native-capability action. */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { opendirSync } from "node:fs";
 import {
   createServer,
@@ -16,7 +16,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { HistoryFiles } from "../history/files.ts";
-import { loadWebAssets } from "../service-assets.ts";
+import { loadWebAssets, PUBLIC_PWA_PATHS } from "../service-assets.ts";
 import {
   ContractError,
   canonicalJson,
@@ -1031,6 +1031,21 @@ export async function createGateway(
       }
       if (raw === "/healthz" && req.method === "GET") {
         reply(res, 200, { status: "ok" });
+        return;
+      }
+      if (req.method === "GET" && PUBLIC_PWA_PATHS.has(raw)) {
+        const asset = assets.get(raw);
+        if (!asset) throw new ContractError("invalid");
+        const etag = `"${createHash("sha256").update(asset.bytes).digest("hex")}"`;
+        res.setHeader("Content-Type", asset.contentType);
+        res.setHeader("Cache-Control", "public, no-cache");
+        res.setHeader("ETag", etag);
+        if (boundary.headers.get("if-none-match") === etag) {
+          res.statusCode = 304;
+          res.end();
+          return;
+        }
+        res.end(asset.bytes);
         return;
       }
       store.assert();

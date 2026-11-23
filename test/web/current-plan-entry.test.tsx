@@ -30,7 +30,6 @@ import {
   ChatComposer,
   type ChatComposerProps,
 } from "../../web/src/components/workspace/ChatComposer";
-import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import {
   ChatTurnView,
   ChatWorkspace,
@@ -1084,14 +1083,7 @@ function buttonIn(tree: ReactNode, label: string) {
   return button && !button.disabled ? button.onClick : undefined;
 }
 
-it.each([
-  "starter",
-  "undo starter edit",
-  "reference",
-  "cold draft",
-  "replacement plan",
-  "mode exit",
-])(
+it.each(["reference", "cold draft", "replacement plan", "mode exit"])(
   "%s: local insertions preserve current discussion, never confer approval or re-author older text",
   async (path) => {
     const old = path === "replacement plan" || path === "mode exit";
@@ -1121,48 +1113,27 @@ it.each([
       if (path === "cold draft")
         sessionStorage.setItem("cadence:draft:workspace:chat", phrase);
       await draw();
-      const starter = path === "starter" || path === "undo starter edit";
-      if (starter) {
-        const choose = descendant<ComponentProps<typeof ChatWelcome>>(
-          tree,
-          (e) => e.type === ChatWelcome,
-        )?.onStart;
-        if (!choose) throw Error("missing starter");
-        const label = "Explain this project";
-        await act(async () => choose(label));
-        expect(composer(tree).draft).toBe(label);
-        await act(async () =>
-          field.change(label + phrase, "insertText", phrase),
-        );
-        expect(composer(tree).draft).toBe(label + phrase);
-        if (path === "undo starter edit") {
-          await act(async () => field.change(phrase, "deleteContentBackward"));
-          await act(async () => field.change(label + phrase, "historyUndo"));
-          expect(composer(tree).draft).toBe(label + phrase);
-        }
-      } else {
-        if (old) await act(async () => toggleTitle(tree));
-        if (path !== "cold draft")
-          await act(async () => field.change(phrase, "insertText", phrase));
-        if (old) {
-          const b =
-            path === "replacement plan"
-              ? proposal("Replacement agreement")
-              : null;
-          f.state = { ...f.state, enabled: !!b, proposal: b, revision: 2 };
-          await draw();
-          if (b) await act(async () => toggleTitle(tree));
-        }
-        expect(composer(tree).draft).toBe(phrase);
-        await draw("fixture.txt");
-        expect(composer(tree).draft).toBe(`${phrase}\n@fixture.txt`);
+      if (old) await act(async () => toggleTitle(tree));
+      if (path !== "cold draft")
+        await act(async () => field.change(phrase, "insertText", phrase));
+      if (old) {
+        const b =
+          path === "replacement plan"
+            ? proposal("Replacement agreement")
+            : null;
+        f.state = { ...f.state, enabled: !!b, proposal: b, revision: 2 };
+        await draw();
+        if (b) await act(async () => toggleTitle(tree));
       }
+      expect(composer(tree).draft).toBe(phrase);
+      await draw("fixture.txt");
+      expect(composer(tree).draft).toBe(`${phrase}\n@fixture.txt`);
       await act(async () => field.change(phrase, "deleteContentBackward"));
       expect(composer(tree).draft).toBe(phrase);
       expect(command).not.toHaveBeenCalled();
       expect(prepare).not.toHaveBeenCalled();
       await act(async () => field.key("Enter"));
-      if (starter || path === "reference") {
+      if (path === "reference") {
         expect(command.mock.calls.map(([cmd]) => cmd)).toEqual([
           expect.objectContaining({
             kind: "send",

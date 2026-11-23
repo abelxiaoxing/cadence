@@ -412,11 +412,8 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       ),
     ).toBeGreaterThanOrEqual(AA);
     expect(
-      declaration(
-        "@media (max-width: 900px) / .composer-hint.mode-pending",
-        "order",
-      ),
-    ).toBe("10");
+      declaration("@media (max-width: 900px) / .composer-hint", "display"),
+    ).toBe("none");
   });
   it.each([
     ["touch at rest", "@media (hover: none) / .composer-resize"],
@@ -955,5 +952,40 @@ describe("theme choice", () => {
     // Server rendering has no document: nothing to apply, nothing thrown.
     expect(currentTheme()).toBe("system");
     expect(() => applyTheme("light")).not.toThrow();
+  });
+  it("syncs theme-color meta tags when switching between system, light and dark", () => {
+    const lightMeta = {
+      media: "(prefers-color-scheme: light)",
+      content: "#f7f9fc",
+      dataset: {} as Record<string, string>,
+      removeAttribute(name: string) {
+        if (name === "media") this.media = "";
+      },
+    };
+    const darkMeta = {
+      media: "(prefers-color-scheme: dark)",
+      content: "#080a0f",
+      dataset: {} as Record<string, string>,
+      removeAttribute(name: string) {
+        if (name === "media") this.media = "";
+      },
+    };
+    const dataset: Record<string, string> = {};
+    vi.stubGlobal("document", {
+      documentElement: { dataset },
+      querySelectorAll: () => [lightMeta, darkMeta],
+    });
+    applyTheme("dark");
+    expect(lightMeta.media).toBe("");
+    expect(lightMeta.content).toBe("#080a0f");
+    expect(darkMeta.content).toBe("#080a0f");
+    applyTheme("light");
+    expect(lightMeta.content).toBe("#f7f9fc");
+    expect(darkMeta.content).toBe("#f7f9fc");
+    applyTheme("system");
+    expect(lightMeta.media).toBe("(prefers-color-scheme: light)");
+    expect(darkMeta.media).toBe("(prefers-color-scheme: dark)");
+    expect(lightMeta.content).toBe("#f7f9fc");
+    expect(darkMeta.content).toBe("#080a0f");
   });
 });

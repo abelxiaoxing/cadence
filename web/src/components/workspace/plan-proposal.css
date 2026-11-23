@@ -62,3 +62,13 @@
   color: var(--text-secondary);
   font-size: 0.9em;
 }
+@media (max-width: 640px) {
+  .workflow-plan[data-plan-proposal] {
+    padding: 12px 14px;
+  }
+  [data-plan-proposal] > button {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+}

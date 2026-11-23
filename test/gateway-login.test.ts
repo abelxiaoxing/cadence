@@ -68,6 +68,27 @@ it("gateway entry points use the script-free 401 password page and one-year cook
     expect(entry.text).not.toMatch(/<script/i);
     expect(entry.text).toContain('action="/auth"');
     expect(entry.text).toContain('autocomplete="current-password"');
+    expect(entry.text).toContain("viewport-fit=cover");
+    expect(entry.text).toContain('href="/assets/app.webmanifest"');
+    expect(entry.text).toContain('href="/assets/apple-touch-icon.png"');
+    // Stable PWA manifest and icons remain readable without a session cookie
+    // so iOS Add-to-Home-Screen and Android WebAPK install/refresh cleanly.
+    for (const pwaPath of [
+      "/assets/app.webmanifest",
+      "/assets/apple-touch-icon.png",
+      "/assets/icon-maskable-512.png",
+    ]) {
+      const first = await request(origin, pwaPath);
+      expect(first.status).toBe(200);
+      expect(first.headers["cache-control"]).toBe("public, no-cache");
+      const etag = first.headers.etag;
+      expect(etag).toMatch(/^"[a-f0-9]{64}"$/);
+      const cached = await request(origin, pwaPath, {
+        headers: { "if-none-match": etag as string },
+      });
+      expect(cached.status).toBe(304);
+    }
+    expect((await request(origin, "/assets/start.js")).status).toBe(401);
     // Unauthenticated GET /app?project= -> 401 page, next preserves the project.
     const projectPage = await request(
       origin,

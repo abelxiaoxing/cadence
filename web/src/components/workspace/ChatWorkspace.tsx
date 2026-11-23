@@ -16,9 +16,11 @@ import {
 } from "react";
 import {
   FiArrowDown,
+  FiChevronDown,
   FiCornerDownRight,
   FiEdit2,
   FiFileText,
+  FiFolder,
   FiGitBranch,
   FiMessageSquare,
 } from "react-icons/fi";
@@ -208,6 +210,8 @@ export function observedReplyClock(
 /** What the open conversation tells the statusbar: observations only. */
 export interface ConversationActivity {
   id: string;
+  /** Observed conversation title, when recorded. */
+  title?: string;
   /** Turns on the branch shown. */
   turns: number;
   replyClock: ReplyClock;
@@ -336,6 +340,9 @@ export function ChatWorkspace({
   onAgents,
   onBranches,
   onOpenBranches,
+  mobile = false,
+  workingFolder,
+  onOpenFolder,
 }: {
   client: ServiceClient;
   id: string;
@@ -376,6 +383,12 @@ export function ChatWorkspace({
   onBranches?(view: BranchesView): void;
   /** Open the Branches tab. */
   onOpenBranches?(): void;
+  /** Mobile compact shell presentation. */
+  mobile?: boolean;
+  /** Current working folder path for the centered mobile welcome picker. */
+  workingFolder?: string;
+  /** Open the working folder picker from the mobile welcome view. */
+  onOpenFolder?(): void;
   /** Observed execution availability, independent of the readable history. */
   modelAvailability: ModelAvailability;
   previewModels?: PreviewModels;
@@ -954,13 +967,12 @@ export function ChatWorkspace({
   );
   const recoveredSource =
     discussionPath === "chat" || liveRun ? discussionSource : undefined;
-  // Starters, file references and recovered messages are local discussion
-  // edits, never plan confirmation. Appending cannot re-author older text.
+  // File references and recovered messages are local discussion edits, never
+  // plan confirmation. Appending cannot re-author older text.
   const appendDiscussion = useCallback(
-    (text: string, onlyIfEmpty = false) => {
+    (text: string) => {
       setEntry((prior) => {
         if (!prior.text) return { text, source: recoveredSource };
-        if (onlyIfEmpty) return prior;
         return {
           text: `${prior.text}\n${text}`,
           source:
@@ -1496,9 +1508,11 @@ export function ChatWorkspace({
     modelRead.catalog?.selected ?? modelRead.catalog?.remembered ?? undefined;
   const onActivityRef = useRef(onActivity);
   onActivityRef.current = onActivity;
+  const summaryTitle = summary?.title;
   useLayoutEffect(() => {
     onActivityRef.current?.({
       id,
+      ...(summaryTitle ? { title: summaryTitle } : {}),
       turns: conversation.count,
       replyClock,
       ...(replyReading ? { reading: true } : {}),
@@ -1509,6 +1523,7 @@ export function ChatWorkspace({
     });
   }, [
     id,
+    summaryTitle,
     conversation.count,
     replyClock,
     replyReading,
@@ -3076,20 +3091,31 @@ export function ChatWorkspace({
       </div>
       {centerEntry && (
         <ChatWelcome
-          onStart={
-            (observedEmpty || freshEntry) &&
-            draft === "" &&
-            !imageDraft.files.length &&
-            !busy &&
-            !pending &&
-            !awaitingModel
-              ? (prompt) => {
-                  appendDiscussion(prompt, true);
-                  textarea.current?.focus({ preventScroll: true });
-                }
+          hint={
+            mobile && workingFolder
+              ? t("New conversation runs in this folder")
               : undefined
           }
-        />
+        >
+          {mobile && workingFolder && onOpenFolder && (
+            <button
+              type="button"
+              className="mobile-welcome-folder"
+              title={workingFolder}
+              aria-label={t("Switch working folder")}
+              onClick={onOpenFolder}
+            >
+              <FiFolder aria-hidden="true" />
+              <span>
+                {workingFolder
+                  .replace(/[\\/]+$/, "")
+                  .split(/[\\/]/)
+                  .pop() || workingFolder}
+              </span>
+              <FiChevronDown aria-hidden="true" />
+            </button>
+          )}
+        </ChatWelcome>
       )}
       <div className="composer-dock" ref={dock}>
         <ChatComposer
