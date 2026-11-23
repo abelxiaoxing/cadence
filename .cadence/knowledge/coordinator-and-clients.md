@@ -11,11 +11,11 @@ Anchors: `src/coordinator-context.ts#buildCoordinatorContext`, `src/coordinator-
 
 ### Raw-terminal native consent vs browser approval binding
 
-Native `/cadence` retains raw-terminal guards so approval requires direct local terminal input, never a piped or automated stream.
-Browser access authentication is never action consent: browser execution requires an exact-plan, conversation-bound and attachment-bound approval (`ApprovalScope`) rather than a native capability.
-Owner-held conversation mode survives browser refresh; the bounded SDK coordinator cannot edit files or approve its own plan, and releases the checkout gate while waiting for subagents.
+Native `/cadence` and `/cadence-history` retain raw-terminal guards; `commandTerminalInput` observes Pi's autocomplete provider so Enter completion updates the pending raw entry only in that same synchronous dispatch (preserving timestamp, exact args, paste and one-use guards).
+Browser auth is never action consent (`ApprovalScope` binds exact plan, conversation and attachment).
+Owner-held mode survives refresh; the bounded SDK coordinator cannot edit or self-approve and releases the checkout gate while waiting for subagents.
 
-Anchors: `src/cadence-mode.ts#registerCadenceMode`, `src/service/conversation-workflow.ts#BROWSER_COORDINATOR_INSTRUCTIONS`, `web/src/components/workspace/WorkflowPanel.tsx#ApprovalScope`
+Anchors: `src/cadence-mode.ts#registerCadenceMode`, `src/native-command-input.ts#commandTerminalInput`, `src/service/conversation-workflow.ts#BROWSER_COORDINATOR_INSTRUCTIONS`, `web/src/components/workspace/WorkflowPanel.tsx#ApprovalScope`, `test/native-command-completion.test.mjs`
 
 ## Browser Shell and Streaming
 

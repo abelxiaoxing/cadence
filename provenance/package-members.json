@@ -60,6 +60,7 @@
   "package/src/model-preview.mjs",
   "package/src/native-build.ts",
   "package/src/native-client.ts",
+  "package/src/native-command-input.ts",
   "package/src/native-export.ts",
   "package/src/native-history.ts",
   "package/src/native-workflow-history.ts",

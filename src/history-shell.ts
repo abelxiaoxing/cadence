@@ -15,6 +15,7 @@ import {
   MANAGEMENT_GUIDANCE,
   NativeConnection,
 } from "./native-client.ts";
+import { commandTerminalInput } from "./native-command-input.ts";
 import {
   NativeHistory,
   type NativeViews,
@@ -46,17 +47,21 @@ export class TerminalEntryLatch {
       return;
     }
     if (this.pasting || !eligible || !matchesKey(data, Key.enter)) return;
-    if (new RegExp(`^/${this.command}(?:[ \\t]+[^\\r\\n]*)?$`).test(editor))
-      this.entry = { text: editor, at: now };
+    this.entry = { text: editor, at: now };
+  }
+  completeCommand(before: string, after: string): void {
+    if (this.entry?.text === before) this.entry.text = after;
   }
   consume(args: string, now = Date.now()): boolean {
     const entry = this.entry;
     this.clear();
     return (
       !!entry &&
+      new RegExp(`^/${this.command}(?:[ \\t]+[^\\r\\n]*)?$`).test(entry.text) &&
       now - entry.at >= 0 &&
       now - entry.at < 1500 &&
-      entry.text.replace(new RegExp(`^/${this.command}[ \\t]*`), "") === args
+      entry.text.trim().replace(new RegExp(`^/${this.command}[ \\t]*`), "") ===
+        args.trim()
     );
   }
 }
@@ -91,10 +96,13 @@ export function registerHistoryShell(pi: ExtensionAPI): void {
     unsubscribe?.();
     unsubscribe = undefined;
     if (ctx.mode === "tui")
-      unsubscribe = ctx.ui.onTerminalInput((data) => {
-        latch.input(data, ctx.ui.getEditorText(), !modal && eligible(ctx));
-        return undefined;
-      });
+      unsubscribe = commandTerminalInput(
+        ctx,
+        "cadence-history",
+        (data) =>
+          latch.input(data, ctx.ui.getEditorText(), !modal && eligible(ctx)),
+        (before, after) => latch.completeCommand(before, after),
+      );
   });
   pi.on("session_shutdown", () => {
     const leaving = depart();
