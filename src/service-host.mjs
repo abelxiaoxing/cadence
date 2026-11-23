@@ -36577,9 +36577,15 @@ function decodeRecoveryDecision(reply, bounds, secrets = []) {
     ]);
     const action = oneOf(o.action, ["continue", "blocked"]);
     let level = has("level") ? oneOf(o.level, RECOVERY_LEVELS) : "repair";
-    const cited = list(o.evidence, 32, (v) => text(v, 160, true));
+    const evidenceError = "evidence must be a nonempty array of at most 32 exact failed step IDs from the supplied current evidence (at most 160 UTF-8 bytes each), not diagnostic prose; put explanations in cause or strategy";
+    let cited;
+    try {
+      cited = list(o.evidence, 32, (v) => text(v, 160, true));
+    } catch {
+      return refuse3(evidenceError);
+    }
     if (!cited.length || cited.some((id) => !bounds.evidence.includes(id)))
-      refuse3("Recovery must cite this failure's actual step identities");
+      refuse3(evidenceError);
     const scope = has("scope") ? list(o.scope, 64, (v) => workflowPath(v, true)) : [];
     if (scope.some((p) => sanitizeText(p, secrets) !== p))
       refuse3("A scope path names protected text");
@@ -38347,7 +38353,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.4",
-  build: "28f1ce3917aff4173267d649765f27458e54fb2f4ca3b8975e75e534c007cdd1",
+  build: "07db9d0072df3d1deccde9faf5a68e11af6e75785d37c23dcbc4088aeef03ed3",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

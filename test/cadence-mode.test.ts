@@ -259,6 +259,7 @@ function host(entries: any[] = []) {
         return () => raw.delete(f);
       },
       getEditorText: () => editor,
+      addAutocompleteProvider() {},
       setStatus: vi.fn(),
       notify: vi.fn((text: string) => notices.push(text)),
       select: vi.fn(async () => undefined),
