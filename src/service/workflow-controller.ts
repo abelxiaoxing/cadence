@@ -595,9 +595,16 @@ export function decodeRecoveryDecision(
     ]);
     const action = oneOf(o.action, ["continue", "blocked"]);
     let level = has("level") ? oneOf(o.level, RECOVERY_LEVELS) : "repair";
-    const cited = list(o.evidence, 32, (v) => text(v, 160, true));
+    const evidenceError =
+      "evidence must be a nonempty array of at most 32 exact failed step IDs from the supplied current evidence (at most 160 UTF-8 bytes each), not diagnostic prose; put explanations in cause or strategy";
+    let cited: string[];
+    try {
+      cited = list(o.evidence, 32, (v) => text(v, 160, true));
+    } catch {
+      return refuse(evidenceError);
+    }
     if (!cited.length || cited.some((id) => !bounds.evidence.includes(id)))
-      refuse("Recovery must cite this failure's actual step identities");
+      refuse(evidenceError);
     const scope = has("scope")
       ? list(o.scope, 64, (v) => workflowPath(v, true))
       : [];
