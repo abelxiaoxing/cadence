@@ -381,36 +381,32 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
           contrast(ruleColor(selector, "color", scheme), surface),
         ).toBeGreaterThanOrEqual(AA);
     }
-    const armedSurface = over(
-      ruleColor(".mode-toggle.on.armed", "background", scheme),
-      capsule,
+    expect(declaration(disabled, "box-shadow")).toBe("none");
+    expect(
+      contrast(ruleColor(".mode-toggle.off", "color", scheme), capsule),
+    ).toBeGreaterThanOrEqual(AA);
+    const litFace = ruleColor(".mode-toggle.on", "background", scheme);
+    expect(
+      contrast(ruleColor(".mode-toggle.on", "color", scheme), litFace),
+    ).toBeGreaterThanOrEqual(AA);
+    expect(contrast(litFace, capsule)).toBeGreaterThanOrEqual(GRAPHIC);
+    expect(declaration(".mode-toggle.on .mode-toggle-icon", "fill")).toBe(
+      "currentColor",
     );
     expect(
-      contrast(
-        ruleColor(".mode-toggle.on.armed", "color", scheme),
-        armedSurface,
-      ),
-    ).toBeGreaterThanOrEqual(AA);
+      declaration(".mode-toggle.on .mode-switch::after", "background"),
+    ).toBe("var(--on-accent)");
     expect(
-      contrast(
-        ruleColor(
-          ".mode-toggle.on.armed .mode-switch::after",
-          "background",
-          scheme,
-        ),
-        ruleColor(".mode-toggle.on.armed .mode-switch", "background", scheme),
-      ),
-    ).toBeGreaterThanOrEqual(AA);
-    for (const selector of [".mode-toggle.off", ".mode-toggle.off.leaving"])
-      expect(
-        contrast(ruleColor(selector, "color", scheme), capsule),
-      ).toBeGreaterThanOrEqual(AA);
-    expect(
-      contrast(
-        ruleColor(".mode-toggle.on", "color", scheme),
-        ruleColor(".mode-toggle.on", "background", scheme),
-      ),
-    ).toBeGreaterThanOrEqual(AA);
+      declaration(".mode-toggle.on .mode-switch::after", "transform"),
+    ).toBe("translateX(10px)");
+    // Binary lit/dim presentation: pending states inherit .on / .off cleanly without dashed overrides.
+    for (const obsolete of [
+      ".mode-toggle.on.armed { border }",
+      ".mode-toggle.on.armed { background }",
+      ".mode-toggle.off.leaving { border }",
+      ".mode-toggle.off.leaving { color }",
+    ])
+      expect(declarations.has(obsolete)).toBe(false);
     expect(
       declaration("@media (max-width: 900px) / .composer-hint", "display"),
     ).toBe("none");
@@ -675,6 +671,23 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       expect(
         contrast(ruleColor(selector, "color", scheme), menu),
       ).toBeGreaterThanOrEqual(AA);
+    const currentCard = over(
+      ruleColor(".model-item.current", "background", scheme),
+      menu,
+    );
+    expect(
+      contrast(
+        ruleColor('.model-option[aria-selected="true"]', "color", scheme),
+        currentCard,
+      ),
+    ).toBeGreaterThanOrEqual(AA);
+    const expandedCard = over(
+      ruleColor(".model-item.expanded:not(.current)", "background", scheme),
+      menu,
+    );
+    expect(
+      contrast(ruleColor(".model-option", "color", scheme), expandedCard),
+    ).toBeGreaterThanOrEqual(AA);
   });
   it("keeps every locked thinking level readable and outlines the pressed level on its menu", () => {
     const pressed = '.model-thinking button[aria-pressed="true"]';

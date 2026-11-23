@@ -5384,10 +5384,13 @@ button.file-item:hover:not(:disabled),
   z-index: 70;
   display: flex;
   flex-direction: column;
-  width: 340px;
-  max-height: min(460px, 62vh);
-  border-radius: 16px;
+  width: 300px;
+  max-height: min(440px, 60vh);
+  border-radius: 14px;
   overflow: hidden;
+}
+.model-popover:focus {
+  outline: none;
 }
 .model-popover,
 .mention-menu,
@@ -5420,60 +5423,75 @@ button.file-item:hover:not(:disabled),
 .model-popover-lead {
   margin: 0;
   padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--glow-025);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.model-popover-lead.accent {
   background: var(--accent-soft);
   color: var(--accent-text);
-  font-size: 12px;
-}
-.model-search {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-soft);
-  color: var(--text-faint);
-}
-.model-search input {
-  flex: 1;
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.model-search input:focus {
-  box-shadow: none;
 }
 .model-list {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
 }
 .model-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
 }
 .model-group + .model-group {
-  margin-top: 4px;
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-soft);
 }
 .model-group-label {
-  padding: 6px 8px 2px;
+  padding: 2px 10px 4px;
   float: none;
   color: var(--text-faint);
-  font-size: 11px;
-  letter-spacing: 0.02em;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.model-item {
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+.model-item.current {
+  background: var(--accent-soft);
+}
+.model-item.current.expanded {
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.model-item.expanded:not(.current) {
+  border-color: var(--border-soft);
+  background: var(--bg-elev2);
 }
 .model-option {
   display: flex;
+  align-items: center;
   width: 100%;
+  min-height: 32px;
   justify-content: flex-start;
   gap: 8px;
-  padding: 6px 8px;
-  border-color: transparent;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 9px;
   background: transparent;
   color: var(--text);
+  font-size: 12.5px;
   text-align: left;
 }
 .model-option:disabled {
@@ -5481,8 +5499,13 @@ button.file-item:hover:not(:disabled),
 }
 .model-option:hover:not(:disabled),
 .model-option:focus-visible {
-  border-color: transparent;
   background: var(--bg-elev2);
+}
+.model-item.current > .model-option:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.model-item.expanded:not(.current) > .model-option:hover:not(:disabled) {
+  background: var(--glow-04);
 }
 .model-option[aria-selected="true"] {
   color: var(--accent-text);
@@ -5494,6 +5517,9 @@ button.file-item:hover:not(:disabled),
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.model-option[aria-selected="true"] .model-option-name {
+  font-weight: 550;
+}
 .model-option-note {
   flex: none;
   color: var(--text-faint);
@@ -5501,34 +5527,61 @@ button.file-item:hover:not(:disabled),
 }
 .model-option-check {
   flex: none;
+  width: 14px;
+  height: 14px;
+}
+.model-option-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-faint);
+  transform: rotate(-90deg);
+  transition:
+    transform 140ms ease,
+    color 120ms ease;
+}
+.model-option-chevron.open {
+  color: var(--text-dim);
+  transform: rotate(0deg);
 }
 .model-empty {
   margin: 0;
-  padding: 10px 8px;
+  padding: 12px 10px;
   color: var(--text-faint);
   font-size: 12px;
+  line-height: 1.45;
 }
 .model-thinking {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border-soft);
+  min-width: 0;
+  margin: 0;
+  padding: 2px 10px 9px;
+  border: 0;
 }
 .model-thinking-label {
-  margin-right: 4px;
+  margin-right: 2px;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font-size: 11px;
+  user-select: none;
 }
 .model-thinking button {
-  min-height: 24px;
+  min-height: 23px;
   padding: 2px 8px;
+  border-color: var(--border-soft);
   border-radius: 999px;
   font-size: 11.5px;
+  font-weight: 500;
 }
 .model-thinking button:disabled {
   opacity: 1;
+}
+.model-thinking button:hover:not(:disabled):not([aria-pressed="true"]) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 .model-thinking button[aria-pressed="true"] {
   border-color: var(--accent-strong);
@@ -5536,15 +5589,26 @@ button.file-item:hover:not(:disabled),
   color: var(--accent-text);
 }
 .model-popover-notes {
-  padding: 0 12px 8px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--glow-025);
 }
 .model-popover-notes p {
-  margin: 8px 0 0;
+  margin: 0;
   color: var(--text-faint);
   font-size: 11.5px;
+  line-height: 1.45;
+}
+.model-popover-notes p + p {
+  margin-top: 6px;
 }
 .model-popover-notes p[role="alert"] {
   color: var(--amber-text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .model-option-chevron {
+    transition: none;
+  }
 }
 button.link {
   min-height: 0;
@@ -5560,7 +5624,7 @@ button.link:hover:not(:disabled) {
   text-decoration: underline;
 }
 
-/* ---- Cadence mode switch: selects whether the next Send uses Cadence ---- */
+/* ---- Cadence mode switch: binary lit (on) vs dim (off) for next Send ---- */
 .mode-toggle {
   flex: none;
   gap: 6px;
@@ -5596,33 +5660,20 @@ button.link:hover:not(:disabled) {
   border-radius: 50%;
   background: currentColor;
 }
-/* Off (ordinary): subtle neutral pill, switch thumb on the left. */
+/* Off (ordinary or pending exit): dim neutral outline, hollow bolt, thumb left. */
 .mode-toggle.off {
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
+  border: 1px solid var(--border-soft);
+  color: var(--text-faint);
 }
-.mode-toggle.off:hover:not(:disabled) {
-  border-color: var(--accent-text);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-/* Leaving (active on server, exiting on next Send): dashed outline signals pending switch. */
-.mode-toggle.off.leaving {
-  border: 1px dashed var(--accent-text);
-  color: var(--accent-text);
-}
-.mode-toggle.off.leaving:hover:not(:disabled) {
-  background: var(--accent-soft);
-}
-/* On (active on server): solid pill, switch thumb slid right. */
+/* On (active or pending enter): lit accent fill, solid bolt, glow, thumb right. */
 .mode-toggle.on {
-  border: 1px solid var(--prism-b);
-  background: var(--prism-b);
+  border: 1px solid var(--accent);
+  background: var(--accent);
   color: var(--on-accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 34%, transparent);
 }
-.mode-toggle.on:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--primary-hover);
+.mode-toggle.on .mode-toggle-icon {
+  fill: currentColor;
 }
 .mode-toggle.on .mode-switch {
   background: color-mix(in srgb, var(--on-accent) 28%, transparent);
@@ -5631,22 +5682,16 @@ button.link:hover:not(:disabled) {
   background: var(--on-accent);
   transform: translateX(10px);
 }
-/* Armed (off on server, entering on next Send): dashed soft accent pill, thumb slid right. */
-.mode-toggle.on.armed {
-  border: 1px dashed var(--accent-text);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-.mode-toggle.on.armed:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-}
-.mode-toggle.on.armed .mode-switch {
-  background: var(--accent);
-}
-.mode-toggle.on.armed .mode-switch::after {
-  background: var(--on-accent);
-  transform: translateX(10px);
+@media (hover: hover) {
+  .mode-toggle.off:hover:not(:disabled) {
+    border-color: var(--border);
+    background: var(--bg-elev2);
+    color: var(--text-secondary);
+  }
+  .mode-toggle.on:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+  }
 }
 @media (prefers-reduced-motion: no-preference) {
   .mode-toggle {
@@ -5654,6 +5699,7 @@ button.link:hover:not(:disabled) {
       background-color 0.16s ease,
       border-color 0.16s ease,
       color 0.16s ease,
+      box-shadow 0.16s ease,
       transform 0.12s ease;
   }
   .mode-toggle:active:not(:disabled) {
@@ -5678,6 +5724,7 @@ button.link:hover:not(:disabled) {
   border-color: var(--border);
   background: var(--chip-bg, var(--bg-elev2));
   color: var(--text-primary);
+  box-shadow: none;
 }
 .mode-toggle:disabled .mode-switch {
   background: color-mix(in srgb, var(--text-primary) 18%, transparent);
@@ -5761,6 +5808,23 @@ button.link:hover:not(:disabled) {
     border-bottom: 0;
     padding-bottom: max(8px, env(safe-area-inset-bottom));
     overflow-y: auto;
+  }
+  .model-list {
+    padding: 8px;
+  }
+  .model-option {
+    min-height: 40px;
+    padding: 8px 12px;
+    font-size: 13.5px;
+  }
+  .model-thinking {
+    gap: 6px;
+    padding: 2px 12px 10px;
+  }
+  .model-thinking button {
+    min-height: 30px;
+    padding: 4px 11px;
+    font-size: 12px;
   }
 }
 
@@ -6407,12 +6471,6 @@ button.link:hover:not(:disabled) {
     margin: 5px 6px 5px 0;
     padding: 0;
     border: 0;
-  }
-  .model-search:focus-within {
-    border-bottom-color: var(--accent);
-  }
-  .model-search input:focus-visible {
-    outline: none;
   }
   .chat-messages-wrap {
     --latest-gap: 8px;

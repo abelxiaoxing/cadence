@@ -160,7 +160,6 @@ export function FolderSetup({
               />
               <div className="composer-toolbar">
                 <ModelPicker
-                  scope="next-conversation"
                   availability={{ status: "not-started" }}
                   read={modelRead}
                   draftModel={draft.model}

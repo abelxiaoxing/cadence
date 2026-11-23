@@ -26,10 +26,14 @@ const ready = {
   epoch: "epoch",
   attachmentVersion: 1,
 } as const;
-const entry = (levels: ModelCandidate["thinking"][number]["level"][]) =>
+const entry = (
+  levels: ModelCandidate["thinking"][number]["level"][],
+  model = "m",
+  provider = "local",
+) =>
   ({
-    provider: "local",
-    model: "m",
+    provider,
+    model,
     api: "openai-completions",
     thinking: levels.map((level) => ({ level, selectable: true })),
     eligibility: "candidate",
@@ -119,7 +123,7 @@ it("renders one closed model button, no native select, and a neutral loading sta
   );
   expect(open).toContain('role="dialog"');
   expect(open).toContain("选择模型后会立即发送你的消息。");
-  expect(open).toContain("搜索模型");
+  expect(open).not.toContain("model-search");
   expect(open).toContain("正在读取模型…");
   expect(open).toContain("当前回复结束后才能切换模型。");
   expect(open).not.toMatch(/所有者|显式/);
@@ -140,7 +144,7 @@ it("a bare public error code keeps its untranslated code without claiming a comp
   expect(describeError(t as never, "constructor")).toBe("constructor");
 });
 it.each(["stopped", "not-started"] as const)(
-  "%s shows selectable preview models, search and thinking without a service-start notice",
+  "%s shows selectable preview models and inline thinking without search, refresh, or boilerplate prose",
   (status) => {
     for (const locale of ["en", "zh"] as const) {
       const { version: _version, selected: _selected, ...preview } = catalog();
@@ -153,15 +157,12 @@ it.each(["stopped", "not-started"] as const)(
         locale,
       );
       expect(html).toContain('role="option"');
-      expect(html).toContain("model-search");
       expect(html).toContain("model-thinking");
-      expect(html).toContain(
-        locale === "zh" ? "刷新模型列表" : "Refresh models",
-      );
-      expect(html).toContain(
-        locale === "zh"
-          ? "现在选择模型，发送时验证可用性。"
-          : "Choose now; the model is verified when you send.",
+      expect(html).not.toContain("model-search");
+      expect(html).not.toContain("model-popover-lead");
+      expect(html).not.toContain("model-popover-notes");
+      expect(html).not.toMatch(
+        /刷新模型列表|Refresh models|发送时启用|Used when you send/,
       );
       expect(html).not.toMatch(/尚未启动|does not start|role="alert"/);
       expect(client.chooseModel).not.toHaveBeenCalled();
@@ -169,13 +170,38 @@ it.each(["stopped", "not-started"] as const)(
     }
   },
 );
+it("keeps non-current multi-thinking models collapsed with a chevron while current single-thinking models stay compact", () => {
+  const mixed: ModelCatalog = {
+    ...catalog(),
+    entries: [
+      entry(["off"], "LocalModel", "abel"),
+      entry(
+        ["off", "low", "medium", "high", "xhigh"],
+        "gpt-6.2-astra",
+        "codex",
+      ),
+    ],
+    remembered: {
+      provider: "abel",
+      model: "LocalModel",
+      api: "openai-completions",
+      thinking: "off",
+    },
+  };
+  const html = picker(ready, read(mixed));
+  expect(html).toContain("LocalModel");
+  expect(html).toContain("gpt-6.2-astra");
+  expect(html).toContain("model-option-check");
+  expect(html).toContain("model-option-chevron");
+  expect(html).not.toContain("model-thinking");
+  expect(html).not.toContain("model-popover-notes");
+});
 it("an unverified saved preference is labelled last-used, never installed or guaranteed usable", () => {
   const html = picker({ status: "stopped" }, read(), {
     lastModel: catalog().remembered,
   });
   expect(html).toContain("Last used: m · Low");
   expect(html).toContain("availability is checked when you send");
-  expect(html).not.toContain("Used when you send");
   expect(html).not.toContain("model-option-check");
 });
 it.each([
@@ -213,14 +239,6 @@ it("only a failed live catalog read offers a retry; loading is neither failure n
   );
   expect(empty).toContain("Choose a model");
   expect(empty).toContain("No models are configured");
-});
-it("model scope names future messages in this conversation, not every project conversation", () => {
-  const html = picker(ready, read(catalog()));
-  expect(html).toContain(
-    "This model is used for future messages in this conversation.",
-  );
-  expect(html).toContain("Work already started keeps its original model.");
-  expect(html).not.toContain("Every conversation in this project");
 });
 it.each(["live-reply", "read-error", "obsolete", "loading", "ready"])(
   "%s: inspecting a catalog never unlocks invalid model or thinking choices",

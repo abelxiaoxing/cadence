@@ -1,7 +1,8 @@
-/** Composer model control: the current owner model on the button, a searchable
- * list grouped by provider and a separate thinking level in an anchored panel.
- * One click is one explicit choice; a saved preference is only displayed here,
- * and Send alone installs it. Nothing here probes a provider or starts work. */
+/** Composer model control: the current owner model on the button, a provider-
+ * grouped list with inline expandable thinking levels in an anchored panel.
+ * One click on a model without extra thinking levels or on a thinking chip is
+ * one explicit choice; a saved preference is only displayed here, and Send
+ * alone installs it. Nothing here probes a provider or starts work. */
 import {
   type KeyboardEvent,
   useCallback,
@@ -10,7 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { FiCheck, FiChevronDown, FiCpu, FiSearch } from "react-icons/fi";
+import { FiCheck, FiChevronDown, FiCpu } from "react-icons/fi";
 import {
   decodeModelSelector,
   thinkingLevels,
@@ -53,6 +54,10 @@ const sameModel = (entry: ModelCandidate, model: ModelSelector | null) =>
   entry.provider === model.provider &&
   entry.model === model.model &&
   entry.api === model.api;
+const entryKey = (entry: ModelCandidate) =>
+  `${entry.provider}/${entry.model}/${entry.api ?? ""}`;
+const hasThinkingChoices = (entry: ModelCandidate) => entry.thinking.length > 1;
+
 /** The offered level closest to the wanted one (the lower one on a tie). */
 export function nearestLevel(entry: ModelCandidate, wanted: Level): Level {
   const offered = entry.thinking
@@ -91,7 +96,6 @@ export function ModelPicker({
   onChanged,
   onChosen,
   awaitingSend = false,
-  scope = "conversation",
 }: {
   client?: Pick<ServiceClient, "chooseModel">;
   availability: ModelAvailability;
@@ -114,7 +118,6 @@ export function ModelPicker({
   onChosen?(choice: ModelSelector): void;
   /** A Send is waiting for this choice and continues after it. */
   awaitingSend?: boolean;
-  scope?: "conversation" | "next-conversation";
 }) {
   const { t } = useT();
   const label = useModelLabel();
@@ -129,10 +132,10 @@ export function ModelPicker({
   const catalog = liveCatalog ?? preview;
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
-  const [query, setQuery] = useState("");
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const search = useRef<HTMLInputElement>(null);
+  const popover = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const changeOpen = useRef(onOpenChange);
   changeOpen.current = onOpenChange;
@@ -142,30 +145,33 @@ export function ModelPicker({
     void epoch;
     void attachment;
     setError("");
+    setExpandedKey(null);
   }, [client, epoch, attachment]);
   const close = useCallback((focus = true, reason?: "chosen") => {
     if (reason) changeOpen.current(false, reason);
     else changeOpen.current(false);
-    setQuery("");
+    setExpandedKey(null);
     setError("");
     if (focus) trigger.current?.focus({ preventScroll: true });
   }, []);
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setExpandedKey(null);
+      return;
+    }
     const mobileSheet =
       typeof window !== "undefined" &&
       typeof window.matchMedia === "function" &&
       window.matchMedia(
         "(max-width: 900px), ((pointer: coarse) and (hover: none))",
       ).matches;
-    if (browsable && !mobileSheet)
-      search.current?.focus({ preventScroll: true });
+    if (!mobileSheet) popover.current?.focus({ preventScroll: true });
     const outside = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) close(false);
     };
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
-  }, [open, close, browsable]);
+  }, [open, close]);
   const selected = liveCatalog?.selected ?? null;
   const current: ModelSelector | null =
     draftModel ??
@@ -174,21 +180,24 @@ export function ModelPicker({
     catalog?.remembered ??
     null;
   const groups = useMemo(() => {
-    const needle = query.trim().toLowerCase();
     const map = new Map<string, ModelCandidate[]>();
     for (const entry of catalog?.entries ?? []) {
-      if (
-        needle &&
-        !`${entry.provider}/${entry.model}`.toLowerCase().includes(needle)
-      )
-        continue;
       map.set(entry.provider, [...(map.get(entry.provider) ?? []), entry]);
     }
     return [...map];
-  }, [catalog, query]);
+  }, [catalog]);
   const currentEntry = catalog?.entries.find((entry) =>
     sameModel(entry, current),
   );
+  const activeExpandedKey =
+    expandedKey &&
+    catalog?.entries.some(
+      (entry) => entryKey(entry) === expandedKey && hasThinkingChoices(entry),
+    )
+      ? expandedKey
+      : currentEntry && hasThinkingChoices(currentEntry)
+        ? entryKey(currentEntry)
+        : null;
   const selectionEnabled =
     (ready || !!preview) &&
     !!catalog &&
@@ -253,20 +262,68 @@ export function ModelPicker({
       setPending(false);
     }
   };
+  const onOptionClick = (entry: ModelCandidate, isExpanded: boolean) => {
+    const key = entryKey(entry);
+    if (hasThinkingChoices(entry) && !isExpanded) {
+      if (
+        !selectionEnabled ||
+        entry.eligibility !== "candidate" ||
+        pending ||
+        locked
+      )
+        return;
+      setExpandedKey(key);
+      return;
+    }
+    void choose(entry, nearestLevel(entry, current?.thinking ?? "medium"));
+  };
   const options = () =>
     [
       ...(list.current?.querySelectorAll<HTMLButtonElement>(
         "button[role=option]:not(:disabled)",
       ) ?? []),
     ] as HTMLButtonElement[];
-  const onListKey = (event: KeyboardEvent) => {
+  const onPopoverKey = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      close();
+      return;
+    }
+    if (!browsable) return;
+    const active = document.activeElement as HTMLElement | null;
+    const thinkingRow = active?.closest(".model-thinking");
+    if (
+      thinkingRow &&
+      (event.key === "ArrowLeft" || event.key === "ArrowRight")
+    ) {
+      event.preventDefault();
+      const pills = [
+        ...thinkingRow.querySelectorAll<HTMLButtonElement>(
+          "button:not(:disabled)",
+        ),
+      ];
+      const at = pills.indexOf(active as HTMLButtonElement);
+      if (at < 0) return;
+      const next = at + (event.key === "ArrowRight" ? 1 : -1);
+      pills[Math.max(0, Math.min(next, pills.length - 1))]?.focus();
+      return;
+    }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
     const all = options();
-    const at = all.indexOf(document.activeElement as HTMLButtonElement);
+    if (!all.length) return;
+    event.preventDefault();
+    const anchor = thinkingRow
+      ? (active
+          ?.closest(".model-item")
+          ?.querySelector<HTMLButtonElement>("button[role=option]") ?? null)
+      : (active as HTMLButtonElement | null);
+    const at = anchor ? all.indexOf(anchor) : -1;
+    if (at < 0) {
+      (event.key === "ArrowDown" ? all[0] : all[all.length - 1])?.focus();
+      return;
+    }
     const next = at + (event.key === "ArrowDown" ? 1 : -1);
-    if (next < 0) search.current?.focus();
-    else all[Math.min(next, all.length - 1)]?.focus();
+    all[Math.max(0, Math.min(next, all.length - 1))]?.focus();
   };
   const deferred =
     availability.status === "stopped" || availability.status === "not-started";
@@ -310,6 +367,14 @@ export function ModelPicker({
       : visualPlaceholder
         ? label(visualPlaceholder)
         : statusText;
+  const hasReadError = (ready || !!onPreviewChoice) && !!catalogError;
+  const hasNotes =
+    locked ||
+    catalog?.status === "capacity" ||
+    !!catalog?.withheld ||
+    hasReadError ||
+    !!error ||
+    pending;
   return (
     <div className="model-picker" ref={root}>
       <button
@@ -363,24 +428,16 @@ export function ModelPicker({
             onClick={() => close(false)}
           />
           <div
+            ref={popover}
+            tabIndex={-1}
             className="model-popover"
             role="dialog"
             aria-label={t("Choose a model")}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.stopPropagation();
-                close();
-              }
-            }}
+            onKeyDown={onPopoverKey}
           >
             {awaitingSend && (
-              <p className="model-popover-lead">
+              <p className="model-popover-lead accent">
                 {t("Choose a model; your message is sent right after.")}
-              </p>
-            )}
-            {preview && (
-              <p className="model-popover-lead">
-                {t("Choose now; the model is verified when you send.")}
               </p>
             )}
             {!browsable && !catalogError && (
@@ -402,34 +459,11 @@ export function ModelPicker({
               </p>
             )}
             {browsable && (
-              <label className="model-search">
-                <FiSearch aria-hidden="true" />
-                <input
-                  ref={search}
-                  type="search"
-                  aria-label={t("Search models")}
-                  placeholder={t("Search models…")}
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowDown") {
-                      event.preventDefault();
-                      options()[0]?.focus();
-                    } else if (event.key === "Enter") {
-                      event.preventDefault();
-                      options()[0]?.click();
-                    }
-                  }}
-                />
-              </label>
-            )}
-            {browsable && (
               <div
                 className="model-list"
                 role="listbox"
                 aria-label={t("Models")}
                 ref={list}
-                onKeyDown={onListKey}
               >
                 {loading && (
                   <p className="model-empty" role="status">
@@ -440,162 +474,155 @@ export function ModelPicker({
                   <fieldset key={provider} className="model-group">
                     <legend className="model-group-label">{provider}</legend>
                     {entries.map((entry) => {
+                      const key = entryKey(entry);
                       const usable = entry.eligibility === "candidate";
                       const isCurrent = sameModel(entry, current);
+                      const canThink = hasThinkingChoices(entry);
+                      const isExpanded = canThink && activeExpandedKey === key;
                       return (
-                        <button
-                          key={`${entry.provider}/${entry.model}`}
-                          type="button"
-                          role="option"
-                          aria-selected={isCurrent}
-                          className="model-option"
-                          disabled={
-                            !selectionEnabled || !usable || pending || locked
-                          }
-                          title={`${entry.provider}/${entry.model}${entry.api ? ` · ${entry.api}` : ""}`}
-                          onClick={() =>
-                            void choose(
-                              entry,
-                              nearestLevel(
-                                entry,
-                                current?.thinking ?? "medium",
-                              ),
-                            )
-                          }
+                        <div
+                          key={key}
+                          className={`model-item${isCurrent ? " current" : ""}${isExpanded ? " expanded" : ""}`}
                         >
-                          <span className="model-option-name">
-                            {entry.model}
-                          </span>
-                          {!usable && (
-                            <span className="model-option-note">
-                              {entry.eligibility === "auth-unavailable"
-                                ? t("Credentials unavailable")
-                                : t("Not supported")}
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={isCurrent}
+                            className="model-option"
+                            disabled={
+                              !selectionEnabled || !usable || pending || locked
+                            }
+                            title={`${entry.provider}/${entry.model}${entry.api ? ` · ${entry.api}` : ""}`}
+                            onClick={() => onOptionClick(entry, isExpanded)}
+                          >
+                            <span className="model-option-name">
+                              {entry.model}
                             </span>
+                            {!usable && (
+                              <span className="model-option-note">
+                                {entry.eligibility === "auth-unavailable"
+                                  ? t("Credentials unavailable")
+                                  : t("Not supported")}
+                              </span>
+                            )}
+                            {isCurrent ? (
+                              <FiCheck
+                                className="model-option-check"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              usable &&
+                              canThink && (
+                                <FiChevronDown
+                                  className={`model-option-chevron${isExpanded ? " open" : ""}`}
+                                  aria-hidden="true"
+                                />
+                              )
+                            )}
+                          </button>
+                          {isExpanded && (
+                            <fieldset
+                              className="model-thinking"
+                              aria-label={t("Thinking")}
+                            >
+                              <span
+                                className="model-thinking-label"
+                                aria-hidden="true"
+                              >
+                                {t("Thinking")}
+                              </span>
+                              {entry.thinking.map((level) => (
+                                <button
+                                  key={level.level}
+                                  type="button"
+                                  aria-label={t("Thinking level: {level}", {
+                                    level: t(LEVEL_LABELS[level.level]),
+                                  })}
+                                  aria-pressed={
+                                    isCurrent &&
+                                    current?.thinking === level.level
+                                  }
+                                  disabled={
+                                    !selectionEnabled ||
+                                    !usable ||
+                                    !level.selectable ||
+                                    pending ||
+                                    locked
+                                  }
+                                  onClick={() =>
+                                    void choose(entry, level.level)
+                                  }
+                                >
+                                  {t(LEVEL_LABELS[level.level])}
+                                </button>
+                              ))}
+                            </fieldset>
                           )}
-                          {isCurrent && (!selected || !!draftModel) && (
-                            <span className="model-option-note">
-                              {t("Used when you send")}
-                            </span>
-                          )}
-                          {isCurrent && (
-                            <FiCheck
-                              className="model-option-check"
-                              aria-hidden="true"
-                            />
-                          )}
-                        </button>
+                        </div>
                       );
                     })}
                   </fieldset>
                 ))}
                 {catalog?.status === "complete" && groups.length === 0 && (
                   <p className="model-empty">
-                    {query.trim()
-                      ? t("No matching models.")
-                      : t(
-                          preview
-                            ? "No models are configured. Add a provider to Pi's models.json or auth.json, then read the list again."
-                            : "No models are configured. Add a provider to Pi's models.json or auth.json, then reopen the model picker.",
-                        )}
+                    {t(
+                      "No models are configured. Add a provider to Pi's models.json or auth.json, then reopen the model picker.",
+                    )}
                   </p>
                 )}
               </div>
             )}
-            {browsable && currentEntry && currentEntry.thinking.length > 1 && (
-              <div className="model-thinking">
-                <span className="model-thinking-label">{t("Thinking")}</span>
-                {currentEntry.thinking.map((level) => (
-                  <button
-                    key={level.level}
-                    type="button"
-                    aria-label={t("Thinking level: {level}", {
-                      level: t(LEVEL_LABELS[level.level]),
-                    })}
-                    aria-pressed={current?.thinking === level.level}
-                    disabled={
-                      !selectionEnabled ||
-                      currentEntry.eligibility !== "candidate" ||
-                      !level.selectable ||
-                      pending ||
-                      locked
-                    }
-                    onClick={() => void choose(currentEntry, level.level)}
-                  >
-                    {t(LEVEL_LABELS[level.level])}
-                  </button>
-                ))}
+            {hasNotes && (
+              <div className="model-popover-notes">
+                {locked && (
+                  <p>
+                    {lockReason ??
+                      t("Switch models after the current reply finishes.")}
+                  </p>
+                )}
+                {catalog?.status === "capacity" && (
+                  <p role="alert">
+                    {t(
+                      "Catalog capacity exceeded; no partial model list is selectable.",
+                    )}
+                  </p>
+                )}
+                {!!catalog?.withheld && (
+                  <p role="alert">
+                    {t(
+                      catalog.withheld === 1
+                        ? "{count} model withheld: its provider or model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json."
+                        : "{count} models withheld: their provider or model IDs contain a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json.",
+                      { count: catalog.withheld },
+                    )}
+                  </p>
+                )}
+                {hasReadError && (
+                  <p role="alert">
+                    {t("The model list could not be read ({code}).", {
+                      code: catalogError,
+                    })}{" "}
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() => reread(true)}
+                    >
+                      {t("Read again")}
+                    </button>
+                  </p>
+                )}
+                {error && (
+                  <p role="alert">
+                    {MODEL_ERRORS[error]
+                      ? t(MODEL_ERRORS[error])
+                      : t("The model was not changed ({code}).", {
+                          code: error,
+                        })}
+                  </p>
+                )}
+                {pending && <p role="status">{t("Switching model…")}</p>}
               </div>
             )}
-            <div className="model-popover-notes">
-              {preview && !catalogError && (
-                <button
-                  type="button"
-                  className="link"
-                  disabled={loading || pending}
-                  onClick={() => reread(true)}
-                >
-                  {t("Refresh models")}
-                </button>
-              )}
-              {locked && (
-                <p>
-                  {lockReason ??
-                    t("Switch models after the current reply finishes.")}
-                </p>
-              )}
-              {catalog?.status === "capacity" && (
-                <p role="alert">
-                  {t(
-                    "Catalog capacity exceeded; no partial model list is selectable.",
-                  )}
-                </p>
-              )}
-              {!!catalog?.withheld && (
-                <p role="alert">
-                  {t(
-                    catalog.withheld === 1
-                      ? "{count} model withheld: its provider or model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json."
-                      : "{count} models withheld: their provider or model IDs contain a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json.",
-                    { count: catalog.withheld },
-                  )}
-                </p>
-              )}
-              {(ready || !!onPreviewChoice) && catalogError && (
-                <p role="alert">
-                  {t("The model list could not be read ({code}).", {
-                    code: catalogError,
-                  })}{" "}
-                  <button
-                    type="button"
-                    className="link"
-                    onClick={() => reread(true)}
-                  >
-                    {t("Read again")}
-                  </button>
-                </p>
-              )}
-              {error && (
-                <p role="alert">
-                  {MODEL_ERRORS[error]
-                    ? t(MODEL_ERRORS[error])
-                    : t("The model was not changed ({code}).", {
-                        code: error,
-                      })}
-                </p>
-              )}
-              {selectionEnabled && (
-                <p className="model-popover-scope">
-                  {pending
-                    ? t("Switching model…")
-                    : t(
-                        scope === "next-conversation"
-                          ? "Used for your next new conversation after choosing a folder."
-                          : "This model is used for future messages in this conversation. Work already started keeps its original model.",
-                      )}
-                </p>
-              )}
-            </div>
           </div>
         </>
       )}

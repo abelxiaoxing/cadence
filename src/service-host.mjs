@@ -38413,7 +38413,7 @@ ${lines.join(`
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.3.5",
+  version: "2.3.6",
   build: "15d1fd4fed94416a0cb2a1ba157e370e5ce2a5c07b25374d10070a51bf86d26a",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,

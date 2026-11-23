@@ -73,13 +73,8 @@ export const zh = {
   "The model request failed and automatic retries did not recover it.":
     "模型请求失败，自动重试后仍未恢复。",
   "Partial work is preserved.": "已有工作已保留。",
-  "Refresh models": "刷新模型列表",
   "The connection changed. Your model choice and draft are kept; send again when ready.":
     "连接状态已变化，模型选择和草稿已保留，请就绪后重新发送。",
-  "Used for your next new conversation after choosing a folder.":
-    "选择工作目录后，用于下一个新会话。",
-  "No models are configured. Add a provider to Pi's models.json or auth.json, then read the list again.":
-    "尚未配置模型。请在 Pi 的 models.json 或 auth.json 中添加提供商，然后重新读取列表。",
   "Choose now; the model is verified when you send.":
     "现在选择模型，发送时验证可用性。",
   "Validate the plan with this model before approving it.":
@@ -1231,14 +1226,10 @@ export const zh = {
     "上次使用的模型，发送时会再次启用。",
   "Choose a model; your message is sent right after.":
     "选择模型后会立即发送你的消息。",
-  "Search models": "搜索模型",
-  "Search models…": "搜索模型…",
   Models: "模型列表",
   "Reading models…": "正在读取模型…",
   "Credentials unavailable": "凭据不可用",
   "Not supported": "不支持",
-  "Used when you send": "发送时启用",
-  "No matching models.": "没有匹配的模型。",
   "No models are configured. Add a provider to Pi's models.json or auth.json, then reopen the model picker.":
     "还没有配置模型。请在 Pi 的 models.json 或 auth.json 中添加提供方，然后重新打开模型选择器。",
   "Thinking level: {level}": "思考级别：{level}",
@@ -1247,8 +1238,6 @@ export const zh = {
   "Read again": "重新读取",
   "The model was not changed ({code}).": "模型未切换（{code}）。",
   "Switching model…": "正在切换模型…",
-  "This model is used for future messages in this conversation. Work already started keeps its original model.":
-    "此模型用于当前会话后续发送的消息，已开始的工作仍使用原模型。",
   "Type a message below. Turn on Cadence mode to agree on a plan before implementation.":
     "在下方输入消息开始对话。打开 Cadence 模式可以先商定计划再实施。",
   "Cadence mode": "Cadence 模式",

@@ -136,7 +136,7 @@ This is a readonly view of Pi's configured models, not a provider connectivity c
 Before execution is ready, a model/thinking choice stays with the local draft.
 A choice on the folder-less entry carries into the next new conversation you open.
 Send starts or reuses the project service, verifies that exact selection and only then submits the message; if it is unavailable, the draft stays and no other model is substituted.
-The picker reuses its already-read preview when reopened; **Refresh models** reads the configuration again without starting execution.
+Reopening the picker reads the current configuration again without starting execution.
 A preview read failure has a **Read again** action, not a requirement to start a service.
 The browser restores an available saved preference on explicit Send or plan validation and shows it dimmed until then; reads/login do not install a choice.
 With no choice and no saved preference, Send opens the model list and continues the original message after your choice when the same service connection is ready.
