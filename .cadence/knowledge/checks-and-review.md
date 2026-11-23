@@ -31,11 +31,12 @@ Source: internalized from engineering/checks-review.md, 2026-11-22
 Kind: contract
 
 Why: `extractJsonObject` enforces the whole-reply byte ceiling and refuses multiple JSON objects, duplicate keys, incomplete objects or array wrappers rather than salvaging a fragment.
+`decodeRecoveryDecision` keeps exact failed-step identity validation for `evidence` and returns a field-specific objection (directing prose to `cause`/`strategy`) rather than misreporting valid JSON as malformed.
 Unchanged failure/source evidence escalates the revision level (`repair` -> `replan` -> `deviate`) even if the model rephrases its strategy, and concrete scope/route additions automatically classify as `replan`.
 
-Anchors: `src/service/workflow-controller.ts#extractJsonObject`, `test/workflow-controller.test.ts`, `test/workflow-revision.test.ts`
+Anchors: `src/service/workflow-controller.ts#extractJsonObject`, `src/service/workflow-controller.ts#decodeRecoveryDecision`, `test/workflow-controller.test.ts`, `test/workflow-revision.test.ts`
 
-Source: internalized from engineering/checks-review.md, 2026-11-22
+Source: internalized from engineering/checks-review.md, updated 2026-11-22
 
 ### Deviations require independent Agent review confirmation and never silence all checks
 
