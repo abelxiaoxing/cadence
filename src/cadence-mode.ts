@@ -1130,7 +1130,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_research",
     label: "Investigate project",
     description:
-      "Delegate focused, independent readonly investigations, as many as the goal needs; the service runs as many at once as this machine is configured for and queues the rest. Each answer is recorded under its investigation identity. Cite project evidence and consolidate questions in the main conversation. No code editing or task UI.",
+      "Delegate focused, independent readonly investigations, as many as the goal needs; the service asks all of them at once. Each answer is recorded under its investigation identity. Cite project evidence and consolidate questions in the main conversation. No code editing or task UI.",
     parameters: RESEARCH_PARAMETERS,
     async execute(_id, input, signal, update, ctx) {
       // Refused by field name before anything is asked of the service.

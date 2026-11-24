@@ -53,9 +53,12 @@ export interface WorkflowCheck {
   name: string;
   command: string;
   timeoutMs?: number;
-  /** V4: execution cost tier (`fast` default). Never implies skipping post-merge target checks. */
+  /** V4: execution cost tier (`fast` default): order, and how much of the
+   * host a run of it is assumed to need. */
   tier?: WorkflowCheckTier;
-  /** V4: whether this check reruns in the target checkout after fast-forward merge (`run` default). */
+  /** Retained data only: once chose whether a check reran in the target
+   * checkout after the merge. Acceptance is decided on the exact candidate, so
+   * it has no effect; saved agreements that carry it still decode. */
   target?: WorkflowCheckTarget;
 }
 /** V4: owner-synced build step whose edits must stay inside its declared outputs. */
@@ -151,8 +154,17 @@ export interface DeliveryTarget {
   head: string;
 }
 export interface DeliveryBinding {
-  policy: "task-branch-v1" | "task-branch-v2";
+  /** `task-branch-v3` is the only policy that executes; the earlier two name
+   * how retained runs were delivered. */
+  policy: "task-branch-v1" | "task-branch-v2" | "task-branch-v3";
   target: DeliveryTarget;
+}
+/** What an agreement binds before a run exists: where it will land, not the
+ * commit it starts from. A run takes the branch's head when it is admitted.
+ * Retained proposals also carry the head they were shown at. */
+export interface DeliveryPlacement {
+  policy: DeliveryBinding["policy"];
+  target: Omit<DeliveryTarget, "head"> & { head?: string };
 }
 export interface AcceptanceRecord {
   candidate: string;
@@ -202,14 +214,18 @@ export interface DeliveryObservation {
     before: string;
     after: string | null;
     reason: string;
+    /** How the target branch was moved, once it was: by reference alone when
+     * no worktree had it checked out, otherwise by fast-forward there. */
+    sync?: { mode: "ref" | "fast-forward"; worktree: string | null };
   };
-  postChecks: "not-run" | "passed" | "failed" | "unknown";
+  /** Retained runs only: checks once rerun in the target checkout. */
+  postChecks?: "not-run" | "passed" | "failed" | "unknown";
   cleanup: { status: "pending" | "removed" | "retained"; reason: string };
 }
 export interface WorkflowProposal {
   /** Immutable prior binding of the same plan; never inherited execution consent. */
   revalidatedFrom?: string;
-  delivery?: DeliveryBinding;
+  delivery?: DeliveryPlacement;
   id: string;
   epoch: string;
   digest: string;
@@ -221,6 +237,8 @@ export interface WorkflowProposal {
   display?: {
     model: string;
     branch: string;
+    /** The commit a retained proposal was bound to; empty in current ones,
+     * which bind the branch and take its head when the run is admitted. */
     baseCommit: string;
     runtime?: string;
   };
@@ -1287,25 +1305,36 @@ function deliveryPath(value: unknown): string {
     throw new Error("Invalid delivery path");
   return path;
 }
-export function decodeDeliveryBinding(value: unknown): DeliveryBinding {
+const DELIVERY_POLICIES = [
+  "task-branch-v1",
+  "task-branch-v2",
+  "task-branch-v3",
+] as const;
+export function decodeDeliveryPlacement(value: unknown): DeliveryPlacement {
   const b = closed(value, ["policy", "target"]);
+  const headed = Object.hasOwn((b.target ?? {}) as object, "head");
   const t = closed(b.target, [
     "checkoutRoot",
     "repository",
     "repositoryIdentity",
     "branch",
-    "head",
+    ...(headed ? ["head"] : []),
   ]);
   return {
-    policy: oneOf(b.policy, ["task-branch-v1", "task-branch-v2"] as const),
+    policy: oneOf(b.policy, DELIVERY_POLICIES),
     target: {
       checkoutRoot: deliveryPath(t.checkoutRoot),
       repository: deliveryPath(t.repository),
       repositoryIdentity: decodeHash(t.repositoryIdentity),
       branch: localRef(t.branch),
-      head: gitOid(t.head),
+      ...(headed ? { head: gitOid(t.head) } : {}),
     },
   };
+}
+export function decodeDeliveryBinding(value: unknown): DeliveryBinding {
+  const { policy, target } = decodeDeliveryPlacement(value);
+  if (target.head === undefined) throw new Error("Unbound delivery target");
+  return { policy, target: { ...target, head: target.head } };
 }
 export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
   const d = closed(value, [
@@ -1326,10 +1355,19 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
     "candidate",
     "acceptance",
     "integration",
-    "postChecks",
+    ...(Object.hasOwn((value ?? {}) as object, "postChecks")
+      ? ["postChecks"]
+      : []),
     "cleanup",
   ]);
-  const i = closed(d.integration, ["status", "before", "after", "reason"]);
+  const synced = Object.hasOwn((d.integration ?? {}) as object, "sync");
+  const i = closed(d.integration, [
+    "status",
+    "before",
+    "after",
+    "reason",
+    ...(synced ? ["sync"] : []),
+  ]);
   const c = closed(d.cleanup, ["status", "reason"]);
   const step = (x: unknown) => text(x, 160, true);
   const acceptance = nullable(d.acceptance, (v) => {
@@ -1442,8 +1480,28 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
       before: gitOid(i.before),
       after: nullable(i.after, gitOid),
       reason: text(i.reason, 2048),
+      ...(synced
+        ? {
+            sync: (() => {
+              const s = closed(i.sync, ["mode", "worktree"]);
+              return {
+                mode: oneOf(s.mode, ["ref", "fast-forward"] as const),
+                worktree: nullable(s.worktree, deliveryPath),
+              };
+            })(),
+          }
+        : {}),
     },
-    postChecks: oneOf(d.postChecks, ["not-run", "passed", "failed", "unknown"]),
+    ...(d.postChecks === undefined
+      ? {}
+      : {
+          postChecks: oneOf(d.postChecks, [
+            "not-run",
+            "passed",
+            "failed",
+            "unknown",
+          ] as const),
+        }),
     cleanup: {
       status: oneOf(c.status, ["pending", "removed", "retained"]),
       reason: text(c.reason, 2048),
@@ -1451,9 +1509,13 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
   };
 }
 /** Shared native/browser copy: placement is part of the visible approval. */
-export function readableDelivery(binding?: DeliveryBinding): string {
+export function readableDelivery(
+  binding?: DeliveryPlacement | DeliveryBinding,
+): string {
   if (!binding) return "";
   const t = binding.target;
+  if (binding.policy === "task-branch-v3")
+    return `Target: ${t.branch}${t.head ? ` @ ${t.head}` : " (its head when the run is admitted is the baseline)"}\nTarget checkout: ${t.checkoutRoot}\nExecution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Any number of conversations may deliver at once, each in its own candidate; nothing they do waits on your checkout.\nAcceptance: seal a single-parent delivery commit, run declared checks and independent Agent review on that exact OID, in the worktree only. When the target branch has moved, through another delivery or your own commits, the sealed commit is replayed onto its current head and checked and reviewed again; changed AGENTS.md rules are part of that review. A replay that Git cannot merge retains the candidate.\nDelivery: deliveries to one branch land one at a time in the order they became ready. The branch is moved to the exact verified OID: by reference alone when no worktree has it checked out, otherwise by fast-forward in that worktree, which keeps your uncommitted changes to other files; uncommitted changes to the same files retain the candidate. A branch that is being rebased is waited for. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
   if (binding.policy === "task-branch-v2")
     return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.\nAcceptance: seal a single-parent delivery commit on top of the verified target frontier, run declared checks and independent Agent review on that exact OID. A verified, non-overlapping sibling delivery may be incorporated before sealing, followed by fresh checks and review.\nDelivery: advance the task branch and fast-forward only into the bound target with that exact signed-off OID. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
   return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: new cadence/<goal>-<run-id> branch and one stable isolated worktree after approval. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.\nAcceptance: checks and automatic Agent review of the exact candidate. A verified, non-overlapping sibling delivery may be merged into the isolated candidate, followed by fresh checks and review.\nDelivery: serialized fast-forward only into the bound target at its approved, verified-sibling or own last confirmed baseline. Keep the task branch; remove only owned worktrees without any residue, including ignored files. No source/profile/dependency copying, push or deployment.`;
@@ -1489,12 +1551,12 @@ export function readableDeliveryRun(run: WorkflowRun): string {
   if (!d) return "";
   const labels = deliveryLabels(d, run.status);
   const checkpointLine =
-    d.binding.policy === "task-branch-v2" ||
+    d.binding.policy !== "task-branch-v1" ||
     d.lastCheckpoint !== undefined ||
     d.checkpointCount !== undefined
       ? `\nLast confirmed checkpoint: ${d.lastCheckpoint ?? labels.missingCandidate}${d.checkpointCount ? ` (${d.checkpointCount} total)` : ""}`
       : "";
-  return `Task branch: ${d.taskBranch}\nWorktree: ${d.worktreeRoot}\nTarget: ${d.binding.target.branch} @ ${d.binding.target.head}\nPreparation: ${labels.preparation}${checkpointLine}\nCandidate: ${d.candidate ?? labels.missingCandidate}\nAcceptance: ${d.acceptance ? `checks + automatic Agent review of ${d.acceptance.candidate}` : labels.missingCandidate}\nIntegration: ${labels.integration}${d.integration.after ? ` @ ${d.integration.after}` : ""}${d.integration.reason ? ` — ${d.integration.reason}` : ""}\nPost-merge checks: ${d.postChecks}\nWorktree cleanup: ${labels.cleanup}${d.cleanup.reason ? ` — ${d.cleanup.reason}` : ""}\nPolicy: keep the task branch; no push or deployment.`;
+  return `Task branch: ${d.taskBranch}\nWorktree: ${d.worktreeRoot}\nTarget: ${d.binding.target.branch} @ ${d.binding.target.head}\nPreparation: ${labels.preparation}${checkpointLine}\nCandidate: ${d.candidate ?? labels.missingCandidate}\nAcceptance: ${d.acceptance ? `checks + automatic Agent review of ${d.acceptance.candidate}` : labels.missingCandidate}\nIntegration: ${labels.integration}${d.integration.after ? ` @ ${d.integration.after}` : ""}${d.integration.sync ? ` (${d.integration.sync.worktree ? `fast-forward in ${d.integration.sync.worktree}` : "branch reference only; no worktree had it checked out"})` : ""}${d.integration.reason ? ` — ${d.integration.reason}` : ""}${d.postChecks === undefined ? "" : `\nPost-merge checks: ${d.postChecks}`}\nWorktree cleanup: ${labels.cleanup}${d.cleanup.reason ? ` — ${d.cleanup.reason}` : ""}\nPolicy: keep the task branch; no push or deployment.`;
 }
 export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
   const modern =
@@ -1518,7 +1580,7 @@ export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
       : { revalidatedFrom: decodeId(o.revalidatedFrom) }),
     ...(o.delivery === undefined
       ? {}
-      : { delivery: decodeDeliveryBinding(o.delivery) }),
+      : { delivery: decodeDeliveryPlacement(o.delivery) }),
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
     digest: decodeHash(o.digest),
@@ -1807,8 +1869,9 @@ export function decodeWorkflowResponse(v: unknown): WorkflowResponse {
     expiresAt: integer(o.expiresAt, 0),
   };
 }
-const readableCheck = (c: WorkflowCheck, v4 = false) =>
-  `${c.name}${v4 ? ` [${c.tier ?? "fast"}, target:${c.target ?? "run"}]` : ""}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`;
+/** Version 4 agreements are shown as they were approved, target choice included. */
+const readableCheck = (c: WorkflowCheck, version?: 4 | 5) =>
+  `${c.name}${version === 4 ? ` [${c.tier ?? "fast"}, target:${c.target ?? "run"}]` : version === 5 ? ` [${c.tier ?? "fast"}]` : ""}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`;
 const readableBuild = (b: WorkflowBuild) =>
   `${b.name}: ${b.command} (${b.timeoutMs === undefined ? "no timeout" : `${b.timeoutMs}ms`}) -> outputs: ${b.outputs.join(", ")}`;
 const readableLink = (l: WorkflowSetupLink) =>
@@ -1820,7 +1883,7 @@ const readableReading = (r: WorkflowReading) =>
 /** What approval of each agreement version lets the owner do on its own. */
 function readableAutomation(p: WorkflowPlan): string {
   if (p.version === 5)
-    return `After approval the service works to completion without further confirmation. First, a readonly route planner inspects the isolated candidate and splits this agreement into parallelizable assignments, write scopes and review reads (validated against repository boundaries, Git-ignore rules, managed links and target cleanliness before any edit). It then advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. It stops for cancellation, uncertain settlement, external target drift, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
+    return `After approval the service works to completion without further confirmation. First, a readonly route planner inspects the isolated candidate and splits this agreement into parallelizable assignments, write scopes and review reads (validated against repository boundaries, Git-ignore rules and managed links before any edit). It then advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. A target branch that moves while it works is followed, not a reason to stop. It stops for cancellation, uncertain settlement, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 4)
     return `After approval the service works to completion without further confirmation. It advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. It stops for cancellation, uncertain settlement, external target drift, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 3)
@@ -1835,7 +1898,7 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
   const v4OrNewer = p.version === 4 || v5;
   const routeSection =
     v5 && !p.tasks.length
-      ? `${p.areas?.length ? `\n\n## Focus areas (advisory for route planning)\n${p.areas.join("\n")}` : ""}${p.investigations?.length ? `\n\n## Investigations passed to route planning\n${p.investigations.join("\n")}` : ""}\n\n## Execution route\nPlanned automatically inside the isolated candidate after approval (readonly route-planner), validated against write boundaries, Git-ignore rules, managed links and target cleanliness before editing.`
+      ? `${p.areas?.length ? `\n\n## Focus areas (advisory for route planning)\n${p.areas.join("\n")}` : ""}${p.investigations?.length ? `\n\n## Investigations passed to route planning\n${p.investigations.join("\n")}` : ""}\n\n## Execution route\nPlanned automatically inside the isolated candidate after approval (readonly route-planner), validated against write boundaries, Git-ignore rules and managed links before editing.`
       : `\n\n## Tasks\n${workflowOrder(p.tasks)
           .map(
             (t) =>
@@ -1854,11 +1917,11 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
     v4OrNewer && p.build?.length
       ? `\n\n## Build (owner-synced derived outputs)\n${p.build.map(readableBuild).join("\n")}`
       : ""
-  }\n\n## Baseline verification\n${p.baselineChecks.map((c) => readableCheck(c)).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => readableCheck(c, v4OrNewer)).join("\n")}${
+  }\n\n## Baseline verification\n${p.baselineChecks.map((c) => readableCheck(c)).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => readableCheck(c, v5 ? 5 : p.version === 4 ? 4 : undefined)).join("\n")}${
     p.reviewReads?.length
       ? `\n\n## Review reads first\n${p.reviewReads.map(readableReading).join("\n")}`
       : ""
-  }\n\n## Automation boundary\n${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? (v4OrNewer ? "Authorize one named task branch and detached development checkpoints in a stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, a single clean final delivery commit sealed onto the verified target frontier, and serialized fast-forward delivery of that exact checked and Agent-reviewed OID into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be incorporated before sealing the final candidate. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; unlink only owner-created managed dependency links after identity verification, then remove owned worktrees only when completely free of any remaining residue, including ignored files." : "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and serialized fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be merged into this candidate and checked/reviewed again. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue.") : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. ${v4OrNewer ? "Related project knowledge is included; workflow process reports stay in private service records." : "Related project knowledge and workflow Markdown are included."} Worktrees/tools are not a sandbox.\n\n## Project documents\n${
+  }\n\n## Automation boundary\n${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? (v5 ? "Authorize one named task branch and detached development checkpoints in a stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, a single clean final delivery commit, and moving the displayed target branch to that exact checked and Agent-reviewed OID as the delivery placement describes. Keep the task branch; unlink only owner-created managed dependency links after identity verification, then remove owned worktrees only when completely free of any remaining residue, including ignored files." : v4OrNewer ? "Authorize one named task branch and detached development checkpoints in a stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, a single clean final delivery commit sealed onto the verified target frontier, and serialized fast-forward delivery of that exact checked and Agent-reviewed OID into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be incorporated before sealing the final candidate. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; unlink only owner-created managed dependency links after identity verification, then remove owned worktrees only when completely free of any remaining residue, including ignored files." : "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and serialized fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be merged into this candidate and checked/reviewed again. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue.") : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. ${v4OrNewer ? "Related project knowledge is included; workflow process reports stay in private service records." : "Related project knowledge and workflow Markdown are included."} Worktrees/tools are not a sandbox.\n\n## Project documents\n${
     p.version === undefined
       ? p.projectContext
       : documents.join("\n") ||

@@ -58,9 +58,12 @@ it("planning observation does not create Git resources; explicit preparation cre
   expect(f.git("branch", "--list", "cadence/*")).toBe("");
   expect(existsSync(f.view.worktreeRoot)).toBe(false);
   await f.create();
-  expect(f.gitAt(f.view.worktreeRoot, "symbolic-ref", "HEAD")).toBe(
-    f.view.taskBranch,
-  );
+  // The candidate works on a detached HEAD; the named branch is only reserved.
+  expect(() =>
+    f.gitAt(f.view.worktreeRoot, "symbolic-ref", "-q", "HEAD"),
+  ).toThrow();
+  expect(f.git("rev-parse", f.view.taskBranch)).toBe(f.base);
+  expect(f.view.workspace).toMatchObject({ mode: "detached", state: "ready" });
   expect(f.git("symbolic-ref", "HEAD")).toBe("refs/heads/main");
   expect(f.git("rev-parse", "HEAD")).toBe(f.base);
   expect(decodeDeliveryObservation(f.view)).toEqual(f.view);
@@ -115,7 +118,7 @@ it("exact acceptance refuses hidden staged edits and a substituted context or ca
   f.delivery.finish();
 });
 it.each(["advance", "switch", "dirty"])(
-  "%s target blocks delivery while retaining candidate and user bytes",
+  "where the target stands is not part of acceptance: a checkout that did %s leaves the candidate accepted",
   async (change) => {
     const f = await candidate();
     if (change === "advance") {
@@ -126,27 +129,35 @@ it.each(["advance", "switch", "dirty"])(
     if (change === "switch") f.git("switch", "-qc", "user-branch");
     if (change === "dirty")
       writeFileSync(join(f.root, "a.txt"), "user dirty\n");
+    // The landing decides what to do about the branch, not the evidence.
     await expect(
       f.delivery.assertAccepted(digest, f.execution, ["a.txt"]),
-    ).rejects.toThrow(/stale|conflict/u);
+    ).resolves.toBe(f.oid);
     expect(f.head(f.cwd)).toBe(f.oid);
-    expect(f.git("rev-parse", f.view.taskBranch)).toBe(f.oid);
+    expect(f.git("rev-parse", f.view.taskBranch)).toBe(f.base);
     expect(readFileSync(join(f.cwd, "a.txt"), "utf8")).toBe("candidate\n");
     f.delivery.finish();
   },
 );
+/** What a landing leaves behind: the task branch and the target at the candidate. */
+async function landed() {
+  const f = await candidate();
+  await f.delivery.advanceTaskBranch(f.oid, async (args) => f.git(...args));
+  f.git("merge", "--ff-only", f.oid);
+  f.view.integration = {
+    status: "applied",
+    before: f.base,
+    after: f.oid,
+    reason: "",
+    sync: { mode: "fast-forward", worktree: f.root },
+  };
+  return f;
+}
 it.each([false, true])(
   "cleanup never deletes a task branch; ignored residue anywhere is retained (residue=%s)",
   async (residue) => {
-    const f = await candidate();
-    f.git("merge", "--ff-only", f.oid);
-    f.view.integration = {
-      status: "applied",
-      before: f.base,
-      after: f.oid,
-      reason: "",
-    };
-    f.view.postChecks = "passed";
+    const f = await landed();
+    expect(decodeDeliveryObservation(f.view)).toEqual(f.view);
     if (residue) {
       mkdirSync(join(f.cwd, "ignored"));
       writeFileSync(join(f.cwd, "ignored", "user-data"), "only copy");
@@ -274,16 +285,8 @@ it("switching a managed worktree to another branch at the same OID invalidates p
   await expect(f.delivery.assertBinding(f.cwd)).rejects.toThrow("stale");
   f.delivery.finish();
 });
-it("failed post-checks and an unconfirmed removal never authorize cleanup", async () => {
+it("a candidate that has not landed never authorizes cleanup", async () => {
   const f = await candidate();
-  f.git("merge", "--ff-only", f.oid);
-  f.view.integration = {
-    status: "applied",
-    before: f.base,
-    after: f.oid,
-    reason: "",
-  };
-  f.view.postChecks = "failed";
   const removed: string[] = [];
   await f.delivery.cleanup(async (path, check) => {
     await check();
@@ -295,15 +298,7 @@ it("failed post-checks and an unconfirmed removal never authorize cleanup", asyn
   f.delivery.finish();
 });
 it("an exit-zero removal callback cannot erase an existing workspace from recorded outcomes", async () => {
-  const f = await candidate();
-  f.git("merge", "--ff-only", f.oid);
-  f.view.integration = {
-    status: "applied",
-    before: f.base,
-    after: f.oid,
-    reason: "",
-  };
-  f.view.postChecks = "passed";
+  const f = await landed();
   await f.delivery.cleanup(async (_path, check) => {
     await check();
   });
@@ -447,92 +442,74 @@ it("an assignment's own worktree starts at the candidate's commit, its commit is
     id: "tests",
     state: "removed",
   });
-  // The candidate and its named branch are as they were.
-  expect(f.gitAt(cwd, "symbolic-ref", "HEAD")).toBe(f.view.taskBranch);
+  // The candidate is as it was, and still on no branch.
+  expect(() => f.gitAt(cwd, "symbolic-ref", "-q", "HEAD")).toThrow();
   expect(await f.delivery.assertTip()).toBe(picked);
 });
 
-it("task-branch-v2 keeps detached dev checkpoints pinned under private refs, seals one single-parent delivery commit, advances taskBranch only at merge, and cleans checkpoint refs after worktree removal", async () => {
-  const f = deliveryFixture("task-branch-v2");
+it("dev checkpoints stay pinned under private refs, the candidate is sealed on its own base and replayed onto a moved target, and checkpoint refs go only after the worktree", async () => {
+  const f = deliveryFixture();
   const cwd = await f.create();
-  // Candidate worktree is detached; taskBranch is reserved at base; main did not move.
-  expect(() => f.gitAt(cwd, "symbolic-ref", "-q", "HEAD")).toThrow();
-  expect(f.git("rev-parse", f.view.taskBranch)).toBe(f.base);
-  expect(f.git("rev-parse", "HEAD")).toBe(f.base);
-  expect(f.view.workspace).toMatchObject({ mode: "detached", state: "ready" });
-  expect(decodeDeliveryObservation(f.view)).toEqual(f.view);
+  const git = async (args: string[]) => ({ output: f.gitAt(cwd, ...args) });
 
   // Two noisy development checkpoints on detached HEAD, each pinned under private refs.
   writeFileSync(join(cwd, "a.txt"), "wip 1\n");
   f.gitAt(cwd, "commit", "-qam", "dev checkpoint 1");
   const cp1 = f.head(cwd);
   f.delivery.update(cp1);
-  const pinned1 = await f.delivery.pinCheckpoint(
-    cp1,
-    "dev",
-    async (args) => f.gitAt(cwd, ...args),
-    cwd,
-  );
-  expect(pinned1?.ref).toBe(`refs/cadence/runs/${f.run}/checkpoints/1`);
-  expect(f.git("rev-parse", pinned1!.ref)).toBe(cp1);
+  const pinned1 = await f.delivery.pinCheckpoint(cp1, "dev", git, cwd);
+  expect(pinned1.ref).toBe(`refs/cadence/runs/${f.run}/checkpoints/1`);
+  expect(f.git("rev-parse", pinned1.ref)).toBe(cp1);
 
   writeFileSync(join(cwd, "a.txt"), "final clean result\n");
   f.gitAt(cwd, "commit", "-qam", "dev checkpoint 2");
   const cp2 = f.head(cwd);
   f.delivery.update(cp2);
-  const pinned2 = await f.delivery.pinCheckpoint(
-    cp2,
-    "dev",
-    async (args) => f.gitAt(cwd, ...args),
-    cwd,
-  );
+  const pinned2 = await f.delivery.pinCheckpoint(cp2, "dev", git, cwd);
   expect(f.view.lastCheckpoint).toBe(cp2);
   expect(f.view.checkpointCount).toBe(2);
-  // taskBranch STILL sits at base during development!
+  // The task branch still sits at the baseline during development.
   expect(f.git("rev-parse", f.view.taskBranch)).toBe(f.base);
 
-  // Simulate a verified non-overlapping sibling advancing main to frontier.
+  // Sealed as one commit on the commit it was developed from.
+  const c0 = await f.delivery.sealDeliveryCommit(
+    f.base,
+    ["a.txt"],
+    "Cadence: clean single-commit delivery",
+    git,
+  );
+  expect(f.head(cwd)).toBe(c0);
+  expect(f.gitAt(cwd, "show", "-s", "--format=%P", c0)).toBe(f.base);
+  expect(f.delivery.candidateBase()).toBe(f.base);
+  expect(f.delivery.isSealedDelivery(c0)).toBe(true);
+
+  // The target branch moves: somebody else's commit, whoever made it.
   writeFileSync(join(f.root, "sibling.txt"), "sibling delivered\n");
   f.git("add", "--", "sibling.txt");
   f.git("commit", "-qm", "sibling delivery");
   const frontier = f.head(f.root);
-  expect(f.delivery.advanceFrontier(f.base, frontier)).toBe(true);
-  expect(f.delivery.needsRefresh()).toBe(true);
 
-  // Incorporate sibling frontier via detached --no-ff merge, pinned to private ref.
-  f.gitAt(cwd, "merge", "--no-ff", "--no-edit", frontier);
-  const merged = f.head(cwd);
-  await f.delivery.pinCheckpoint(
-    merged,
-    "merge",
-    async (args) => f.gitAt(cwd, ...args),
-    cwd,
-  );
-  f.delivery.refreshed(merged);
-  expect(f.delivery.needsRefresh()).toBe(false);
-
-  // Seal single-parent delivery commit C0 directly on top of sibling frontier!
-  const c0 = await f.delivery.sealDeliveryCommit(
-    frontier,
-    ["a.txt"],
-    "Cadence: clean single-commit delivery",
-    async (args) => ({ output: f.gitAt(cwd, ...args) }),
-  );
-  expect(f.head(cwd)).toBe(c0);
-  expect(f.gitAt(cwd, "show", "-s", "--format=%P", c0)).toBe(frontier);
-  expect(f.gitAt(cwd, "diff", "--name-only", frontier, c0)).toBe("a.txt");
+  // Replayed onto the branch's current head: again one commit, now on it.
+  f.gitAt(cwd, "checkout", "-q", "--detach", frontier);
+  f.delivery.moved(frontier);
+  expect(f.view.candidate).toBeNull();
+  expect(await f.delivery.assertTip()).toBe(frontier);
+  f.gitAt(cwd, "cherry-pick", "--no-commit", c0);
+  f.gitAt(cwd, "commit", "-qm", "Cadence: clean single-commit delivery");
+  const c1 = await f.delivery.replayed(f.head(cwd), frontier, ["a.txt"], git);
+  expect(f.gitAt(cwd, "show", "-s", "--format=%P", c1)).toBe(frontier);
+  expect(f.gitAt(cwd, "diff", "--name-only", frontier, c1)).toBe("a.txt");
+  expect(f.delivery.candidateBase()).toBe(frontier);
   expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("final clean result\n");
   expect(readFileSync(join(cwd, "sibling.txt"), "utf8")).toBe(
     "sibling delivered\n",
   );
-  // taskBranch is STILL at base until final sign-off!
+  // Still at the baseline until sign-off.
   expect(f.git("rev-parse", f.view.taskBranch)).toBe(f.base);
 
-  // Sign off C0, advance taskBranch, fast-forward main, and verify cleanup removes
-  // private checkpoint refs while keeping taskBranch.
   f.view.acceptance = acceptanceRecord(
-    c0,
-    f.gitAt(cwd, "rev-parse", `${c0}^{tree}`),
+    c1,
+    f.gitAt(cwd, "rev-parse", `${c1}^{tree}`),
     digest,
     f.execution,
     [step("check-1", "check")],
@@ -541,20 +518,19 @@ it("task-branch-v2 keeps detached dev checkpoints pinned under private refs, sea
   );
   await expect(
     f.delivery.assertAccepted(digest, f.execution, ["a.txt"]),
-  ).resolves.toBe(c0);
-  await f.delivery.advanceTaskBranch(c0, async (args) => f.git(...args));
-  expect(f.git("rev-parse", f.view.taskBranch)).toBe(c0);
+  ).resolves.toBe(c1);
+  await f.delivery.advanceTaskBranch(c1, async (args) => f.git(...args));
+  expect(f.git("rev-parse", f.view.taskBranch)).toBe(c1);
 
-  f.git("merge", "--ff-only", c0);
-  expect(f.head(f.root)).toBe(c0);
+  f.git("merge", "--ff-only", c1);
   expect(f.git("rev-list", "--count", `${frontier}..HEAD`)).toBe("1");
   f.view.integration = {
     status: "applied",
     before: frontier,
-    after: c0,
+    after: c1,
     reason: "",
+    sync: { mode: "fast-forward", worktree: f.root },
   };
-  f.view.postChecks = "passed";
 
   const deletedRefs: string[] = [];
   await f.delivery.cleanup(
@@ -574,17 +550,47 @@ it("task-branch-v2 keeps detached dev checkpoints pinned under private refs, sea
   );
   expect(f.view.cleanup.status).toBe("removed");
   expect(existsSync(cwd)).toBe(false);
-  expect(deletedRefs).toHaveLength(4); // cp1, cp2, merge, c0
-  expect(f.git("rev-parse", f.view.taskBranch)).toBe(c0);
-  for (const ref of deletedRefs) {
+  expect(deletedRefs).toHaveLength(4); // cp1, cp2, the sealed commit, its replay
+  expect(f.git("rev-parse", f.view.taskBranch)).toBe(c1);
+  for (const ref of deletedRefs)
     expect(() => f.git("show-ref", "--verify", ref)).toThrow();
-  }
-  expect(pinned2?.status).toBe("deleted");
+  expect(pinned2.status).toBe("deleted");
   f.delivery.finish();
 });
 
-it("task-branch-v2 refuses branch switch in detached candidate and keeps checkpoint refs when worktree is retained", async () => {
-  const f = deliveryFixture("task-branch-v2");
+it("a replay that could not be completed is undone: the sealed candidate is back on the base it had", async () => {
+  const f = deliveryFixture();
+  const cwd = await f.create();
+  const git = async (args: string[]) => ({ output: f.gitAt(cwd, ...args) });
+  writeFileSync(join(cwd, "a.txt"), "candidate\n");
+  f.gitAt(cwd, "commit", "-qam", "dev");
+  f.delivery.update(f.head(cwd));
+  const sealed = await f.delivery.sealDeliveryCommit(
+    f.base,
+    ["a.txt"],
+    "Cadence: delivery",
+    git,
+  );
+  // The branch changes the same line.
+  writeFileSync(join(f.root, "a.txt"), "somebody else\n");
+  f.git("commit", "-qam", "conflicting");
+  const frontier = f.head(f.root);
+  f.gitAt(cwd, "checkout", "-q", "--detach", frontier);
+  f.delivery.moved(frontier);
+  expect(() => f.gitAt(cwd, "cherry-pick", "--no-commit", sealed)).toThrow();
+  expect(f.gitAt(cwd, "diff", "--name-only", "--diff-filter=U")).toBe("a.txt");
+  f.gitAt(cwd, "checkout", "-q", "--force", "--detach", sealed);
+  f.delivery.restored(sealed, f.base);
+  expect(await f.delivery.assertTip()).toBe(sealed);
+  expect(f.view.candidate).toBe(sealed);
+  expect(f.delivery.candidateBase()).toBe(f.base);
+  expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("candidate\n");
+  expect(await worktreeResidue(cwd)).toEqual([]);
+  f.delivery.finish();
+});
+
+it("the task branch follows a target whose history was rewritten; a switched candidate is refused and keeps its checkpoint", async () => {
+  const f = deliveryFixture();
   const cwd = await f.create();
   writeFileSync(join(cwd, "a.txt"), "work\n");
   f.gitAt(cwd, "commit", "-qam", "dev");
@@ -596,10 +602,20 @@ it("task-branch-v2 refuses branch switch in detached candidate and keeps checkpo
     async (args) => f.gitAt(cwd, ...args),
     cwd,
   );
-  // Switching detached candidate onto a branch invalidates binding.
+  // A commit that does not descend from the reserved value: the branch is
+  // this run's own and moves by compare-and-swap, not by ancestry.
+  const rewritten = f.git(
+    "commit-tree",
+    `${f.base}^{tree}`,
+    "-m",
+    "rewritten history",
+  );
+  await f.delivery.advanceTaskBranch(rewritten, async (args) => f.git(...args));
+  expect(f.git("rev-parse", f.view.taskBranch)).toBe(rewritten);
+  // Switching the detached candidate onto a branch invalidates its binding.
   f.gitAt(cwd, "switch", "-qc", "unexpected-branch");
   await expect(f.delivery.assertBinding(cwd)).rejects.toThrow("stale");
-  // Private checkpoint ref stays intact on retained/aborted work.
-  expect(f.git("rev-parse", entry!.ref)).toBe(cp);
+  // The private checkpoint ref stays intact on retained work.
+  expect(f.git("rev-parse", entry.ref)).toBe(cp);
   f.delivery.finish();
 });

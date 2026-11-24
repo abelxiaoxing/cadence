@@ -980,7 +980,7 @@ it("automatic recovery and knowledge progress remain live and do not request ano
 it("delivery UI distinguishes an accepted candidate from an applied merge and names retained workspaces", () => {
   const d = deliveryObservation(
     {
-      policy: "task-branch-v1",
+      policy: "task-branch-v3",
       target: {
         checkoutRoot: "/fixture",
         repository: "/fixture/.git",
@@ -1043,6 +1043,41 @@ it("delivery UI distinguishes an accepted candidate from an applied merge and na
   );
   expect(zh).toContain("任务分支");
   expect(zh).toContain("候选验收");
+  // A current delivery says how the branch was moved once it was; nothing is
+  // checked in the user's checkout, so there is no post-merge row.
+  expect(html).not.toContain("Post-merge checks");
+  expect(html).not.toContain("Target branch update");
+  d.integration = {
+    status: "applied",
+    before: "a".repeat(40),
+    after: d.candidate,
+    reason: "",
+    sync: { mode: "ref", worktree: null },
+  };
+  expect(card("completed")).toContain(
+    "<dt>Target branch update</dt><dd><code>Branch reference only; no worktree had it checked out</code></dd>",
+  );
+  d.integration.sync = { mode: "fast-forward", worktree: "/fixture" };
+  expect(card("completed")).toContain("Fast-forward in /fixture");
+  const zhLanded = renderToStaticMarkup(
+    <LocaleProvider initial="zh">
+      <DeliveryDetails delivery={d} status="completed" />
+    </LocaleProvider>,
+  );
+  expect(zhLanded).toContain("目标分支更新");
+  expect(zhLanded).toContain("在 /fixture 中快进");
+  // A retained run still shows the checks it once reran in the target.
+  const retained = renderToStaticMarkup(
+    <LocaleProvider initial="en">
+      <DeliveryDetails
+        delivery={{ ...d, postChecks: "passed" }}
+        status="completed"
+      />
+    </LocaleProvider>,
+  );
+  expect(retained).toContain(
+    "<dt>Post-merge checks</dt><dd><code>passed</code></dd>",
+  );
 });
 it("approval card displays the owner-bound target and branch/worktree delivery policy", () => {
   const s = state();
@@ -1064,6 +1099,26 @@ it("approval card displays the owner-bound target and branch/worktree delivery p
   expect(html).toContain("b".repeat(40));
   expect(html).toContain("after approval");
   expect(html).toContain("Keep the task branch");
+  // A current agreement binds the branch, not a commit: whatever the branch
+  // gains before or during the run is followed, so no head is shown.
+  s.proposal.delivery = {
+    policy: "task-branch-v3",
+    target: {
+      checkoutRoot: "/fixture",
+      repository: "/fixture/.git",
+      repositoryIdentity: "a".repeat(64),
+      branch: "refs/heads/release",
+    },
+  };
+  const current = renderToStaticMarkup(
+    <PlanCard proposal={s.proposal} canApprove={true} onApprove={() => {}} />,
+  );
+  expect(current).toContain(
+    "Target: refs/heads/release (its head when the run is admitted is the baseline)",
+  );
+  expect(current).not.toContain("refs/heads/release @");
+  expect(current).toContain("replayed onto its current head");
+  expect(current).toContain("Keep the task branch");
 });
 
 it("a plan is a decision card, not an error banner, and unavailable approval explains itself", () => {

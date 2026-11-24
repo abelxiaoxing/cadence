@@ -588,7 +588,7 @@ it("partial and blocked are assignment/planning reports, not check/review approv
   ).toThrow();
 });
 
-it("v5 plans express build outputs, check tier/target and managed links without extra forms", () => {
+it("v5 plans express build outputs, check tiers and managed links without extra forms", () => {
   const p = workflowPlanInput({
     ...plan(),
     build: [
@@ -631,8 +631,12 @@ it("v5 plans express build outputs, check tier/target and managed links without 
   expect(readable).toContain("web/dist, provenance/webui-reuse.json");
   expect(readable).toContain("## Managed dependency links");
   expect(readable).toContain("[worktree] node_modules -> node_modules");
-  expect(readable).toContain("verify [fast, target:run]");
-  expect(readable).toContain("optical [heavy, target:skip]");
+  // A retained target choice still decodes, and is no longer shown: checks
+  // are decided on the exact candidate, never rerun in the user's checkout.
+  expect(p.checks.map((c) => c.target)).toEqual(["run", "skip"]);
+  expect(readable).toContain("verify [fast]:");
+  expect(readable).toContain("optical [heavy]:");
+  expect(readable).not.toContain("target:");
   for (const invalid of [
     { ...p, build: [{ name: "b", command: "run", outputs: [] }] },
     { ...p, build: [{ name: "b", command: "run", outputs: [".env"] }] },

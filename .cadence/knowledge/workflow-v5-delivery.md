@@ -30,30 +30,42 @@ Source: internalized from engineering/worktree-delivery.md, 2026-11-22
 
 Kind: contract
 
-Why: After worktree setup and baseline checks, `planRoute` runs readonly `route-planner` (`planning` phase, `purpose: "plan"`) and validates its single JSON `RoutePlan` via `decodeRoutePlan` plus owner gates (`.cadence/` write exclusion, managed-link non-overlap, `git check-ignore` on `integration` failing closed on Git errors, and target cleanliness), retrying objections up to `PLAN_OBJECTIONS` (2) or aborting with zero edits on `blocked` or dirty targets.
+Why: After worktree setup and baseline checks, `planRoute` runs readonly `route-planner` (`planning` phase, `purpose: "plan"`) and validates its single JSON `RoutePlan` via `decodeRoutePlan` plus owner gates (`.cadence/` write exclusion, managed-link non-overlap, and `git check-ignore` on `integration` failing closed on Git errors), retrying objections up to `PLAN_OBJECTIONS` (2) or aborting with zero edits on `blocked`.
 
 Anchors: `src/service/workflows.ts#planRoute`, `src/service/workflow-controller.ts#decodeRoutePlan`, `src/service/workflow-controller.ts#PLAN_OBJECTIONS`, `test/workflow-v5-planning.test.ts`
 
 Source: internalized from engineering/worktree-delivery.md, 2026-11-22
 
-### Detached task-branch-v2 candidates seal single-parent commits and retain the task branch
+### Candidates are sealed on their own base and replayed onto the branch's real head
 
 Kind: contract
 
-Why: Local delivery runs detached in `<stateHome>/cadence-worktrees-v1/<project-hash>/<run-id>/integration`, pinning intermediate commits under private `refs/cadence/runs/<run-id>/checkpoints/<n>` refs while keeping `taskBranch` clean until final single-parent sealing (`C0`/`C1`) via `git commit-tree` + `git reset --soft`.
-Private checkpoint refs delete by exact OID only after confirmed post-merge checks and residue-free worktree removal; `taskBranch` always stays.
+Why: Local delivery runs detached in `<stateHome>/cadence-worktrees-v1/<project-hash>/<run-id>/integration`, pinning intermediate commits under private `refs/cadence/runs/<run-id>/checkpoints/<n>` refs.
+`sealCandidate` squashes the candidate into one commit on the commit it was developed from, reads `refs/heads/<B>` from Git and, when it moved for any reason, replays that commit onto the new head; the merge base is the sealed commit's parent, so a rewritten history is followed too.
+Private checkpoint refs delete by exact OID only after the landing and residue-free worktree removal; `taskBranch` always stays and keeps the delivery commit reachable.
 
-Anchors: `src/service/workflow-delivery.ts#WorkflowDelivery`, `src/service/workflows.ts#sealAndCheckC0`, `test/task-worktree.test.ts`
+Anchors: `src/service/workflow-delivery.ts#WorkflowDelivery`, `src/service/workflows.ts#sealCandidate`, `test/task-worktree.test.ts`, `test/merge-queue-delivery.test.ts`
 
-Source: internalized from engineering/worktree-delivery.md, 2026-11-22
+Source: this delivery, 2026-11-24
+
+### A landing moves the branch to the verified commit and verifies nothing in the user's checkout
+
+Kind: contract
+
+Why: An agreement binds its target branch, not a commit or uncommitted bytes, so one delivery landing never invalidates another's plan card; a run takes the branch's head at admission.
+In its `MergeQueue` turn `land` re-reads the branch: unchanged lands the accepted commit as is, moved gets one replay-and-verify attempt in the turn, and a failure there steps aside to repair with the same ticket.
+`planLanding` picks compare-and-swap of the ref when no worktree has the branch checked out, Git's fast-forward where one has, and a wait while the branch is being rebased; `AGENTS.md` changes taken in are put before later reviews.
+
+Anchors: `src/service/workflows.ts#land`, `src/service/workflow-landing.ts#planLanding`, `src/service/workflow-landing.ts#observeTarget`, `test/workflow-landing.test.ts`
+
+Source: this delivery, 2026-11-24
 
 ### Parallel child worktrees never own overlapping writes or adopt sibling drift
 
 Kind: pitfall
 
 Why: Ready assignments with disjoint writes fork detached child worktrees from the committed candidate and cherry-pick back onto it; before widening a child's repair scope, recovery compares its fork against the candidate's current HEAD so already-integrated sibling files route to a queued follow-up instead of recreating stale copies.
-Only a sibling whose post-merge checks passed may advance another pending run's in-memory frontier.
 
-Anchors: `src/service/workflows.ts#incorporateFrontier`, `src/service/repository-coordination.ts#RepositoryCoordination`, `test/workflow-recovery-regressions.test.ts`
+Anchors: `src/service/workflows.ts#integrateChild`, `src/service/repository-coordination.ts#RepositoryCoordination`, `test/workflow-recovery-regressions.test.ts`
 
 Source: internalized from engineering/worktree-delivery.md, 2026-11-22

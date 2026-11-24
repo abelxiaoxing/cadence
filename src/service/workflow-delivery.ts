@@ -1,10 +1,11 @@
 /** One named branch and stable candidate per approved delivery. The workflow
  * owns all native Git execution; this module owns placement and evidence.
- * V4 (`task-branch-v2`) keeps development checkpoints detached and pinned under
- * private run refs (`refs/cadence/runs/<run-id>/checkpoints/<n>`), seals a
- * single-parent delivery commit onto the verified target frontier, advances the
- * named task branch only to the signed-off OID, and cleans private checkpoint
- * refs only after confirmed worktree removal while always keeping the task branch. */
+ * Development checkpoints stay detached and pinned under private run refs
+ * (`refs/cadence/runs/<run-id>/checkpoints/<n>`). The candidate is sealed as a
+ * single-parent commit on the commit it was developed from; when the target
+ * branch has moved, that sealed commit is replayed onto the branch's current
+ * head. The named task branch advances only to a signed-off OID, and private
+ * checkpoint refs are removed only after confirmed worktree removal. */
 import { lstatSync, rmdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { diagnosticText } from "../verification-diagnostics.ts";
@@ -24,7 +25,6 @@ import {
   assertCandidate,
   assertCommittedScope,
   assertRepository,
-  assertTarget,
   assertWorktree,
   gitHead,
   gitRun,
@@ -56,6 +56,12 @@ export interface DeliveryJournal {
   managedLinks?(cwd: string): readonly string[];
 }
 
+type Git = (args: string[]) => Promise<unknown>;
+/** A Git command whose output is read (the OID `commit-tree` prints). */
+type GitOutput = (
+  args: string[],
+) => Promise<{ stdout?: string; output?: string }>;
+
 export function taskBranch(goal: string, id: string): string {
   const slug =
     goal
@@ -79,9 +85,8 @@ export function deliveryObservation(
     worktreeRoot: join(root, decodeId(id), "integration"),
     preparation: "pending",
     workspace: null,
-    ...(binding.policy === "task-branch-v2"
-      ? { lastCheckpoint: null, checkpointCount: 0 }
-      : {}),
+    lastCheckpoint: null,
+    checkpointCount: 0,
     candidate: null,
     acceptance: null,
     integration: {
@@ -90,7 +95,6 @@ export function deliveryObservation(
       after: null,
       reason: "",
     },
-    postChecks: "not-run",
     cleanup: { status: "pending", reason: "" },
   };
 }
@@ -162,8 +166,9 @@ export class WorkflowDelivery {
   private readonly children = new Map<string, string>();
   /** Private checkpoint refs pinned by this run (in creation order). */
   private readonly checkpoints: CheckpointEntry[] = [];
-  /** In-memory only: interrupted deliveries are never resumed after restart. */
-  private frontier: string;
+  /** The commit the candidate is sealed on: the target's head when the run
+   * was admitted, then each head it was replayed onto. In memory only;
+   * interrupted deliveries are never resumed after restart. */
   private base: string;
   readonly home: string;
   private readonly runId: string;
@@ -175,13 +180,7 @@ export class WorkflowDelivery {
   ) {
     this.home = dirname(view.worktreeRoot);
     this.runId = basename(this.home);
-    this.frontier = view.binding.target.head;
     this.base = view.binding.target.head;
-  }
-
-  /** Whether this delivery uses V4 detached checkpoints + single-commit sealing. */
-  isDetachedPolicy(): boolean {
-    return this.view.binding.policy === "task-branch-v2";
   }
 
   /** Confirmed private checkpoint refs currently owned by this run. */
@@ -194,6 +193,10 @@ export class WorkflowDelivery {
     return this.checkpoints.some(
       (c) => c.kind === "delivery" && c.status === "confirmed" && c.oid === oid,
     );
+  }
+
+  private links(cwd = this.view.worktreeRoot): readonly string[] {
+    return this.journal?.managedLinks?.(cwd) ?? [];
   }
 
   prepareHome(): void {
@@ -214,8 +217,9 @@ export class WorkflowDelivery {
     safeDirectory(this.home, true);
   }
 
-  /** Caller holds the short repository mutation lease across creation. */
-  async create(git: (args: string[]) => Promise<unknown>): Promise<string> {
+  /** Reserves the named task branch at the baseline and creates the detached
+   * candidate there. Caller holds the short repository mutation lease. */
+  async create(git: Git): Promise<string> {
     const { worktreeRoot: path, taskBranch: branch, binding } = this.view;
     if (this.view.workspace || safeDirectory(path))
       throw new ContractError("conflict");
@@ -231,54 +235,34 @@ export class WorkflowDelivery {
     )
       throw new ContractError("conflict");
     this.token = this.resources.reserveWorkspace(path);
-    const detached = this.isDetachedPolicy();
     this.view.workspace = {
       head: binding.target.head,
       state: "preparing",
-      ...(detached ? { mode: "detached" as const } : {}),
+      mode: "detached",
     };
     this.save();
-    if (detached) {
-      // Atomically reserve the named task branch at base; intermediate work
-      // stays detached until the final signed-off delivery commit advances it.
-      await git([
-        "update-ref",
-        branch,
-        binding.target.head,
-        zeroOid(binding.target.head),
-      ]);
-      await git(["worktree", "add", "--detach", path, binding.target.head]);
-      await assertWorktree(binding.target.checkoutRoot, path);
-      if (
-        (await gitHead(path)) !== binding.target.head ||
-        (await gitRun(path, ["symbolic-ref", "-q", "HEAD"])).code === 0 ||
-        (
-          await gitText(binding.target.checkoutRoot, [
-            "rev-parse",
-            "--verify",
-            branch,
-          ])
-        ).trim() !== binding.target.head
-      )
-        throw new ContractError("stale");
-      this.view.lastCheckpoint = null;
-      this.view.checkpointCount = 0;
-    } else {
-      await git([
-        "worktree",
-        "add",
-        "-b",
-        branch.slice("refs/heads/".length),
-        path,
-        binding.target.head,
-      ]);
-      await assertWorktree(binding.target.checkoutRoot, path);
-      if (
-        (await gitHead(path)) !== binding.target.head ||
-        (await gitText(path, ["symbolic-ref", "HEAD"])).trim() !== branch
-      )
-        throw new ContractError("stale");
-    }
+    // Intermediate work stays detached until a signed-off delivery commit
+    // advances the branch.
+    await git([
+      "update-ref",
+      branch,
+      binding.target.head,
+      zeroOid(binding.target.head),
+    ]);
+    await git(["worktree", "add", "--detach", path, binding.target.head]);
+    await assertWorktree(binding.target.checkoutRoot, path);
+    if (
+      (await gitHead(path)) !== binding.target.head ||
+      (await gitRun(path, ["symbolic-ref", "-q", "HEAD"])).code === 0 ||
+      (
+        await gitText(binding.target.checkoutRoot, [
+          "rev-parse",
+          "--verify",
+          branch,
+        ])
+      ).trim() !== binding.target.head
+    )
+      throw new ContractError("stale");
     this.resources.confirmWorkspace(this.token);
     this.view.workspace.state = "ready";
     this.view.preparation = "ready";
@@ -292,10 +276,9 @@ export class WorkflowDelivery {
   async pinCheckpoint(
     oid: string,
     kind: CheckpointEntry["kind"],
-    git: (args: string[]) => Promise<unknown>,
+    git: Git,
     cwd = this.view.worktreeRoot,
-  ): Promise<CheckpointEntry | null> {
-    if (!this.isDetachedPolicy()) return null;
+  ): Promise<CheckpointEntry> {
     const seq = this.checkpoints.length + 1;
     const ref = `refs/cadence/runs/${decodeId(this.runId)}/checkpoints/${seq}`;
     const entry: CheckpointEntry = {
@@ -322,6 +305,29 @@ export class WorkflowDelivery {
     return entry;
   }
 
+  /** A delivery commit the candidate's HEAD already is: exactly one parent,
+   * nothing outside the scope, nothing uncommitted. Pinned before it becomes
+   * the candidate. */
+  private async adopt(
+    delivery: string,
+    parent: string,
+    scope: readonly string[],
+  ): Promise<string> {
+    const cwd = this.view.worktreeRoot;
+    if (
+      (await gitHead(cwd)) !== delivery ||
+      (await gitText(cwd, ["show", "-s", "--format=%P", delivery])).trim() !==
+        parent
+    )
+      throw new ContractError("stale");
+    await assertCandidate(cwd, delivery, this.links());
+    await assertCommittedScope(cwd, parent, delivery, scope);
+    this.update(delivery, cwd);
+    this.view.candidate = delivery;
+    this.save();
+    return delivery;
+  }
+
   /** Seal a single-parent delivery commit on top of `parentOid` whose tree matches
    * the current verified candidate tree identically. Never moves `taskBranch`.
    * Caller holds the repository mutation lease. */
@@ -329,13 +335,11 @@ export class WorkflowDelivery {
     parentOid: string,
     scope: readonly string[],
     message: string,
-    git: (args: string[]) => Promise<{ stdout?: string; output?: string }>,
+    git: GitOutput,
   ): Promise<string> {
-    if (!this.isDetachedPolicy()) throw new ContractError("invalid");
     const cwd = this.view.worktreeRoot;
-    const links = this.journal?.managedLinks?.(cwd) ?? [];
     const current = await this.assertTip(cwd);
-    await assertCandidate(cwd, current, links);
+    await assertCandidate(cwd, current, this.links());
     await assertCommittedScope(cwd, parentOid, current, scope);
     const tree = (
       await gitText(cwd, ["rev-parse", `${current}^{tree}`])
@@ -356,46 +360,64 @@ export class WorkflowDelivery {
     await this.pinCheckpoint(deliveryOid, "delivery", git, cwd);
     await git(["reset", "--soft", deliveryOid]);
     if (
-      (await gitHead(cwd)) !== deliveryOid ||
-      (
-        await gitText(cwd, ["show", "-s", "--format=%P", deliveryOid])
-      ).trim() !== parentOid ||
       (await gitText(cwd, ["rev-parse", `${deliveryOid}^{tree}`])).trim() !==
-        tree
+      tree
     )
       throw new ContractError("stale");
-    await assertCandidate(cwd, deliveryOid, links);
-    await assertCommittedScope(cwd, parentOid, deliveryOid, scope);
-    this.update(deliveryOid, cwd);
-    this.view.candidate = deliveryOid;
-    this.save();
-    return deliveryOid;
+    return this.adopt(deliveryOid, parentOid, scope);
   }
 
-  /** Advance the reserved `taskBranch` atomically to the signed-off delivery OID
-   * right before `git merge --ff-only`. Caller holds the repo mutation lease. */
-  async advanceTaskBranch(
-    signedOid: string,
-    git: (args: string[]) => Promise<unknown>,
-  ): Promise<void> {
-    if (!this.isDetachedPolicy()) return;
+  /** The candidate's worktree now stands on the target branch's current head,
+   * ready for the sealed commit to be replayed there. Until that replay is
+   * committed there is no candidate and no acceptance. */
+  moved(frontier: string): void {
+    if (this.view.workspace?.state !== "ready")
+      throw new ContractError("stale");
+    this.view.workspace.head = frontier;
+    this.base = frontier;
+    this.view.candidate = null;
+    this.view.acceptance = null;
+    this.save();
+  }
+
+  /** The replayed delivery commit: what HEAD became when the replay was
+   * committed on `frontier`. */
+  async replayed(
+    delivery: string,
+    frontier: string,
+    scope: readonly string[],
+    git: Git,
+  ): Promise<string> {
+    if (this.base !== frontier) throw new ContractError("stale");
+    // The owner made this commit itself; record it before the tip is asserted.
+    this.update(delivery);
+    await this.pinCheckpoint(delivery, "delivery", git);
+    return this.adopt(delivery, frontier, scope);
+  }
+
+  /** A replay that could not be completed was undone: the worktree is back on
+   * the sealed commit it had before, on the base it had before. */
+  restored(sealed: string, base: string): void {
+    if (this.view.workspace?.state !== "ready")
+      throw new ContractError("stale");
+    this.view.workspace.head = sealed;
+    this.base = base;
+    this.view.candidate = sealed;
+    this.view.acceptance = null;
+    this.save();
+  }
+
+  /** Advance the reserved `taskBranch` to a signed-off delivery OID by
+   * compare-and-swap. The branch belongs to this run, so its new value need
+   * not descend from the old one: a target whose history was rewritten is
+   * followed like any other. Caller holds the repo mutation lease. */
+  async advanceTaskBranch(signedOid: string, git: Git): Promise<void> {
     const targetRoot = this.view.binding.target.checkoutRoot;
     const branch = this.view.taskBranch;
     const oldOid = (
       await gitText(targetRoot, ["rev-parse", "--verify", branch])
     ).trim();
     if (oldOid === signedOid) return;
-    if (
-      (
-        await gitRun(targetRoot, [
-          "merge-base",
-          "--is-ancestor",
-          oldOid,
-          signedOid,
-        ])
-      ).code !== 0
-    )
-      throw new ContractError("stale");
     this.journal?.recordBranchUpdate?.({
       branch,
       oldOid,
@@ -430,10 +452,7 @@ export class WorkflowDelivery {
   /** A worktree for one assignment that runs beside others, detached at the
    * candidate's current commit so it starts from everything already integrated.
    * Caller holds the short repository mutation lease across creation. */
-  async createChild(
-    id: string,
-    git: (args: string[]) => Promise<unknown>,
-  ): Promise<string> {
+  async createChild(id: string, git: Git): Promise<string> {
     const path = this.childPath(id);
     const base = await this.assertTip();
     if (
@@ -474,22 +493,14 @@ export class WorkflowDelivery {
     this.resources.assertWorkspace(token);
   }
 
+  /** The candidate and every child work on a detached HEAD; none of them ever
+   * owns or moves a branch. */
   async assertBinding(path: string): Promise<void> {
     this.assertWorkspace(path);
-    if (path === this.view.worktreeRoot) {
-      if (this.view.workspace?.state !== "ready")
-        throw new ContractError("stale");
-      if (this.isDetachedPolicy()) {
-        if ((await gitRun(path, ["symbolic-ref", "-q", "HEAD"])).code === 0)
-          throw new ContractError("stale");
-      } else if (
-        (await gitText(path, ["symbolic-ref", "HEAD"])).trim() !==
-        this.view.taskBranch
-      )
-        throw new ContractError("stale");
-    } else if (
-      this.child(path)?.state !== "ready" ||
-      // A child works on a detached HEAD; it never owns or moves a branch.
+    if (
+      (path === this.view.worktreeRoot
+        ? this.view.workspace?.state
+        : this.child(path)?.state) !== "ready" ||
       (await gitRun(path, ["symbolic-ref", "-q", "HEAD"])).code === 0
     )
       throw new ContractError("stale");
@@ -579,51 +590,16 @@ export class WorkflowDelivery {
     }
   }
 
-  /** The verified sibling delivery this pending candidate must incorporate.
-   * The immutable approved target remains in the binding for observation. */
-  frontierHead(): string {
-    return this.frontier;
-  }
-
-  /** Diff base for this run's own changes, excluding incorporated siblings. */
+  /** The commit the candidate is sealed on, and so the base of this run's own
+   * changes: everything the target branch had up to there is not ours. */
   candidateBase(): string {
     return this.base;
   }
 
-  /** Only a successful sibling post-check advances a pending delivery. */
-  advanceFrontier(expected: string, head: string): boolean {
-    if (
-      this.view.integration.status !== "pending" ||
-      this.frontier !== expected
-    )
-      return false;
-    this.frontier = head;
-    return true;
-  }
-
-  needsRefresh(): boolean {
-    return this.frontier !== this.base;
-  }
-
-  /** Record an owner-created candidate merge; acceptance must be rebuilt. */
-  refreshed(candidate: string): void {
-    if (!this.needsRefresh()) throw new ContractError("stale");
-    this.update(candidate);
-    this.base = this.frontier;
-  }
-
-  /** A confirmed merge by this run advances its target expectation. Before
-   * that, only verified sibling post-checks advance the pending frontier. */
-  targetHead(): string {
-    const i = this.view.integration;
-    if (i.status === "pending") return this.frontier;
-    if (i.status === "applied" && i.after) return i.after;
-    throw new ContractError("stale");
-  }
-
-  /** Validate candidate evidence without requiring a new sibling frontier to
-   * be its ancestor yet; refresh uses this before merging that frontier. */
-  async assertAcceptedCandidate(
+  /** The candidate's current-round evidence: this plan, this context, this
+   * exact commit and tree, nothing uncommitted and nothing outside the scope.
+   * Where the target branch stands is decided at the landing, not here. */
+  async assertAccepted(
     digest: string,
     execution: ExecutionContext,
     scope: string[],
@@ -639,11 +615,7 @@ export class WorkflowDelivery {
       (await this.assertTip()) !== candidate
     )
       throw new ContractError("stale");
-    await assertCandidate(
-      this.view.worktreeRoot,
-      candidate,
-      this.journal?.managedLinks?.(this.view.worktreeRoot) ?? [],
-    );
+    await assertCandidate(this.view.worktreeRoot, candidate, this.links());
     await assertCommittedScope(
       this.view.worktreeRoot,
       this.base,
@@ -663,44 +635,11 @@ export class WorkflowDelivery {
     return candidate;
   }
 
-  async assertAccepted(
-    digest: string,
-    execution: ExecutionContext,
-    scope: string[],
-  ): Promise<string> {
-    const candidate = await this.assertAcceptedCandidate(
-      digest,
-      execution,
-      scope,
-    );
-    const targetHead = this.targetHead();
-    await assertTarget(
-      this.view.binding.target.checkoutRoot,
-      {
-        branch: this.view.binding.target.branch,
-        head: targetHead,
-      },
-      scope,
-      "integration preflight",
-    );
-    if (
-      (
-        await gitRun(this.view.worktreeRoot, [
-          "merge-base",
-          "--is-ancestor",
-          targetHead,
-          candidate,
-        ])
-      ).code !== 0
-    )
-      throw new ContractError("stale");
-    return candidate;
-  }
-
-  /** Only successful post-checks can lead here; ignored residue anywhere retains
-   * the worktree. The named branch is never deleted, even on successful cleanup.
-   * For `task-branch-v2`, confirmed private checkpoint refs are deleted by exact
-   * OID only after confirmed worktree removal. */
+  /** Only a landed, accepted candidate leads here; ignored residue anywhere
+   * retains the worktree. The named branch is never deleted, even on
+   * successful cleanup: it is what keeps the delivery commit reachable once
+   * the confirmed private checkpoint refs are deleted, by exact OID, after
+   * confirmed worktree removal. */
   async cleanup(
     remove: (path: string, check: () => Promise<void>) => Promise<void>,
     options: {
@@ -714,9 +653,8 @@ export class WorkflowDelivery {
     const path = this.view.worktreeRoot;
     try {
       await remove(path, async () => {
-        const { candidate, acceptance, integration, postChecks } = this.view;
+        const { candidate, acceptance, integration } = this.view;
         if (
-          postChecks !== "passed" ||
           integration.status !== "applied" ||
           !candidate ||
           acceptance?.candidate !== candidate ||
@@ -735,7 +673,7 @@ export class WorkflowDelivery {
               "merge-base",
               "--is-ancestor",
               candidate,
-              this.view.binding.target.branch,
+              this.view.taskBranch,
             ])
           ).code !== 0
         )
@@ -748,16 +686,10 @@ export class WorkflowDelivery {
       this.token = undefined;
       if (this.view.workspace) this.view.workspace.state = "removed";
       this.view.cleanup = { status: "removed", reason: "" };
-      // Only after confirmed worktree removal, remove this run's confirmed
-      // private checkpoint refs by exact expected OID. Never touch taskBranch.
       const confirmed = this.checkpoints.filter(
         (cp) => cp.status === "confirmed",
       );
-      if (
-        this.isDetachedPolicy() &&
-        options.deleteCheckpointRefs &&
-        confirmed.length
-      ) {
+      if (options.deleteCheckpointRefs && confirmed.length) {
         try {
           const deleted = new Set(
             await options.deleteCheckpointRefs(

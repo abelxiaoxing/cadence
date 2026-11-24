@@ -75,6 +75,7 @@ function fixture(
             },
             assertTip: async () => "1".repeat(40),
             update: () => {},
+            pinCheckpoint: async () => {},
             applied: (path: string) => events.push(`applied ${path}`),
             removeChild: async (
               path: string,

@@ -30,6 +30,6 @@ Anchors: `src/service/investigations.ts#INVESTIGATIONS`, `test/investigations.te
 ### Shell-free Stage 6 curation and zero-edit reuse
 
 After Stage 5 review accepts a V5 delivery candidate, Stage 6 runs a shell-free curator inside the stable worktree to add or refresh verified `.cadence/project.md` and `.cadence/knowledge/*.md` entries reflecting newly discovered contracts or invariants.
-If the delivery needed no knowledge update (zero-edit `C0`), Stage 6 reuses the already-verified Stage 5 candidate commit without re-running checks; when knowledge files change, `lintKnowledge` must report zero findings before fast-forward integration.
+If the delivery needed no knowledge update (zero-edit `C0`), Stage 6 reuses the already-verified Stage 5 candidate commit without re-running checks; when knowledge files change, `lintKnowledge` must report zero findings before the candidate lands.
 
 Anchors: `src/service/workflows.ts`, `test/workflow-knowledge.test.ts`

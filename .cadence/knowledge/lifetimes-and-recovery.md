@@ -29,7 +29,7 @@ Source: internalized from engineering/lifetimes.md, 2026-11-22
 
 Kind: contract
 
-Why: `CheckoutGate` is one FIFO holder per checkout directory with uncounted waiters: a working-copy delivery for its whole run, a local-merge delivery for target preflight/creation and from its fast-forward through post-merge checks.
+Why: `CheckoutGate` is one FIFO holder per checkout directory with uncounted waiters: a working-copy delivery for its whole run, a local-merge delivery only for a target-placement setup command and for the fast-forward of the worktree that has its branch checked out.
 Research and isolated work hold nothing; deliveries to one branch finish in `MergeQueue` ticket order, and a run that steps aside re-enters first with its own ticket.
 `HostCapacity` admits shell steps of all runs from live core count and available memory and queues the rest; cancellation removes waiters only, never an unsettled holder.
 

@@ -27,13 +27,7 @@ const PLAN_CHECK = Type.Object({
   tier: Type.Optional(
     Type.Union([Type.Literal("fast"), Type.Literal("heavy")], {
       description:
-        "Cost tier only: fast (default) runs before heavy and stops early on failure; heavy marks slow browser/integration suites. Does not decide target post-merge execution.",
-    }),
-  ),
-  target: Type.Optional(
-    Type.Union([Type.Literal("run"), Type.Literal("skip")], {
-      description:
-        "Whether this check reruns in the target checkout after fast-forward merge: run (default) or skip. Target ref, HEAD and delivered source-byte verification never skip.",
+        "Cost tier: fast (default) runs before heavy and stops early on failure; heavy marks a slow whole-project, browser or integration suite, which the service also treats as needing a larger share of the machine when it decides how many shell steps run at once.",
     }),
   ),
 });
@@ -70,7 +64,7 @@ export const RESEARCH_PARAMETERS = Type.Object({
     }),
     {
       description:
-        "Split independent questions freely; the service runs as many at once as this machine is configured for and queues the rest.",
+        "Split independent questions freely; the service asks all of them at once.",
     },
   ),
   roots: Type.Optional(

@@ -53,7 +53,7 @@ const step = (id: string, kind: "check" | "review"): WorkflowStep => ({
 });
 
 it("validateManagedLinks refuses missing sources, scope overlaps, and Git-tracked destinations", () => {
-  const f = deliveryFixture("task-branch-v2");
+  const f = deliveryFixture();
   mkdirSync(join(f.root, "node_modules"));
   writeFileSync(join(f.root, "node_modules", "pkg.txt"), "installed");
 
@@ -72,7 +72,7 @@ it("validateManagedLinks refuses missing sources, scope overlaps, and Git-tracke
 });
 
 it("managed dependency symlinks work even under trailing-slash .gitignore, unlink cleanly on identity match without touching target node_modules, and enable clean worktree removal", async () => {
-  const f2 = deliveryFixture("task-branch-v2");
+  const f2 = deliveryFixture();
   // Deliberately use trailing-slash `node_modules/` in .gitignore (very common in JS repos),
   // which makes Git report a symlink named `node_modules` as untracked unless verified by owner!
   writeFileSync(join(f2.root, ".gitignore"), "ignored/\nnode_modules/\n");
@@ -98,11 +98,9 @@ it("managed dependency symlinks work even under trailing-slash .gitignore, unlin
     () => true,
   );
   const cwd = f2.view.worktreeRoot;
-  // Advance candidate to include .gitignore commit.
+  // The target gained the .gitignore commit: the candidate moves onto it.
   f2.gitAt(cwd, "checkout", "--detach", targetHead);
-  delivery.update(targetHead);
-  delivery.advanceFrontier(f2.base, targetHead);
-  delivery.refreshed(targetHead);
+  delivery.moved(targetHead);
 
   provisionManagedLinks(
     f2.root,
@@ -147,8 +145,8 @@ it("managed dependency symlinks work even under trailing-slash .gitignore, unlin
     before: targetHead,
     after: c0,
     reason: "",
+    sync: { mode: "fast-forward", worktree: f2.root },
   };
-  f2.view.postChecks = "passed";
 
   await delivery.cleanup(
     async (path, check) => {
@@ -174,7 +172,7 @@ it("managed dependency symlinks work even under trailing-slash .gitignore, unlin
 });
 
 it("refuses unlink and retains worktree when a managed symlink is replaced by a real directory or retargeted, or when unknown ignored residue exists", async () => {
-  const f = deliveryFixture("task-branch-v2");
+  const f = deliveryFixture();
   mkdirSync(join(f.root, "node_modules"), { recursive: true });
   mkdirSync(join(f.root, "other_deps"), { recursive: true });
   const cwd = await f.create();
@@ -263,7 +261,7 @@ it("sameLinkTarget handles Windows NTFS junction trailing separators and verbati
 });
 
 it("discoverManagedLinks finds only plain untracked Git-ignored node_modules up to depth 2 and respects exclusions", () => {
-  const f = deliveryFixture("task-branch-v2");
+  const f = deliveryFixture();
   writeFileSync(
     join(f.root, ".gitignore"),
     "node_modules/\nweb/node_modules/\npackages/*/node_modules/\n.hidden/node_modules/\n",

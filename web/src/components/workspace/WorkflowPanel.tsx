@@ -367,7 +367,7 @@ function ApprovalScope({ proposal }: { proposal: WorkflowProposal }) {
             !local
               ? "Edit the working copy directly; keep edits on failure. No commit or merge."
               : target
-                ? "Create a task branch and isolated worktrees. Commit locally and fast-forward the target after checks and automatic Agent review. No source, profile or dependency copying."
+                ? "Create a task branch and isolated worktrees. Commit locally and move the target branch to the commit that passed checks and automatic Agent review, following the branch if it moves meanwhile. No source, profile or dependency copying."
                 : "This plan requests local branch delivery but has no bound target.",
           )}
         </li>
@@ -1089,7 +1089,7 @@ export function DeliveryDetails({
       `${d.binding.target.branch} @ ${d.binding.target.head}`,
     ],
     [t("Worktree preparation"), tx(labels.preparation)],
-    ...(d.binding.policy === "task-branch-v2" ||
+    ...(d.binding.policy !== "task-branch-v1" ||
     d.lastCheckpoint !== undefined ||
     d.checkpointCount !== undefined
       ? [
@@ -1121,7 +1121,23 @@ export function DeliveryDetails({
       t("Local integration"),
       `${tx(labels.integration)}${d.integration.after ? ` · ${d.integration.after}` : ""}`,
     ],
-    [t("Post-merge checks"), tx(d.postChecks)],
+    // How the branch was moved, once it was; retained runs show the checks
+    // they once reran in the target checkout instead.
+    ...(d.integration.sync
+      ? [
+          [
+            t("Target branch update"),
+            d.integration.sync.worktree
+              ? t("Fast-forward in {worktree}", {
+                  worktree: d.integration.sync.worktree,
+                })
+              : t("Branch reference only; no worktree had it checked out"),
+          ] as [string, string],
+        ]
+      : []),
+    ...(d.postChecks === undefined
+      ? []
+      : [[t("Post-merge checks"), tx(d.postChecks)] as [string, string]]),
     [t("Worktree cleanup"), tx(labels.cleanup)],
   ];
   return (

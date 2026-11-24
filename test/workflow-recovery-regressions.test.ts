@@ -656,9 +656,19 @@ it("target prerequisite failure names preparation, retains the original outcome 
     const create = vi.fn(),
       prepareHome = vi.fn();
     Object.assign(live, {
-      target: { head: "base" },
-      delivery: { view: { worktreeRoot: "candidate" }, create, prepareHome },
+      delivery: {
+        view: {
+          worktreeRoot: "candidate",
+          binding: { target: { head: "base" } },
+        },
+        create,
+        prepareHome,
+      },
     });
+    // A target-placement command is the one part of an isolated delivery's
+    // start that runs in the user's checkout, so it holds that checkout.
+    const acquire = vi.fn(async () => ({ assertHeld() {}, release() {} }));
+    owner.o.gate = { acquire };
     proposal.plan.delivery = "local-merge";
     await expect(owner.implement(live, proposal)).rejects.toMatchObject({
       outcome,
@@ -667,6 +677,11 @@ it("target prerequisite failure names preparation, retains the original outcome 
         "Implementation has not started; no task worktree was created",
       ),
     });
+    expect(acquire).toHaveBeenCalledExactlyOnceWith(
+      owner.cwd,
+      live.run.id,
+      live.abort.signal,
+    );
     expect(owner.runGate).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
     expect(prepareHome).not.toHaveBeenCalled();

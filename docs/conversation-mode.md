@@ -31,7 +31,7 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
    Quoted/generated text, an old session entry and vague agreement are not approval; browser authentication alone is not consent.
 5. The persistent owner implements, reviews, verifies and delivers.
    Nothing asks for more approval.
-   It stops early only for a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, a target branch changed from outside, an installation the agreement does not allow, or a missing tool.
+   It stops early only for a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, a change on the target branch that Git cannot merge with the delivery, an installation the agreement does not allow, or a missing tool.
 6. Completion returns the conversation to Cadence **ready**, not ordinary mode.
    Ask for status, more detail, cancellation, or the next goal normally.
 
@@ -60,7 +60,7 @@ The exact `按计划实施` input follows the same validation path when the serv
 Validation may start or reuse the selected project's owner and applies the model shown in the composer, without substituting another model or changing the account's default.
 It keeps the plan content, records a fresh execution binding and leaves the original snapshot intact.
 It sends no chat message, calls no model, creates no task branch/worktree and approves no implementation.
-Review the displayed model, runtime and target branch/base; changed environment evidence is labelled, and this tab also shows the previous context for comparison.
+Review the displayed model, runtime and target branch; changed environment evidence is labelled, and this tab also shows the previous context for comparison.
 Then click **Confirm implementation** or enter a fresh approval phrase for the revalidated proposal.
 A current plan remains directly approvable; validation is not an extra step for every ordinary approval.
 
@@ -172,38 +172,44 @@ The plan chooses one delivery policy:
   Assignments that neither depend on one another nor write the same file run side by side, each in a temporary worktree beside it, with no limit on how many run at once.
   Assignments, diagnosis, recovery and knowledge updates reuse that candidate, preserving partial work.
   The target is the current local branch displayed in the agreement, not necessarily `main`; the conversation stays in its original directory.
-  The owner commits only declared file changes, runs independent readonly Agent review and real checks, then fast-forwards the unchanged target branch.
-  Local task commits and the merge are included in the plan approval.
+  The agreement binds that branch, not a commit of it: the run starts from the branch's head when it is admitted, and another delivery landing in the meantime does not make a plan you have not approved yet go stale.
+  The owner commits only declared file changes, runs independent readonly Agent review and real checks, then moves the target branch to that exact commit.
+  Local task commits and moving the target branch are included in the plan approval.
   Git hooks and commit signing are disabled for these internal commits; verification is explicitly declared instead.
   No remote push occurs.
 - **Working copy:** explicit direct host-tool editing, serialized among workflows, including for non-Git directories.
   No commit or merge.
   Failed or canceled work leaves actual edits in place; this is not transactional application or a sandbox.
 
-A local-merge plan does not adopt existing dirty inputs into its committed baseline.
-Dirty declared targets refuse before implementation; unrelated user changes made during a run are preserved and do not block integration (Git refuses a genuine overlap).
+A local-merge plan works from committed history: uncommitted changes in your checkout are not its input and do not stop it from starting.
+When it lands, uncommitted and staged changes to other files are kept as they are by Git's own fast-forward; uncommitted changes to the files the delivery changes retain the candidate instead.
 A write path naming a directory covers the files below it; in Git, working-copy edits outside the declared writes fail the run (the edits stay).
-Unresolved conflicts or a changed target stop integration.
+A target branch that moved while the delivery worked, through another delivery or your own commits, is followed: the delivery's single commit is replayed onto the branch's current head and checked and reviewed again as the commit that will land.
+The same file changed in different places merges by itself; a replay Git cannot merge retains the candidate.
+`AGENTS.md` files changed on the branch in the meantime are put before that review, which judges the candidate against their current text.
 Cadence never resets, stashes, force-pushes or silently cleans uncertain worktrees.
 Ignored generated Markdown remains ignored and is published without forcing it into Git.
 The named task branch is kept.
-Only owned worktrees at the delivered commit, after successful post-merge checks and without any residue, are removed with plain `git worktree remove`.
+Only owned worktrees at the delivered commit, after it landed and without any residue, are removed with plain `git worktree remove`.
 Ignored setup/build output such as `node_modules` also retains the worktree; failures, cancellation and unknown outcomes never trigger cleanup.
 Separate WebUI or terminal conversations may run independent local-merge workflows concurrently; the owner does not limit how many runs or investigations are active.
 Shell steps (setup, builds and checks) of all runs are admitted by what the machine can take right now: a `heavy` check counts as four cores and 2 GiB, any other step as one core and 512 MiB, and a step that does not fit waits in arrival order instead of being refused.
 Model workers are not held back; a provider's own rate limits are absorbed by request retries.
 A single conversation still permits only one approved implementation at a time; open another conversation for an independent goal.
-A local-merge workflow holds the checkout for target preflight and candidate creation, and again from its fast-forward through post-merge checks and cleanup; isolated implementation, checks, automatic review and project-knowledge maintenance hold nothing.
-Deliveries to the same target branch finish one at a time, in the order they became ready.
+A local-merge workflow holds a checkout only for a `target` setup command and for the fast-forward of the worktree that has its target branch checked out; everything else it does holds nothing.
+When no worktree has that branch checked out, for example because you switched your checkout to another branch, the branch reference alone is moved and no working file is touched.
+Nothing is checked in your checkout: every declared check runs on the exact commit, in the delivery's own worktree.
+Deliveries to the same target branch land one at a time, in the order they became ready; deliveries to different branches never wait on one another.
+A branch you are rebasing, or whose checkout has an unfinished merge, is waited for without a deadline and landed once it is free.
 Ordinary browser conversations do not wait for this access.
 Like separate Pi terminals, they can edit the same files as each other or as a workflow.
-Coordinate overlapping edits yourself: delivery rechecks the target branch, HEAD and declared paths, but these checks are not a file transaction and do not merge concurrent edits or prevent overwrites.
+Coordinate overlapping edits yourself: a delivery lands through Git and never overwrites uncommitted work, but ordinary conversations edit files directly and can overwrite one another.
 There is no fixed delivery-duration or repair-round quota.
 Agents have no fixed total runtime deadline.
 Setup/check commands default to no timeout; an explicitly approved per-command timeout still applies, including in older plans.
 A settled failure can trigger diagnosis and continuation, not automatic goal termination.
-Cancel/Stop never interrupt the final fast-forward (a hung `git merge` therefore delays Stop until Git exits).
-Local-merge plans need clean, nonignored code and knowledge targets; use working-copy delivery for dirty or ignored documentation.
+Cancel/Stop never interrupt the moving of the target branch (a hung Git command therefore delays Stop until Git exits).
+Local-merge plans need nonignored code and knowledge targets; use working-copy delivery for ignored documentation.
 Generated workflow notes remain separate.
 After an owner restart, an unfinished run is shown as `unknown` with its retained worktrees; it is never resumed.
 Credential-looking text in plans and research questions is shown and approved redacted.
@@ -212,7 +218,7 @@ An isolated worktree does **not** inherit ignored build output, credentials or p
 For `local-merge` agreements without dependency installation (`policy.installs: false`), omitting `links` lets the owner auto-discover plain untracked Git-ignored `node_modules` directories at proposal time, display and bind them into the approval digest, and unlink them strictly after identity verification during cleanup (passing `links: []` disables auto-discovery).
 Investigate any other prerequisites during planning.
 If dependencies/setup are needed, include the exact commands and their execution placement in the plan for explicit approval: `target` for original-checkout preflight, `candidate` for preparation needed once in the stable candidate, or `worktree` for the candidate and each parallel child.
-Parallel children have detached HEADs; target branch checks must not run there.
+Every delivery worktree has a detached HEAD, so a check must not depend on the name of the checked-out branch.
 The plan's displayed service runtime policy includes private temporary directories for this delivery: Cadence supplies `TMPDIR`, `TEMP` and `TMP` to checks and workers, including recovery, so the plan can simply name the project commands.
 These directories are centralized under `<stateHome>/cadence-tmp-v1/`, outside Git and on each workspace's disk; concurrent workspaces are isolated, and no terminal export or extra setup confirmation is needed.
 If that configured location is unsuitable, execution reports the problem rather than scattering fallback directories in HOME or next to the checkout.
@@ -231,14 +237,10 @@ A subagent keeps retrying far longer than an interactive session does (12 retrie
 An exhausted or nonretryable model request stops the delivery with partial work preserved and the provider's reason on the failed step, rather than rerunning the entire step or launching another model just to diagnose an unavailable provider.
 An unchanged failure and identical recovery strategy cannot become an endless replay loop.
 A concrete external blocker is reported with preserved work, not a generic request to type “continue”.
-Final candidate checks must pass before merge.
-Post-merge failures retain the actual merge commit.
+Final candidate checks must pass before the target branch is moved, and the commit that lands is the commit that passed them.
 Repairs stay in the same named candidate, invalidate its earlier acceptance, and are checked/reviewed against a new exact candidate.
-When a verified Cadence sibling advances the same branch, a pending non-overlapping candidate merges that delivery into its own worktree, then repeats real checks and automatic Agent review before publication.
-Both histories are preserved; no rebase or automatic conflict resolution occurs.
-Overlapping writes, changed `AGENTS.md`, external target movement or branch switching retain the candidate and require a fresh plan.
-Only this run’s last confirmed merge can serve as its next post-merge recovery baseline.
-Repairs can fast-forward that unchanged target again; the user’s unrelated index is never committed.
+A delivery whose turn to land finds the branch moved makes one attempt, in its turn, to take the new head in and verify again; if that needs repair it steps aside, repairs in its own worktree and is next again, so no other delivery waits for the repair.
+The user’s unrelated index is never committed.
 Unresolved failures remain failures; no rollback is fabricated.
 Automatic review is never recorded as human review.
 

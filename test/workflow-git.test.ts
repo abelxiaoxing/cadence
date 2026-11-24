@@ -10,10 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import {
-  assertTarget,
   assertWorkflowCommit,
   assertWorkflowScope,
-  documentPlacement,
   pathIdentity,
   pathIdentityAsync,
   snapshotChanges,
@@ -131,105 +129,39 @@ it("a declared directory scope covers its contents in scope and commit checks", 
   ).resolves.toEqual(["src/feature/a.ts"]);
 });
 
-it("observation ignores unrelated dirt and Cadence's own notes, explains real overlaps and hashes large targets", () => {
+it("a local-merge agreement binds the branch, not its head or any uncommitted bytes; a working-copy one binds the exact bytes", () => {
   const { cwd, git } = fixture();
   const p = plan();
   p.tasks[0].writes = ["allowed.txt"];
-  p.tasks[1].writes = ["large.bin"];
-  writeFileSync(join(cwd, "large.bin"), Buffer.alloc(2 * 1024 * 1024, 7));
-  git("add", "large.bin");
-  git("commit", "-qm", "large target");
+  p.tasks[1].writes = ["protected.txt"];
+  const first = workflowObservation(cwd, p);
+  expect(first.branch).toBe(git("symbolic-ref", "HEAD"));
+  // Guidance, notes and even a declared target changed in the checkout: the
+  // delivery works from committed history and follows its branch.
   writeFileSync(join(cwd, "AGENTS.md"), "uncommitted guidance\n");
   mkdirSync(join(cwd, ".cadence"));
   writeFileSync(join(cwd, ".cadence/project.md"), "# untracked notes\n");
-  writeFileSync(join(cwd, "unrelated.txt"), "user bytes\n");
-  const first = workflowObservation(cwd, p);
-  writeFileSync(join(cwd, "unrelated.txt"), "changed user bytes\n");
+  writeFileSync(join(cwd, "allowed.txt"), "the user's own draft\n");
   expect(workflowObservation(cwd, p).identity).toBe(first.identity);
-  writeFileSync(join(cwd, "large.bin"), Buffer.alloc(2 * 1024 * 1024, 8));
-  let refusal: unknown;
-  try {
-    workflowObservation(cwd, p);
-  } catch (error) {
-    refusal = error;
-  }
-  expect(refusal).toBeInstanceOf(WorkflowRefusal);
-  expect((refusal as WorkflowRefusal).code).toBe("conflict");
-  expect((refusal as WorkflowRefusal).detail).toContain("large.bin");
-});
+  // The branch moved: the same agreement, a later baseline.
+  git("add", "-A");
+  git("commit", "-qm", "the branch moved");
+  const later = workflowObservation(cwd, p);
+  expect(later.identity).toBe(first.identity);
+  expect(later.head).not.toBe(first.head);
+  // Another branch is another agreement.
+  git("switch", "-qc", "release");
+  expect(workflowObservation(cwd, p).identity).not.toBe(first.identity);
+  git("switch", "-q", "-");
 
-it("integration rechecks only branch, HEAD and declared targets", async () => {
-  const { cwd, git, before } = fixture();
-  const branch = git("symbolic-ref", "HEAD");
-  writeFileSync(join(cwd, "unrelated.txt"), "made during the run\n");
-  writeFileSync(join(cwd, "protected.txt"), "user edit during the run\n");
-  await expect(
-    assertTarget(
-      cwd,
-      { head: before, branch },
-      ["allowed.txt", "notes"],
-      "integration preflight",
-    ),
-  ).resolves.toBeUndefined();
-  writeFileSync(join(cwd, "allowed.txt"), "user edit to a target\n");
-  await expect(
-    assertTarget(
-      cwd,
-      { head: before, branch },
-      ["allowed.txt"],
-      "integration preflight",
-    ),
-  ).rejects.toMatchObject({ code: "conflict" });
-  git("checkout", "-q", "--", "allowed.txt");
-  git("commit", "-qam", "moved");
-  await expect(
-    assertTarget(
-      cwd,
-      { head: before, branch },
-      ["allowed.txt"],
-      "integration preflight",
-    ),
-  ).rejects.toMatchObject({
-    code: "stale",
-    detail: expect.stringContaining(
-      `integration preflight: target position changed; expected ${branch} at ${before}, observed ${branch} at ${git("rev-parse", "HEAD")}`,
-    ),
-  });
-  git("switch", "--detach", "--quiet", before);
-  await expect(
-    assertTarget(cwd, { head: before, branch }, [], "start preflight"),
-  ).rejects.toMatchObject({
-    code: "stale",
-    detail: expect.stringContaining(`observed (detached HEAD) at ${before}`),
-  });
-  await expect(
-    assertTarget(
-      join(cwd, "missing"),
-      { head: before, branch },
-      [],
-      "after target setup",
-    ),
-  ).rejects.toMatchObject({
-    code: "unavailable",
-    detail: expect.stringContaining(
-      "observed (unreadable ref) at (unreadable HEAD)",
-    ),
-  });
-});
-
-it("generated notes go through the candidate only where a fast-forward can deliver them", async () => {
-  const { cwd, git } = fixture();
-  mkdirSync(join(cwd, ".cadence"));
-  writeFileSync(join(cwd, ".gitignore"), "ignored/\n");
-  git("add", ".gitignore");
-  git("commit", "-qm", "ignore");
-  writeFileSync(join(cwd, ".cadence/project.md"), "# untracked\n");
-  expect(await documentPlacement(cwd, ".cadence/project.md")).toBe("direct");
-  expect(await documentPlacement(cwd, "ignored/plan.md")).toBe("direct");
-  expect(await documentPlacement(cwd, "new/plan.md")).toBe("commit");
-  expect(await documentPlacement(cwd, "allowed.txt")).toBe("commit");
-  writeFileSync(join(cwd, "allowed.txt"), "dirty\n");
-  expect(await documentPlacement(cwd, "allowed.txt")).toBe("direct");
+  // Direct edits bind what they will edit, byte for byte.
+  const direct = { ...p, delivery: "working-copy" as const };
+  const exact = workflowObservation(cwd, direct);
+  expect(exact).toMatchObject({ head: "", branch: "" });
+  writeFileSync(join(cwd, "unrelated.txt"), "user bytes\n");
+  expect(workflowObservation(cwd, direct).identity).toBe(exact.identity);
+  writeFileSync(join(cwd, "allowed.txt"), "changed target\n");
+  expect(workflowObservation(cwd, direct).identity).not.toBe(exact.identity);
 });
 
 it("working-copy snapshots attribute new, changed and reverted paths", async () => {
@@ -296,22 +228,16 @@ it("a directory target's identity follows its contents", async () => {
 });
 
 it.each(["--assume-unchanged", "--skip-worktree"])(
-  "%s cannot conceal target edits or authorize worktree removal",
+  "%s cannot conceal edits from a scope check or authorize worktree removal",
   async (flag) => {
-    const { cwd, git } = fixture(),
-      p = plan();
-    p.tasks = [{ ...p.tasks[0], writes: ["allowed.txt"] }];
-    const target = workflowObservation(cwd, p);
+    const { cwd, git } = fixture();
     git("update-index", flag, "allowed.txt");
     writeFileSync(join(cwd, "allowed.txt"), "hidden consumer work");
     expect(git("status", "--porcelain")).toBe("");
-    expect(() => workflowObservation(cwd, p)).toThrow("conflict");
-    await expect(
-      assertTarget(cwd, target, ["allowed.txt"], "integration preflight"),
-    ).rejects.toThrow("conflict");
+    // An owned worktree with bytes Git was told not to look at is neither a
+    // clean scope nor free of residue.
     await expect(assertWorkflowScope(cwd, [])).rejects.toThrow("conflict");
     expect(await worktreeResidue(cwd)).toContain("allowed.txt");
-    expect(await documentPlacement(cwd, "allowed.txt")).toBe("direct");
     expect(readFileSync(join(cwd, "allowed.txt"), "utf8")).toBe(
       "hidden consumer work",
     );

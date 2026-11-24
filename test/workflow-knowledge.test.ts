@@ -15,7 +15,6 @@ import { stagedPlan as plan } from "./helpers/workflow-plan.ts";
 
 const git = vi.hoisted(() => ({
   ignored: false,
-  dirty: false,
   head: "1".repeat(40),
 }));
 vi.mock("../src/service/workflow-git.ts", async (original) => {
@@ -28,14 +27,10 @@ vi.mock("../src/service/workflow-git.ts", async (original) => {
       code: args[0] === "check-ignore" ? (git.ignored ? 0 : 1) : 0,
       stdout: "",
     }),
-    assertTarget: async () => {
-      if (git.dirty) throw new real.WorkflowRefusal("conflict", "dirty");
-    },
   };
 });
 afterEach(() => {
   git.ignored = false;
-  git.dirty = false;
   git.head = "1".repeat(40);
 });
 
@@ -62,8 +57,9 @@ function fixture(curate: (put: (path: string, text: string) => void) => void) {
     abort: new AbortController(),
     delivered: new Set<string>(["a.txt"]),
     notes: [] as string[],
-    target: { head: "1".repeat(40), branch: "refs/heads/main" } as
-      | { head: string; branch: string }
+    // An isolated delivery: its candidate is where knowledge is curated.
+    delivery: { view: { worktreeRoot: cwd } } as
+      | { view: { worktreeRoot: string } }
       | undefined,
     managed: undefined as boolean | undefined,
     knowledgeDone: undefined as boolean | undefined,
@@ -209,9 +205,7 @@ it("a delivery that cannot carry the store says so and maintains only the docume
   expect(silent.live.notes.join(" ")).toContain(
     "Project knowledge was not maintained in this delivery",
   );
-  // The target checkout has its own edits to the store: the named document only.
-  git.ignored = false;
-  git.dirty = true;
+  // An ignored store and a named document: the named document only.
   const named = fixture(() => {});
   named.proposal.plan.documents = ["docs/guide.md"];
   await named.owner.learn(named.live, named.cwd, named.proposal);
@@ -220,11 +214,9 @@ it("a delivery that cannot carry the store says so and maintains only the docume
   expect(named.owner.scope(named.live, named.proposal)).not.toContain(
     ".cadence/project.md",
   );
-  // A direct working-copy delivery has no target to conflict with.
-  git.dirty = false;
-  git.ignored = true;
+  // A direct working-copy delivery edits in place: ignored or not, it can.
   const direct = fixture((put) => put(KNOWLEDGE_STORE.index, TABLE));
-  direct.live.target = undefined;
+  direct.live.delivery = undefined;
   direct.put(`${KNOWLEDGE_STORE.topics}/outputs.md`, TOPIC);
   await direct.owner.learn(direct.live, direct.cwd, direct.proposal);
   expect(direct.live.managed).toBe(true);

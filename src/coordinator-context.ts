@@ -106,7 +106,7 @@ function formatProposalSection(
     `Checks: ${p.checks
       .map(
         (c) =>
-          `${clean(c.name)}${c.tier ? ` (${c.tier})` : ""}${c.target === "skip" ? " [skip target]" : ""}: ${clean(c.command)}`,
+          `${clean(c.name)}${c.tier ? ` (${c.tier})` : ""}: ${clean(c.command)}`,
       )
       .join("; ")}`,
   );

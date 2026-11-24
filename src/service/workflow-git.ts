@@ -7,7 +7,6 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
-  existsSync,
   fstatSync,
   lstatSync,
   openSync,
@@ -408,9 +407,6 @@ const CHANGED = [
   ],
   ["ls-files", "--others", "--exclude-standard", "-z"],
 ];
-export function workflowChanged(cwd: string): string[] {
-  return [...new Set(CHANGED.flatMap((args) => names(gitRead(cwd, args))))];
-}
 export async function changedPaths(
   cwd: string,
   ignoredUntracked: readonly string[] = [],
@@ -528,31 +524,13 @@ export function repositoryIdentity(cwd: string): {
     repositoryIdentity: hash(JSON.stringify([repository, st.dev, st.ino])),
   };
 }
+/** The branch a delivery lands on and the commit it starts from. A Git
+ * operation the user has in progress is no reason to refuse: work is isolated,
+ * and a landing waits for a branch that is busy. */
 export function deliveryTarget(
   cwd: string,
   source: { head: string; branch: string },
 ): DeliveryTarget {
-  const gitDir = gitRead(cwd, ["rev-parse", "--absolute-git-dir"]).replace(
-    /\r?\n$/u,
-    "",
-  );
-  for (const name of [
-    "MERGE_HEAD",
-    "CHERRY_PICK_HEAD",
-    "REVERT_HEAD",
-    "rebase-apply",
-    "rebase-merge",
-    "sequencer",
-    "BISECT_START",
-    "index.lock",
-    "HEAD.lock",
-  ]) {
-    if (existsSync(join(gitDir, name)))
-      throw new WorkflowRefusal(
-        "conflict",
-        "Finish the existing Git operation before planning isolated delivery.",
-      );
-  }
   return {
     ...repositoryIdentity(cwd),
     checkoutRoot: realpathSync(cwd),
@@ -618,22 +596,31 @@ export async function assertCandidate(
   if ((await gitHead(cwd)) !== candidate) throw new ContractError("stale");
   await assertWorkflowScope(cwd, [], ignoredUntracked);
 }
-/** Consent observation: branch/HEAD, declared target contents and project
- * guidance, plus a refusal when a declared target is already dirty. Unrelated
- * dirty files are not part of it: they never block planning or delivery. */
+/** Consent observation. A working-copy plan edits the checkout in place, so
+ * it binds the exact bytes of its declared targets and of the project
+ * guidance. A local-merge plan works in isolation from committed history and
+ * follows its target branch wherever it goes, so it binds only which branch
+ * that is: neither the branch's head nor anything uncommitted in the checkout
+ * is an input, and neither invalidates an agreement that was shown earlier. */
 export function workflowObservation(
   cwd: string,
   plan?: WorkflowPlan,
 ): { identity: string; head: string; branch: string } {
   const declared = plan ? workflowWrites(plan) : [];
   for (const p of declared) declaredTarget(cwd, p);
-  const paths = [...new Set([".cadence/project.md", "AGENTS.md", ...declared])];
-  const working = plan?.delivery === "working-copy";
-  const contents = paths.map((p) => [p, pathIdentity(cwd, p, working)]);
-  if (working) {
+  if (plan?.delivery === "working-copy") {
+    const paths = [
+      ...new Set([".cadence/project.md", "AGENTS.md", ...declared]),
+    ];
     // The ordinary bounded working-copy observation is additionally taken by the
     // service; this exact per-write identity refuses substituted direct targets.
-    return { identity: hash(JSON.stringify(contents)), head: "", branch: "" };
+    return {
+      identity: hash(
+        JSON.stringify(paths.map((p) => [p, pathIdentity(cwd, p, true)])),
+      ),
+      head: "",
+      branch: "",
+    };
   }
   // Refuse unsupported Git before any local-delivery observation can trigger
   // a partial clone's implicit object download. Ordinary non-Git mode is unchanged.
@@ -643,16 +630,6 @@ export function workflowObservation(
   if (!/^refs\/heads\//u.test(branch) || !/^[a-f0-9]{40,64}$/u.test(head))
     throw new ContractError("invalid");
   if (plan) {
-    assertVisibleIndex(
-      overlapping(declared, indexHidden(gitRead(cwd, INDEX_FLAGS))),
-    );
-    // A task cannot implicitly adopt dirty inputs as its committed baseline.
-    const dirty = overlapping(declared, workflowChanged(cwd));
-    if (dirty.length)
-      throw new WorkflowRefusal(
-        "conflict",
-        `Declared write targets have uncommitted changes: ${list(dirty)}. Commit, stash or leave them out of the plan; Cadence never adopts dirty inputs.`,
-      );
     // An ignored target is never committed: its edit could only be lost with
     // the worktree. Local merge refuses it; working-copy delivery edits in place.
     if (declared.length) {
@@ -671,74 +648,7 @@ export function workflowObservation(
     gitRead(cwd, ["var", "GIT_AUTHOR_IDENT"]);
     gitRead(cwd, ["var", "GIT_COMMITTER_IDENT"]);
   }
-  return {
-    head,
-    branch,
-    identity: hash(JSON.stringify({ head, branch, contents })),
-  };
-}
-/** Observe the target checkout, never the isolated candidate. Keep both Git
- * answers even when one is unavailable. No later reread supplies failure facts. */
-export async function assertTargetPosition(
-  cwd: string,
-  expected: { head: string; branch: string },
-  stage: string,
-): Promise<void> {
-  const [ref, oid] = await Promise.all([
-    gitRun(cwd, ["symbolic-ref", "--quiet", "HEAD"]).catch(() => null),
-    gitRun(cwd, ["rev-parse", "--verify", "HEAD"]).catch(() => null),
-  ]);
-  const branch =
-    ref?.code === 0
-      ? ref.stdout.trim()
-      : ref?.code === 1
-        ? "(detached HEAD)"
-        : null;
-  const head = oid?.code === 0 ? oid.stdout.trim() : null;
-  if (head === expected.head && branch === expected.branch) return;
-  const unreadable = !head || !branch;
-  throw new WorkflowRefusal(
-    unreadable ? "unavailable" : "stale",
-    `${stage}: target ${unreadable ? "identity could not be verified" : "position changed"}; expected ${expected.branch} at ${expected.head}, observed ${branch || "(unreadable ref)"} at ${head || "(unreadable HEAD)"}. Refused to proceed; this check made no merge.`,
-  );
-}
-/** Only what a safe fast-forward needs: the same branch and HEAD, and no dirty
- * declared/generated target. Unrelated user changes are left to `merge --ff-only`. */
-export async function assertTarget(
-  cwd: string,
-  expected: { head: string; branch: string },
-  scope: readonly string[],
-  stage: string,
-): Promise<void> {
-  await assertTargetPosition(cwd, expected, stage);
-  assertVisibleIndex(
-    overlapping(scope, indexHidden(await gitText(cwd, INDEX_FLAGS))),
-  );
-  const dirty = overlapping(scope, await changedPaths(cwd));
-  if (dirty.length)
-    throw new WorkflowRefusal(
-      "conflict",
-      `Declared targets changed in the checkout during the run: ${list(dirty)}. Nothing was integrated; the candidate is retained.`,
-    );
-}
-export async function tracked(cwd: string, name: string): Promise<boolean> {
-  return (
-    (await gitRun(cwd, ["ls-files", "--error-unmatch", "--", name])).code === 0
-  );
-}
-/** Where a generated note can land: through the candidate when a fast-forward
- * can deliver it, otherwise written directly after integration. */
-export async function documentPlacement(
-  cwd: string,
-  name: string,
-): Promise<"commit" | "direct"> {
-  const dirty =
-    (await changedPaths(cwd)).includes(name) ||
-    indexHidden(await gitText(cwd, INDEX_FLAGS)).includes(name);
-  if (await tracked(cwd, name)) return dirty ? "direct" : "commit";
-  if ((await gitRun(cwd, ["check-ignore", "-q", "--", name])).code === 0)
-    return "direct";
-  return (await pathIdentityAsync(cwd, name)) === null ? "commit" : "direct";
+  return { head, branch, identity: hash(JSON.stringify({ branch })) };
 }
 /** Working-copy scope evidence: identity of every changed path plus `extra`.
  * Outside a Git work tree only `extra` (the declared targets) is observable. */

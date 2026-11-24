@@ -27,7 +27,7 @@ function v5Fixture(
     secrets?: string[];
   } = {},
 ) {
-  const f = deliveryFixture("task-branch-v2");
+  const f = deliveryFixture();
   f.git("config", "user.name", "Fixture");
   f.git("config", "user.email", "fixture@example.invalid");
   if (options.ignoreFile !== undefined) {
@@ -163,7 +163,7 @@ it("3D publishProposal auto-discovers ignored node_modules when links is omitted
   }
 });
 
-it("Stage 2 planRoute invokes route-planner, retries InvalidRoute objections, validates ignored/link/dirty gates, persists route.json and feeds assignments/review/learn", async () => {
+it("Stage 2 planRoute invokes route-planner, retries InvalidRoute objections, validates ignored and link gates, persists route.json and feeds assignments/review/learn", async () => {
   const f = v5Fixture({
     ignoreFile: "node_modules/\nignored/\n",
     createNodeModules: true,
@@ -202,7 +202,10 @@ it("Stage 2 planRoute invokes route-planner, retries InvalidRoute objections, va
     const makeLive = () => {
       const id = randomUUID();
       const d = deliveryObservation(
-        proposal.delivery!,
+        {
+          policy: "task-branch-v3",
+          target: { ...proposal.delivery!.target, head: f.base },
+        },
         join(f.c.stateHome, "worktrees"),
         id,
         "v5-route",
@@ -226,13 +229,8 @@ it("Stage 2 planRoute invokes route-planner, retries InvalidRoute objections, va
         execution: f.execution,
         proposal,
         abort: new AbortController(),
-        target: {
-          head: proposal.delivery!.target.head,
-          branch: proposal.delivery!.target.branch,
-        },
         delivered: new Set<string>(),
         notes: [] as string[],
-        guidance: { agents: null },
       };
     };
 
@@ -380,7 +378,9 @@ it("Stage 2 planRoute invokes route-planner, retries InvalidRoute objections, va
     expect(engine.worker).toHaveBeenCalledTimes(1);
     expect(blockedStep.status).toBe("blocked");
 
-    // Case 3: Target checkout has dirty uncommitted changes in a planned write path -> refuses with zero edits.
+    // Case 3: uncommitted changes in the user's checkout to a planned write
+    // path do not refuse the route: work is isolated from them, and the
+    // landing deals with them when it gets there.
     writeFileSync(join(f.root, "dirty.txt"), "uncommitted user edit\n");
     const live3 = makeLive();
     engine.worker = vi.fn(async () => ({
@@ -414,9 +414,13 @@ it("Stage 2 planRoute invokes route-planner, retries InvalidRoute objections, va
       },
       report: null,
     }));
-    await expect(engine.planRoute(live3, f.root, proposal)).rejects.toThrow();
+    await engine.planRoute(live3, f.root, proposal);
     expect(engine.worker).toHaveBeenCalledTimes(1);
-    expect((live3 as { planned?: unknown }).planned).toBeUndefined();
+    expect(
+      (live3 as { planned?: { tasks: { id: string }[] } }).planned?.tasks.map(
+        (t) => t.id,
+      ),
+    ).toEqual(["touch-dirty"]);
 
     // Case 4: git check-ignore runs against `integration` (not this.cwd) and fails
     // closed when git check-ignore exits with an error code (non-0, non-1).

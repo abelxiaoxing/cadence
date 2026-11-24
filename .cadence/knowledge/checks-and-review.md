@@ -7,7 +7,8 @@
 Kind: contract
 
 Why: When both fast and heavy checks exist, Stage 4 converges fast checks fail-fast and runs code pre-review before paying for heavy checks on single-parent `C0`.
-Stage 5 runs optimistic `C0` checks before the run takes its landing turn; Stage 6 runs shell-free `learn()` inside that turn and reuses exact `C0` check evidence only when zero edits occur and HEAD, tree, revision and source digest match identically.
+Stage 5 runs optimistic `C0` checks and Stage 6 shell-free `learn()` before the run takes its landing turn; a zero-edit `learn()` reuses exact `C0` check evidence only when HEAD, tree, revision and source digest match identically.
+No check ever runs in the user's checkout: the commit that lands is the commit that was checked.
 
 Anchors: `src/service/workflows.ts#sealAndCheckC0`, `src/service/workflow-review-ledger.ts#ReviewLedger`, `test/workflow-delivery-runtime.test.ts`
 

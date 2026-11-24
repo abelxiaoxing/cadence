@@ -14,24 +14,15 @@ import { stagedPlan as plan } from "./helpers/workflow-plan.ts";
 /** Every file of the controlled tree, so an edit anywhere is observed. */
 const tree = vi.hoisted(() => ({
   files: new Map<string, string>(),
-  dirtyTarget: [] as string[],
 }));
 vi.mock("../src/service/workflow-git.ts", async (original) => ({
   ...(await original<typeof import("../src/service/workflow-git.ts")>()),
   sourceIdentityAsync: async () => JSON.stringify([...tree.files]),
   workingSnapshot: async () => ({ git: true, paths: new Map(tree.files) }),
   gitHead: async () => "1".repeat(40),
-  assertTarget: async (_cwd: string, _target: unknown, paths: string[]) => {
-    const { WorkflowRefusal } =
-      await original<typeof import("../src/service/workflow-git.ts")>();
-    const dirty = paths.filter((p) => tree.dirtyTarget.includes(p));
-    if (dirty.length)
-      throw new WorkflowRefusal("conflict", `dirty: ${dirty.join(", ")}`);
-  },
 }));
 afterEach(() => {
   tree.files.clear();
-  tree.dirtyTarget = [];
 });
 
 const settled = {
@@ -57,7 +48,6 @@ function fixture() {
     abort: new AbortController(),
     delivered: new Set<string>(),
     notes: [] as string[],
-    target: undefined as { head: string; branch: string } | undefined,
     run: {
       id: randomUUID(),
       epoch: randomUUID(),
@@ -171,7 +161,7 @@ it("an edit outside the write scope is a fact recovery decides about; a protecte
   ).rejects.toBeInstanceOf(WorkflowRefusal);
 });
 
-it("a recorded revision extends the run's write scope, and a path the target checkout changed cannot join it", async () => {
+it("a recorded revision extends the run's write scope, whatever the user's checkout holds for those paths", async () => {
   const { owner, live, proposal, replies, prompts, failed, records } =
     fixture();
   let attempt = 0;
@@ -203,23 +193,17 @@ it("a recorded revision extends the run's write scope, and a path the target che
     "Dependency installation by revision: not allowed",
   );
 
-  // The user's own change to a path blocks adding it; the diagnosis is told why
-  // and decides again.
-  live.target = { head: "1".repeat(40), branch: "refs/heads/main" };
-  tree.dirtyTarget = ["docs/guide.md"];
+  // What the user's checkout holds for a path decides nothing: the work is
+  // isolated, and a landing deals with uncommitted changes when it gets there.
   const second = failed();
-  replies.push(
-    reply(second.id, { level: "replan", scope: ["docs/guide.md"] }),
-    reply(second.id, { level: "replan", scope: ["docs/usage.md"] }),
-  );
+  replies.push(reply(second.id, { level: "replan", scope: ["docs/guide.md"] }));
   attempt = 0;
   await owner.gate(live, owner.cwd, proposal).verify("task b", async () => {
     if (++attempt === 1)
       throw new AttemptFailure("needs a document", [second.id]);
   });
-  expect(live.run.scope).toEqual(["shared/types.ts", "docs/usage.md"]);
-  expect(prompts.at(-1)).toContain("could not be used");
-  expect(prompts.at(-1)).toContain("docs/guide.md");
+  expect(live.run.scope).toEqual(["shared/types.ts", "docs/guide.md"]);
+  expect(prompts.at(-1)).not.toContain("could not be used");
   expect(prompts.at(-1)).toContain(
     "Current write scope: a.txt, b.txt, shared/types.ts",
   );

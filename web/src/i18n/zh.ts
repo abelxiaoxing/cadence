@@ -19,8 +19,8 @@ export const zh = {
   "What approval allows": "批准范围",
   "Edit the working copy directly; keep edits on failure. No commit or merge.":
     "直接编辑工作副本；失败时保留改动。不提交或合并。",
-  "Create a task branch and isolated worktrees. Commit locally and fast-forward the target after checks and automatic Agent review. No source, profile or dependency copying.":
-    "使用任务分支和隔离工作树。检查与自动代理审阅通过后，在本地提交并快进合并至目标分支。不复制源码、配置档案或依赖。",
+  "Create a task branch and isolated worktrees. Commit locally and move the target branch to the commit that passed checks and automatic Agent review, following the branch if it moves meanwhile. No source, profile or dependency copying.":
+    "使用任务分支和隔离工作树。在本地提交，并把目标分支推进到通过检查与自动代理审阅的那个提交；期间目标分支若有变动会自动跟进。不复制源码、配置档案或依赖。",
   "This plan requests local branch delivery but has no bound target.":
     "此计划要求本地分支交付，但尚未绑定目标。",
   "Approval confirms the goal, decisions, acceptance and assumptions. After approval the service plans parallel tasks from the codebase, may adjust the route and repository write scope, records reviewed deviations and updates project knowledge to finish on its own.":
@@ -290,6 +290,10 @@ export const zh = {
   "route revision {revision}": "第 {revision} 次路线修订",
   "Local integration": "本地合回",
   "Post-merge checks": "合回后检查",
+  "Target branch update": "目标分支更新",
+  "Fast-forward in {worktree}": "在 {worktree} 中快进",
+  "Branch reference only; no worktree had it checked out":
+    "仅移动分支引用；没有工作树检出该分支",
   "Worktree cleanup": "工作区清理",
   "Task branch delivery": "任务分支交付",
   "Policy: keep the task branch; no push or deployment.":
