@@ -575,7 +575,7 @@ it("each message carries an action bar: copy on both, a branch point only where 
     /<article class="msg msg-user">.*Continue from here.*<article class="msg msg-assistant">/,
   );
   expect(offered).toContain(
-    'title="Send the next message from the end of this turn. It starts a new branch there; the later turns stay on theirs and nothing is deleted."',
+    'title="Send the next message from the end of this turn. It starts a new path there; later turns stay on their own path and nothing is deleted."',
   );
   expect(chosen).toEqual([]);
   // A turn that Pi has not ended (no entry) offers no place to continue from.
@@ -607,7 +607,7 @@ it("each message carries an action bar: copy on both, a branch point only where 
     <ChatTurnView turn={settled} onEdit={(id) => chosen.push(id)} />,
   );
   expect(editable).toMatch(
-    /<article class="msg msg-user">.*aria-label="Message actions"><button type="button" class="msg-action" title="Put this message back in the composer\. Sending it starts a new branch beside this one; nothing is deleted\." aria-label="Edit and resend">.*aria-label="Copy message".*<\/article><article class="msg msg-assistant">/,
+    /<article class="msg msg-user">.*aria-label="Message actions"><button type="button" class="msg-action" title="Put this message back in the composer\. Sending it starts a new path beside this one; nothing is deleted\." aria-label="Edit and resend">.*aria-label="Copy message".*<\/article><article class="msg msg-assistant">/,
   );
   expect(editable.match(/aria-label="Edit and resend"/g)).toHaveLength(1);
   expect(chosen).toEqual([]);

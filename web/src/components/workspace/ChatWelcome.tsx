@@ -3,19 +3,27 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n/locale";
 import { Crystal } from "../../optics/Crystal";
+import { PrismStage } from "../../optics/PrismStage";
 
 export function ChatWelcome({
   hint,
+  prism,
   children,
 }: {
   hint?: string;
+  /** Desktop-only optical prism stage for an empty new conversation. */
+  prism?: { active: boolean; cadence?: boolean };
   children?: ReactNode;
 }) {
   return (
     <div className="empty-state chat-welcome">
-      <span className="empty-logo" aria-hidden="true">
-        <Crystal />
-      </span>
+      {prism ? (
+        <PrismStage active={prism.active} cadence={prism.cadence} />
+      ) : (
+        <span className="empty-logo" aria-hidden="true">
+          <Crystal />
+        </span>
+      )}
       {hint && <p>{hint}</p>}
       {children}
     </div>

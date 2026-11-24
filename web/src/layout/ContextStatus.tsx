@@ -36,7 +36,7 @@ export function ContextStatus({ usage }: { usage?: ContextUsage }) {
         : t("Context {used} tokens", { used: formatTokens(tokens) });
   const tip = !usage
     ? t(
-        "No completed model response is within reach of this branch's end, so no context size is stated.",
+        "No completed model response is within reach of this path's end, so no context size is stated.",
       )
     : [
         t(

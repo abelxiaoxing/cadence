@@ -225,7 +225,7 @@ it("opens and closes the current plan at the title, not the stream tail; later d
     const expanded = [1, 3, 5, 7, 9].includes(index);
     if (index === 9) {
       expect(html).toContain(
-        "Show the latest branch before acting on the current plan.",
+        "Show the latest path before acting on the current plan.",
       );
       expect(html).toMatch(
         /class="primary"[^>]*disabled=""[^>]*>Restore execution and validate plan</,

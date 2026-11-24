@@ -32,7 +32,7 @@ export function CacheStatus({ cache }: { cache?: ChatCache }) {
           miss: formatTokens(known.miss),
           input: formatTokens(known.totalInput),
         },
-      )} ${t("Summed over every usage record of this session, on every branch.")}`
+      )} ${t("Summed over every usage record of this session, across every path.")}`
     : t("Cache hit: this session's usage records state no input tokens yet.");
   return (
     <span

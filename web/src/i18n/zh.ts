@@ -6,8 +6,8 @@ export const zh = {
   "{count} messages received": "已接收 {count} 条消息",
   "Conversation updated": "会话已更新",
   "Conversation updated {count} times": "会话已更新 {count} 次",
-  "Show the latest branch before acting on the current plan.":
-    "请先显示最新分支，再验证或批准当前计划。",
+  "Show the latest path before acting on the current plan.":
+    "请先回到最新路线，再验证或批准当前计划。",
   "View current plan": "查看当前计划",
   "This draft does not confirm the current plan. Review it from the conversation title and enter the approval phrase again.":
     "这段草稿不能确认当前计划。请从会话标题查看当前计划，审阅后重新输入批准短语。",
@@ -180,15 +180,15 @@ export const zh = {
   "Context unknown after compaction": "压缩后上下文大小未知",
   "Context window in use": "上下文窗口占用",
   "Context size not observed yet": "尚未读取到上下文大小",
-  "No completed model response is within reach of this branch's end, so no context size is stated.":
-    "这条分支末尾附近还没有完成的模型回复，因此没有上下文大小。",
+  "No completed model response is within reach of this path's end, so no context size is stated.":
+    "这条路线末尾附近还没有完成的模型回复，因此没有上下文大小。",
   "Network latency: {ms}ms (the fastest request to the service in the last minute, from sending to the first byte of its reply).":
     "网络延迟：{ms}ms（最近一分钟内到服务最快的一次请求，从发出到收到回复首字节）。",
   "Cache hit": "缓存命中",
   "Cache hit: {rate} · read {read} · write {write} · miss {miss} (of {input} input tokens)":
     "缓存命中：{rate} · 缓存读取 {read} · 缓存写入 {write} · 未命中 {miss}（共 {input} 输入 token）",
-  "Summed over every usage record of this session, on every branch.":
-    "按本会话全部用量记录累计，包含所有分支。",
+  "Summed over every usage record of this session, across every path.":
+    "按本会话全部用量记录累计，包含所有对话路线。",
   "Cache hit: this session's usage records state no input tokens yet.":
     "缓存命中：本会话的用量记录里还没有输入 token。",
   "Context size as of the last completed model response ({model}). Messages after that response are not counted.":
@@ -1367,30 +1367,35 @@ export const zh = {
   "The service was not changed; this page stays connected.":
     "服务没有改动；此页面保持连接。",
   Close: "关闭",
-  "Conversation branches": "对话分支",
-  "Each line is a message; indented lines are branches. Choose one to read that branch. The terminal shares this tree (/tree in Pi).":
-    "每行是一条消息，缩进的是分支。选择一行即可查看那条分支。终端里看到的是同一棵树（Pi 中的 /tree）。",
+  "Conversation tree": "对话树",
+  "Messages appear here as a tree after you send one. Editing or continuing from an earlier message creates a new path, shared with /tree in Pi.":
+    "发送第一条消息后，这里会展示对话树。编辑消息或从历史节点继续时会分叉出新路线，与终端 Pi 中的 /tree 同步。",
   "Only the newest messages are listed.": "只列出了最新的消息。",
   "Started in the terminal": "在终端中开始",
   "Started in the WebUI": "在 WebUI 中开始",
-  "Branches ({count})": "分支（{count}）",
-  Branches: "分支",
-  "Show the latest": "查看最新",
+  "Conversation paths ({count})": "对话路线（{count}）",
+  Tree: "对话树",
+  Current: "当前",
+  "Show the latest": "回到最新",
   "Filter messages…": "筛选消息…",
-  "Refresh branches": "刷新分支",
-  "A chosen branch is shown, not the latest.":
-    "当前显示的是你选中的分支，不是最新的。",
-  "No messages yet.": "还没有消息。",
+  "Refresh tree": "刷新对话树",
+  "Viewing an earlier path, not the latest.":
+    "正在查看历史路线，而非最新对话。",
+  "No messages yet": "还没有消息",
   "No matching messages": "没有匹配的消息",
+  "+{count} more": "+{count} 条",
+  "Hide {count}": "收起 {count} 条",
+  "Expand {count} more messages": "展开其余 {count} 条消息",
+  "Collapse {count} messages": "收起 {count} 条消息",
   "Edit and resend: {text}": "编辑并重新发送：{text}",
   "Continue from here: {text}": "从这里继续：{text}",
   // The anchor: where the next message continues
-  "Send the next message from the end of this turn. It starts a new branch there; the later turns stay on theirs and nothing is deleted.":
-    "下一条消息接在这一轮结束的位置发送，并从那里开始一个新分支；后面的轮次留在原来的分支上，不会删除任何内容。",
+  "Send the next message from the end of this turn. It starts a new path there; later turns stay on their own path and nothing is deleted.":
+    "下一条消息接在这一轮结束的位置发送，并从那里分叉出一条新路线；后面的轮次留在原路线上，不会删除任何内容。",
   "Continue from here": "从这里继续",
   "Edit and resend": "编辑并重新发送",
-  "Put this message back in the composer. Sending it starts a new branch beside this one; nothing is deleted.":
-    "把这条消息放回输入框。发送后会在它旁边开始一个新分支，不会删除任何内容。",
+  "Put this message back in the composer. Sending it starts a new path beside this one; nothing is deleted.":
+    "把这条消息放回输入框。发送后会在这里分叉出一条新路线，不会删除任何内容。",
   "Conversation turn, not in the new message's context":
     "对话轮次，不会进入新消息的上下文",
   "Version {index} of {count}": "第 {index} 个版本，共 {count} 个",
@@ -1404,10 +1409,10 @@ export const zh = {
     "在这段对话里找不到那条消息。",
   "Rewriting a message": "正在重写一条消息",
   "Continuing after an earlier turn": "接在较早的一轮之后继续",
-  "Send starts a new branch beside it; that message and the turns after it stay on their branch and are not in the new context.":
-    "发送后会在它旁边开始一个新分支；那条消息和之后的轮次留在原来的分支上，不会进入新的上下文。",
-  "Send starts a new branch after that turn; the turns after it stay on their branch and are not in the new context.":
-    "发送后会在那一轮之后开始一个新分支；再往后的轮次留在原来的分支上，不会进入新的上下文。",
+  "Send starts a new path beside it; that message and the turns after it stay on their own path and are not in the new context.":
+    "发送后会在这里分叉出一条新路线；那条消息和之后的轮次留在原路线上，不会进入新的上下文。",
+  "Send starts a new path after that turn; the turns after it stay on their own path and are not in the new context.":
+    "发送后会在那一轮之后分叉出一条新路线；再往后的轮次留在原路线上，不会进入新的上下文。",
   "Only the conversation is rewound: files on disk stay as they are.":
     "回退的只是对话，磁盘上的文件不会变。",
   "Reading the message's images…": "正在读取这条消息的图片…",
@@ -1415,10 +1420,10 @@ export const zh = {
     "没有保留下来的附件不会重新附上。",
   "Cancel and restore the draft that was here": "取消，并恢复原来的草稿",
   Cancel: "取消",
-  "A chosen branch is shown, not the latest. A message sent now continues from the end of what is shown; the rest stays in the session.":
-    "当前显示的是你选中的分支，不是最新的。现在发送的消息会接在所显示内容的末尾，其余内容仍保留在会话中。",
-  "From here on, the turns stay on their branch: the message being written will not have them in its context.":
-    "从这里往下的轮次留在原来的分支上：正在写的这条消息的上下文里不会有它们。",
+  "Viewing an earlier path, not the latest. A message sent now continues from the end of what is shown; the rest stays in the session.":
+    "正在查看历史路线，而非最新对话。现在发送的消息会接在所显示内容的末尾，其余路线仍保留在会话中。",
+  "From here on, the turns stay on their own path: the message being written will not have them in its context.":
+    "从这里往下的轮次留在原路线上：正在写的这条消息的上下文里不会有它们。",
   // Question rail and composer
   "Questions in this conversation": "这段对话里的提问",
   "Message box height: automatic. Drag or use the arrow keys to set it.":

@@ -87,7 +87,7 @@ export const ChatTurnView = memo(function ChatTurnView({
       icon={<FiCornerDownRight aria-hidden="true" />}
       label={t("Continue from here")}
       title={t(
-        "Send the next message from the end of this turn. It starts a new branch there; the later turns stay on theirs and nothing is deleted.",
+        "Send the next message from the end of this turn. It starts a new path there; later turns stay on their own path and nothing is deleted.",
       )}
       showLabel
       onClick={() => onContinue(header.id)}
@@ -98,7 +98,7 @@ export const ChatTurnView = memo(function ChatTurnView({
       icon={<FiEdit2 aria-hidden="true" />}
       label={t("Edit and resend")}
       title={t(
-        "Put this message back in the composer. Sending it starts a new branch beside this one; nothing is deleted.",
+        "Put this message back in the composer. Sending it starts a new path beside this one; nothing is deleted.",
       )}
       onClick={() => onEdit(header.id)}
     />

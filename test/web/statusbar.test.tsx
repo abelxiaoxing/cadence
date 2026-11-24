@@ -127,8 +127,8 @@ it.each(["en", "zh"] as const)(
     expect(hit).toContain('<b class="cache-pct ok">87.0%</b>');
     expect(hit).toContain(
       locale === "zh"
-        ? "缓存命中：87.0% · 缓存读取 10K · 缓存写入 1.2K · 未命中 300（共 11.5K 输入 token） 按本会话全部用量记录累计，包含所有分支。"
-        : "Cache hit: 87.0% · read 10K · write 1.2K · miss 300 (of 11.5K input tokens) Summed over every usage record of this session, on every branch.",
+        ? "缓存命中：87.0% · 缓存读取 10K · 缓存写入 1.2K · 未命中 300（共 11.5K 输入 token） 按本会话全部用量记录累计，包含所有对话路线。"
+        : "Cache hit: 87.0% · read 10K · write 1.2K · miss 300 (of 11.5K input tokens) Summed over every usage record of this session, across every path.",
     );
     expect(hit).not.toContain("is-zero");
     expect(render({ input: 30, read: 70, write: 0 })).toContain("cache-pct ok");

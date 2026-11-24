@@ -1,0 +1,199 @@
+/* Desktop Optical Prism Stage: full-viewport WebGL2 backdrop and synchronized
+ * UI glass rim highlights (composer top border + left/right sidebar inner glass
+ * borders). Strictly desktop-only (>900px), motion-safe, and non-intrusive;
+ * never overrides any pinned base material token or focus/contrast contract. */
+
+.prism-stage-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  width: 100vw;
+  height: 100dvh;
+  display: block;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+
+.app[data-prism-stage="active"] > .prism-stage-canvas {
+  opacity: 1;
+}
+
+@media (max-width: 900px), (prefers-reduced-motion: reduce),
+  (forced-colors: active) {
+  .prism-stage-canvas {
+    display: none;
+  }
+}
+
+@media (min-width: 901px) and (prefers-reduced-motion: no-preference) and (
+    forced-colors: none
+  ) {
+  /* Keep the compact 64px static <Crystal /> until WebGL2 compiles and paints
+   * its first frame, then expand the transparent interactive hit target. */
+  .chat-workspace[data-entry="new"]
+    > .chat-welcome
+    > .empty-logo.prism-crystal-slot[data-prism-ready="true"] {
+    position: relative;
+    width: 184px;
+    height: 184px;
+    margin-bottom: 14px;
+    padding: 0;
+    border-color: transparent;
+    border-radius: 50%;
+    background: transparent;
+    box-shadow: none;
+    animation: none;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .chat-workspace[data-entry="new"]
+    > .chat-welcome
+    > .empty-logo.prism-crystal-slot[data-prism-ready="true"]
+    > svg {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .chat-workspace[data-entry="new"]
+    > .chat-welcome
+    > .empty-logo.prism-crystal-slot[data-prism-dragging="true"] {
+    cursor: grabbing;
+  }
+
+  /* Calibrated rim-light optical spectrum tokens for both Alabaster and Obsidian. */
+  .app[data-prism-stage="active"] {
+    --prism-rim-core: light-dark(
+      rgba(255, 255, 255, 0.98),
+      rgba(206, 224, 252, 0.62)
+    );
+    --prism-rim-cyan: light-dark(
+      rgba(92, 168, 255, 0.56),
+      rgba(116, 174, 245, 0.42)
+    );
+    --prism-rim-violet: light-dark(
+      rgba(138, 134, 245, 0.44),
+      rgba(142, 140, 238, 0.32)
+    );
+    --prism-rim-warm: light-dark(
+      rgba(245, 194, 156, 0.36),
+      rgba(232, 196, 170, 0.2)
+    );
+  }
+
+  /* Synchronized specular highlight sweeping along the glass composer's top rim.
+   * Uses a border-only mask so it never paints over text or controls. */
+  .app[data-prism-stage="active"]
+    .chat-workspace[data-entry="new"]
+    .composer-dock::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border-radius: inherit;
+    padding: 1.5px;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        210px 38px at var(--prism-composer-x, 50%) 0%,
+        var(--prism-rim-core) 0%,
+        var(--prism-rim-cyan) 32%,
+        var(--prism-rim-violet) 58%,
+        transparent 100%
+      ),
+      radial-gradient(
+        150px 26px at calc(var(--prism-composer-x, 50%) - 5%) 0%,
+        var(--prism-rim-warm) 0%,
+        transparent 78%
+      );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: var(--prism-composer-p, 0);
+    transition: opacity 120ms linear;
+  }
+
+  /* Synchronized grazing glass reflections along the inner borders of the left
+   * and right floating desktop sidebars (mirrors Style 3 obsidian & Style 1 light).
+   * Keep .inspector-overlay .drawer-right's absolute overlay positioning intact. */
+  .app[data-prism-stage="active"] .panel-drawer.drawer-left,
+  .app[data-prism-stage="active"]:not(.inspector-overlay)
+    .panel-drawer.drawer-right {
+    position: relative;
+  }
+
+  .app[data-prism-stage="active"] .panel-drawer.drawer-left::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    border-radius: inherit;
+    padding: 1.5px;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        34px 230px at 100% var(--prism-left-y, 44%),
+        var(--prism-rim-core) 0%,
+        var(--prism-rim-cyan) 34%,
+        var(--prism-rim-violet) 62%,
+        transparent 100%
+      ),
+      radial-gradient(
+        24px 160px at 100% calc(var(--prism-left-y, 44%) + 4%),
+        var(--prism-rim-warm) 0%,
+        transparent 78%
+      );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: var(--prism-left-p, 0);
+    transition: opacity 120ms linear;
+  }
+
+  .app[data-prism-stage="active"]:not(.inspector-overlay)
+    .panel-drawer.drawer-right::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    border-radius: inherit;
+    padding: 1.5px;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        34px 230px at 0% var(--prism-right-y, 44%),
+        var(--prism-rim-core) 0%,
+        var(--prism-rim-cyan) 34%,
+        var(--prism-rim-violet) 62%,
+        transparent 100%
+      ),
+      radial-gradient(
+        24px 160px at 0% calc(var(--prism-right-y, 44%) - 4%),
+        var(--prism-rim-warm) 0%,
+        transparent 78%
+      );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: var(--prism-right-p, 0);
+    transition: opacity 120ms linear;
+  }
+}

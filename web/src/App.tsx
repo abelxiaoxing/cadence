@@ -77,6 +77,7 @@ import {
 import {
   BranchesPanel,
   type BranchesView,
+  ConversationTreeIcon,
 } from "./components/workspace/BranchesPanel";
 import {
   type ChatDiagnostics,
@@ -581,6 +582,7 @@ export function App({
       activity?.empty &&
       (!currentChatLocation || currentChatLocation.cwd === nextCwd)
     ) {
+      setRightTab((tab) => (tab === "branches" ? "files" : tab));
       closeDrawer();
       setFocusRequest((count) => count + 1);
       return;
@@ -604,8 +606,11 @@ export function App({
     setDetail(undefined);
     setSelectedSnapshot(undefined);
     setTab("messages");
-    // The History details tab belongs to a task; the others stay as chosen.
-    setRightTab((tab) => (tab === "task" ? "files" : tab));
+    // History details belongs to a task; starting a fresh conversation also
+    // returns from the empty Tree tab to Files (Tree remains clickable).
+    setRightTab((tab) =>
+      tab === "task" || (!selected && tab === "branches") ? "files" : tab,
+    );
     closeDrawer();
     // Selecting the conversation already open keeps the branch it shows.
     const leaf = id === chatId ? activityRoute(location.hash, id).leaf : null;
@@ -1135,7 +1140,7 @@ export function App({
           scope && rightTab === "task"
             ? t("History details")
             : branchesTab
-              ? t("Branches")
+              ? t("Tree")
               : t("Files")
         }
         toolbar={
@@ -1732,8 +1737,8 @@ export function App({
                 aria-pressed={branchesTab}
                 onClick={() => setRightTab("branches")}
               >
-                <FiGitBranch aria-hidden="true" />
-                {t("Branches")}
+                <ConversationTreeIcon />
+                {t("Tree")}
               </button>
             )}
             {scope && (
@@ -1753,6 +1758,7 @@ export function App({
         inspector={
           branchesTab ? (
             <BranchesPanel
+              key={chatId ?? "tree"}
               view={branchView?.id === chatId ? branchView : undefined}
               onChosen={closeDrawer}
             />

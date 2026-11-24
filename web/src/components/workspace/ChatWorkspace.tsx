@@ -21,7 +21,6 @@ import {
   FiEdit2,
   FiFileText,
   FiFolder,
-  FiGitBranch,
   FiMessageSquare,
 } from "react-icons/fi";
 import { abortScope } from "../../../../src/abort-scope.ts";
@@ -130,7 +129,7 @@ import { dockGroups } from "../../navigation/workflow-assignments";
 import { useLazyWindow } from "../../transcript/use-lazy-window";
 import { LazyMount } from "../transcript/LazyMount";
 import type { ConversationAgents, WorkflowAgent } from "./AgentDock";
-import type { BranchesView } from "./BranchesPanel";
+import { type BranchesView, ConversationTreeIcon } from "./BranchesPanel";
 import { composerMode, modeHints } from "./CadenceModeButton";
 import { ChatComposer, type ChatComposerProps } from "./ChatComposer";
 import { useImageDraft } from "./ChatImages";
@@ -1084,7 +1083,7 @@ export function ChatWorkspace({
     (!!prepareForPlan || actionsReady) &&
     !!(draftModel ?? context?.model);
   const approvalHint = historicalBranch
-    ? t("Show the latest branch before acting on the current plan.")
+    ? t("Show the latest path before acting on the current plan.")
     : revalidating
       ? t(
           "Preparing execution and validating the plan; no implementation is approved.",
@@ -1747,7 +1746,7 @@ export function ChatWorkspace({
   };
   const approve = async () => {
     if (historicalBranch) {
-      refuse(t("Show the latest branch before acting on the current plan."));
+      refuse(t("Show the latest path before acting on the current plan."));
       return;
     }
     if (!state?.proposal) {
@@ -2594,12 +2593,15 @@ export function ChatWorkspace({
     refresh: treeRefresh,
   } = treeRead;
   const { pinned } = conversation;
+  const treeFailure = treeError ?? (!summary ? conversation.error : undefined);
+  const awaitingTree = !tree && !treeFailure && !centerEntry && !observedEmpty;
+  const treeBusy = treeLoading || awaitingTree;
   useEffect(() => {
     onBranchesRef.current?.({
       id,
       tree,
-      error: treeError,
-      loading: treeLoading,
+      error: treeFailure,
+      loading: treeBusy,
       pinned,
       canAct: canAnchor,
       onRefresh: treeRefresh,
@@ -2608,8 +2610,8 @@ export function ChatWorkspace({
   }, [
     id,
     tree,
-    treeError,
-    treeLoading,
+    treeFailure,
+    treeBusy,
     pinned,
     canAnchor,
     treeRefresh,
@@ -2649,10 +2651,10 @@ export function ChatWorkspace({
         <span>
           {anchor.kind === "edit"
             ? t(
-                "Send starts a new branch beside it; that message and the turns after it stay on their branch and are not in the new context.",
+                "Send starts a new path beside it; that message and the turns after it stay on their own path and are not in the new context.",
               )
             : t(
-                "Send starts a new branch after that turn; the turns after it stay on their branch and are not in the new context.",
+                "Send starts a new path after that turn; the turns after it stay on their own path and are not in the new context.",
               )}{" "}
           {t(
             "Only the conversation is rewound: files on disk stay as they are.",
@@ -2680,11 +2682,11 @@ export function ChatWorkspace({
     </div>
   ) : pinned && !running ? (
     <div className="composer-anchor quiet">
-      <FiGitBranch aria-hidden="true" />
+      <ConversationTreeIcon />
       <div className="composer-anchor-text" role="status">
         <span>
           {t(
-            "A chosen branch is shown, not the latest. A message sent now continues from the end of what is shown; the rest stays in the session.",
+            "Viewing an earlier path, not the latest. A message sent now continues from the end of what is shown; the rest stays in the session.",
           )}
         </span>
       </div>
@@ -2814,20 +2816,20 @@ export function ChatWorkspace({
               {summary?.archived && (
                 <span className="conversation-badge">{t("Archived")}</span>
               )}
-              {/* The session forks: its tree is the inspector's Branches tab. */}
+              {/* The session forks: its tree is the inspector's Tree tab. */}
               {onOpenBranches && (conversation.branches > 1 || pinned) && (
                 <button
                   type="button"
                   className="ghost"
-                  aria-label={t("Branches ({count})", {
+                  aria-label={t("Conversation paths ({count})", {
                     count: conversation.branches,
                   })}
-                  title={t("Branches ({count})", {
+                  title={t("Conversation paths ({count})", {
                     count: conversation.branches,
                   })}
                   onClick={onOpenBranches}
                 >
-                  <FiGitBranch aria-hidden="true" />
+                  <ConversationTreeIcon />
                   {conversation.branches}
                 </button>
               )}
@@ -2963,9 +2965,9 @@ export function ChatWorkspace({
               <Fragment key={renderId}>
                 {id === firstOff && (
                   <p className="chat-anchor-divider">
-                    <FiGitBranch aria-hidden="true" />
+                    <ConversationTreeIcon />
                     {t(
-                      "From here on, the turns stay on their branch: the message being written will not have them in its context.",
+                      "From here on, the turns stay on their own path: the message being written will not have them in its context.",
                     )}
                   </p>
                 )}
@@ -3110,6 +3112,9 @@ export function ChatWorkspace({
       </div>
       {centerEntry && (
         <ChatWelcome
+          prism={
+            !mobile ? { active: !hidden, cadence: nextCadence } : undefined
+          }
           hint={
             mobile && workingFolder
               ? t("New conversation runs in this folder")

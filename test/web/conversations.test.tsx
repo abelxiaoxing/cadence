@@ -870,11 +870,11 @@ it("the initial conversation shell renders without a selected snapshot or task",
   expect(html).not.toContain("view-menu");
   expect(html).not.toContain("search-toggle");
   expect(html).not.toContain(">History details</button>");
-  // A conversation's inspector has Files and its session's Branches; Files is
-  // the one shown until Branches is chosen.
+  // A conversation's inspector has Files and its session's Tree; Files is
+  // the one shown until Tree is chosen.
   expect(
     html.match(
-      /class="rp-tab" aria-pressed="true"><svg.*?<\/svg>Files<\/button><button type="button" class="rp-tab" aria-pressed="false"><svg.*?<\/svg>Branches<\/button>/,
+      /class="rp-tab" aria-pressed="true"><svg.*?<\/svg>Files<\/button><button type="button" class="rp-tab" aria-pressed="false"><svg.*?<\/svg>Tree<\/button>/,
     ),
   ).not.toBeNull();
   expect(html).not.toContain("branches-panel");

@@ -39,18 +39,18 @@ A conversation can be continued from either side: open it in the browser, or run
 Sessions from the selected checkout and its conversation directories are listed, and only those of the account the service runs as.
 
 Pi keeps a session as a tree.
-When a message continues an earlier point, the session gains a branch instead of losing anything:
+When a message continues an earlier point, the session forks a new path instead of losing anything:
 
-- In the browser, **Continue from here** under an earlier reply makes the next message start a new branch after that turn, and **Edit and resend** under one of your messages puts it back in the composer (with its images) so the rewritten message starts a branch beside it.
+- In the browser, **Continue from here** under an earlier reply makes the next message start a new path after that turn, and **Edit and resend** under one of your messages puts it back in the composer (with its images) so the rewritten message starts a new path beside it.
   The later turns stay visible but dimmed, a strip above the composer says what is being rewritten and has **Cancel**, and only the conversation is rewound: files on disk are not changed.
-- Where a message has several versions, `‹ 2/3 ›` beside it steps between their branches.
-- The **Branches** tab of the right panel (the branch count in the conversation header opens it) shows the tree of messages; choose a line to read that branch, and **Show the latest** to follow the newest again.
-  The address keeps the branch shown, so a refresh returns to it.
+- Where a message has several versions, `‹ 2/3 ›` beside it steps between their paths.
+- The **Tree** tab of the right panel (the path count in the conversation header opens it) shows the conversation tree; choose a line to read that path, and **Show the latest** to follow the newest again.
+  The address keeps the path shown, so a refresh returns to it.
 - In the terminal, `/tree` shows the same tree.
 
 A terminal holds its own copy of an open session.
 If the browser continues it meanwhile, the terminal says so; run `/resume` and choose the session again to see those messages.
-A message sent in the terminal first starts a new branch from where the terminal is.
+A message sent in the terminal first starts a new path from where the terminal is.
 
 Sessions are stored as Pi writes them, including tool output; the browser redacts the service's credentials from what it shows.
 Old Cadence conversations from before the shared Pi-session store are no longer supported.
