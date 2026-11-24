@@ -6,7 +6,8 @@ Keep it short.
 ## Routes
 
 - `src/index.ts`, `src/service/`, `package.json`, `agents/` -> `.cadence/knowledge/architecture-packaging.md` — module boundaries, SDK isolation, OIDC npm release and agent pins
-- `src/service/workflows.ts`, `src/service/workflow-git.ts`, `src/service/workflow-landing.ts`, `src/service/workflow-derived.ts`, `src/service/workflow-links.ts` -> `.cadence/knowledge/workflow-v5-delivery.md` — V5 planning, replay, conflicts, landing
+- `src/service/workflows.ts`, `src/service/workflow-git.ts`, `src/service/workflow-links.ts` -> `.cadence/knowledge/workflow-v5-delivery.md` — V5 planning, auto-links and worktrees
+- `src/service/workflow-landing.ts`, `src/service/workflow-derived.ts` -> `.cadence/knowledge/landing-and-conflicts.md` — replay, conflicts, landing, uncommitted changes
 - `src/service/workflow-delivery.ts`, `src/service/workflow-review-ledger.ts`, `src/service/run-environment.ts` -> `.cadence/knowledge/checks-and-review.md` — Stage 4 checks, recovery, Agent review and scratch pools
 - `src/service/gateway.ts`, `src/service/checkout-gate.ts`, `src/service/merge-queue.ts`, `src/service/host-capacity.ts`, `src/service/self-heal.ts` -> `.cadence/knowledge/lifetimes-and-recovery.md` — preparation, checkout, landing order, host load, Stop and self-heal
 - `src/worker-toolkit.mjs`, `src/worker-tools.mjs`, `src/research-tools.mjs`, `src/change-tools.mjs`, `src/sdk-worker.mjs` -> `.cadence/knowledge/worker-tools-and-sdk.md` — worker capabilities, frozen settings and cancel settlement

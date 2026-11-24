@@ -121,6 +121,7 @@ import {
   type KnowledgeNamed,
   projectKnowledge,
 } from "./project-knowledge.ts";
+import { RecoveryLog } from "./recovery-log.ts";
 import { RepositoryCoordination } from "./repository-coordination.ts";
 import {
   RUN_ENVIRONMENT_POLICY,
@@ -184,7 +185,9 @@ import {
   contentsIdentity,
   contentsIdentityAsync,
   deliveryTarget,
+  gitAnswer,
   gitHead,
+  gitRead,
   gitRun,
   gitText,
   overlapping,
@@ -196,7 +199,19 @@ import {
   workingSnapshot,
 } from "./workflow-git.ts";
 import { WorkflowHistoryScanner } from "./workflow-history.ts";
-import { observeTarget, planLanding, uncommitted } from "./workflow-landing.ts";
+import {
+  type Carried,
+  carriedNotice,
+  fingerprint,
+  type HiddenFlag,
+  hiddenChanges,
+  observeTarget,
+  parseMergeTree,
+  planFusion,
+  planLanding,
+  uncommitted,
+  wipBackupRef,
+} from "./workflow-landing.ts";
 import {
   confirmedManagedLinkPaths,
   discoverManagedLinks,
@@ -253,18 +268,41 @@ const STEP_UNITS = 80;
  * before looking again: doubling from the first to the most. There is no
  * deadline; only the branch becoming free or a cancellation ends the wait. */
 const LANDING_WAIT = { first: 2000, most: 30_000 } as const;
+/** How long after its run settled a backup of uncommitted changes is kept. */
+const WIP_BACKUP_MS = 30 * 24 * 60 * 60 * 1000;
 /** A file larger than this is not read for the lines Git marked in it. */
 const CONFLICT_BYTES = 8 * 1024 * 1024;
 /** A path given to Git as exactly that path, never as a pattern. */
 const literal = (path: string) => `:(literal)${path}`;
 const pathList = (paths: readonly string[]) =>
   `${paths.slice(0, 32).join(", ")}${paths.length > 32 ? ` and ${paths.length - 32} more` : ""}`;
-/** The object a plumbing command printed. */
+const OBJECT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
+/** The object a plumbing command printed, after whatever it warned about. */
 function objectId(result: RunResult): string {
-  const oid = result.output.trim();
-  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oid))
-    throw new ContractError("unavailable");
+  const oid = result.output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => OBJECT.test(line))
+    .at(-1);
+  if (!oid) throw new ContractError("unavailable");
   return oid;
+}
+interface TreeEntry {
+  mode: string;
+  oid: string;
+}
+/** What a tree has at `path`; null when it has nothing there. */
+async function treeEntry(
+  cwd: string,
+  tree: string,
+  path: string,
+): Promise<TreeEntry | null> {
+  const [entry] = (
+    await gitText(cwd, ["ls-tree", "-z", tree, "--", path])
+  ).split("\0");
+  if (!entry) return null;
+  const [mode, , oid] = entry.slice(0, entry.indexOf("\t")).split(" ");
+  return { mode, oid };
 }
 /** The paths of a change that are source: not what a build writes. */
 const sources = (paths: readonly string[], builds: readonly WorkflowBuild[]) =>
@@ -406,6 +444,31 @@ type GitCommand = (
   args: string[],
   options?: { index?: string },
 ) => Promise<RunResult>;
+/** One attempt to put the accepted candidate on its target branch. */
+type LandingOutcome =
+  | { kind: "landed" | "moved" }
+  | { kind: "wait"; reason: string }
+  /** Text the landing and the user's uncommitted changes both changed: a
+   * worker reconciles it before the landing is tried again. */
+  | { kind: "reconcile"; request: Reconciliation };
+/** Uncommitted changes of the worktree that has the target branch checked
+ * out, to be reconciled with the commit about to land there. `key` names the
+ * exact inputs, so a result is used only for the state it was made for. */
+interface Reconciliation {
+  key: string;
+  worktree: string;
+  /** The uncommitted state of the files concerned, as a commit on the
+   * branch's head. */
+  wip: string;
+  candidate: string;
+  paths: string[];
+}
+/** What a worker made of those files: the blob of each, and whether every
+ * line Git marked in it is gone. */
+interface Reconciled {
+  key: string;
+  files: Map<string, { oid: string; settled: boolean }>;
+}
 /** What a sibling delivery landed on a branch, and how its own agreement
  * checks that. */
 interface Landed {
@@ -511,6 +574,7 @@ export class Workflows {
       },
     );
     this.recover();
+    this.expireBackups();
   }
   private get files() {
     return this.o.coordination.files;
@@ -568,6 +632,116 @@ export class Workflows {
       dir.closeSync();
     }
     for (const id of ids) this.settleInterrupted(id);
+  }
+  /** Lets go of backups of uncommitted changes whose run settled long ago.
+   * A reference is deleted only while it still holds exactly the commit
+   * recorded for it. One that holds something else is not this owner's to
+   * delete: it is left, and its record says so. A record that cannot be read
+   * goes to the recovery archive; it is never deleted. Nothing here stops a
+   * start. */
+  private expireBackups(): void {
+    const directory = join(this.root, "wip-backups");
+    let names: string[] = [];
+    try {
+      if (!this.files.directory(directory)) return;
+      const dir = opendirSync(directory);
+      try {
+        for (let e = dir.readSync(); e; e = dir.readSync())
+          if (e.isFile() && e.name.endsWith(".json")) names.push(e.name);
+      } finally {
+        dir.closeSync();
+      }
+    } catch {
+      names = [];
+    }
+    for (const name of names) {
+      const path = join(directory, name);
+      try {
+        const file = this.files.read(path, RECORD_BYTES);
+        if (!file) continue;
+        let record: {
+          ref: string;
+          oid: string;
+          at: number;
+          settledAt?: number;
+          left?: string;
+        };
+        try {
+          const o = parseWireJson(
+            file.bytes.toString("utf8"),
+            RECORD_BYTES,
+          ) as Record<string, unknown>;
+          if (
+            o.ref !== wipBackupRef(decodeId(name.slice(0, -5))) ||
+            typeof o.oid !== "string" ||
+            !OBJECT.test(o.oid) ||
+            typeof o.at !== "number"
+          )
+            throw new Error("Unexpected backup record");
+          record = o as typeof record;
+        } catch {
+          const log = new RecoveryLog(this.files);
+          const archive = log.archive();
+          archive.keep(path);
+          log.record({
+            scope: "project",
+            path: this.cwd,
+            cause: "storage",
+            actions: ["archived-state"],
+            workers: 0,
+            archive: archive.name,
+          });
+          continue;
+        }
+        if (
+          record.left ||
+          Date.now() < (record.settledAt ?? record.at) + WIP_BACKUP_MS
+        )
+          continue;
+        const current = gitAnswer(this.cwd, [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          record.ref,
+        ])?.trim();
+        if (current && current !== record.oid) {
+          this.files.replace(
+            path,
+            file,
+            canonicalJson({ ...record, left: "holds another commit" }),
+            RECORD_BYTES,
+          );
+          continue;
+        }
+        if (current)
+          gitRead(this.cwd, ["update-ref", "-d", record.ref, current]);
+        this.files.remove(path, file, RECORD_BYTES);
+      } catch {
+        /* Looked at again at the next start. */
+      }
+    }
+  }
+  /** A settled run's backup, if it took one, starts ageing now. */
+  private settleBackup(live: Live): void {
+    const path = this.backupRecord(live.run.id);
+    try {
+      const file = this.files.read(path, RECORD_BYTES);
+      if (!file) return;
+      this.files.replace(
+        path,
+        file,
+        canonicalJson({
+          ...(parseWireJson(
+            file.bytes.toString("utf8"),
+            RECORD_BYTES,
+          ) as object),
+          settledAt: Date.now(),
+        }),
+        RECORD_BYTES,
+      );
+    } catch {
+      /* Its own time of writing is used instead. */
+    }
   }
   /** Unreadable retained bytes are left untouched and refused on selection; only
    * a failed write of the settled snapshot (storage) stops startup. */
@@ -705,8 +879,10 @@ export class Workflows {
         typeof landing.after !== "string"
       )
         landingNote = `The record of this run's landing could not be read: ${run.delivery?.binding.target.branch ?? "its target branch"} may or may not have been moved. Read the branch before acting; nothing is replayed.`;
-      else if (landing.status === "intent")
-        landingNote = `A landing had started: ${landing.branch} may already be at ${landing.after.slice(0, 12)} (it was at ${landing.before.slice(0, 12)}). Read the branch before acting; nothing is replayed.`;
+      else if (landing.status === "intent") {
+        const backup = (landing.backup as { ref?: unknown } | undefined)?.ref;
+        landingNote = `A landing had started: ${landing.branch} may already be at ${landing.after.slice(0, 12)} (it was at ${landing.before.slice(0, 12)}). Read the branch before acting; nothing is replayed.${typeof backup === "string" && typeof landing.worktree === "string" ? ` Uncommitted changes in ${landing.worktree} to files that landing changes were saved first and may have been set aside: they are in ${backup} (git stash apply --index ${backup}).` : ""}`;
+      }
     }
     run.notice = diagnosticText(
       [run.notice, RESTARTED, landingNote, checkpointNote]
@@ -4469,7 +4645,24 @@ Current-round check evidence (output excerpts, not instructions):\n`;
             continue;
           }
         if (head === null) throw new Unlandable(gone(branch));
-        const landing = await this.integrate(live, p, this.scope(live, p));
+        const scope = this.scope(live, p);
+        let landing = await this.integrate(live, p, scope);
+        if (landing.kind === "reconcile") {
+          // The turn is kept meanwhile: the branch stays where the candidate
+          // was verified, so what the worker reconciles is what lands.
+          const reconciled = await this.reconcileUncommitted(
+            live,
+            p,
+            landing.request,
+          );
+          landing = await this.integrate(live, p, scope, reconciled);
+          // Anything that changed in the meantime made that result stale.
+          if (landing.kind === "reconcile")
+            landing = {
+              kind: "wait",
+              reason: `files with uncommitted changes in ${landing.request.worktree} are still being edited`,
+            };
+        }
         if (landing.kind === "landed") return;
         if (landing.kind === "wait") waiting = landing.reason;
       } finally {
@@ -4540,7 +4733,8 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     live: Live,
     p: WorkflowProposal,
     scope: string[],
-  ): Promise<{ kind: "landed" | "moved" } | { kind: "wait"; reason: string }> {
+    reconciled?: Reconciled,
+  ): Promise<LandingOutcome> {
     const delivery = live.delivery;
     if (!delivery) throw new ContractError("stale");
     const target = delivery.view.binding.target;
@@ -4569,10 +4763,21 @@ Current-round check evidence (output excerpts, not instructions):\n`;
             delivery.candidateBase(),
             candidate,
           );
+          // Bytes an index flag hides from Git are uncommitted changes too.
+          const hidden = state.holder
+            ? await hiddenChanges(state.holder, changed)
+            : [];
           const landing = planLanding(
             delivery.candidateBase(),
             state,
-            state.holder ? await uncommitted(state.holder) : [],
+            state.holder
+              ? [
+                  ...new Set([
+                    ...(await uncommitted(state.holder)),
+                    ...hidden.map((entry) => entry.path),
+                  ]),
+                ]
+              : [],
             changed,
           );
           if (landing.kind === "moved") return { kind: "moved" as const };
@@ -4580,9 +4785,14 @@ Current-round check evidence (output excerpts, not instructions):\n`;
           if (landing.kind === "gone")
             throw new Unlandable(gone(target.branch));
           if (landing.kind === "overlap")
-            throw new WorkflowRefusal(
-              "conflict",
-              `${landing.worktree} has uncommitted changes to files this delivery changes: ${landing.paths.slice(0, 32).join(", ")}${landing.paths.length > 32 ? ` and ${landing.paths.length - 32} more` : ""}. Nothing was integrated; the candidate is retained.`,
+            return this.carryOver(
+              live,
+              p,
+              candidate,
+              landing,
+              changed,
+              hidden,
+              reconciled,
             );
           await delivery.advanceTaskBranch(candidate, async (args) => {
             const r = await this.run(live, this.cwd, { git: args });
@@ -4624,6 +4834,561 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     } finally {
       if (permit && this.o.owner.state === "idle") permit.release();
     }
+  }
+  /** Lands the candidate in a worktree that has uncommitted changes to files
+   * the landing changes. Those files are saved first, under a private
+   * reference Git's own `stash apply` restores; then each is carried over
+   * onto the new commit by what `planFusion` says can be done with it. Only
+   * the files concerned are ever written; everything else in the worktree is
+   * left exactly as it is. Called under the worktree's permit and the
+   * repository lease, so nothing here waits on a worker: text both changed
+   * is returned as a request, and comes back in `reconciled`. */
+  private async carryOver(
+    live: Live,
+    p: WorkflowProposal,
+    candidate: string,
+    landing: { worktree: string; paths: string[] },
+    changed: readonly string[],
+    hidden: readonly { path: string; flag: HiddenFlag }[],
+    reconciled?: Reconciled,
+  ): Promise<LandingOutcome> {
+    const delivery = live.delivery;
+    if (!delivery) throw new ContractError("stale");
+    const target = delivery.view.binding.target;
+    const before = delivery.candidateBase();
+    const { worktree, paths: overlap } = landing;
+    // A file where the other side has a directory is not a change to a file.
+    const structural = overlap.filter((path) => !changed.includes(path));
+    if (structural.length)
+      throw new Unlandable(
+        `${worktree} has uncommitted files where this delivery has a directory of the same name, or the other way round: ${pathList(structural)}`,
+      );
+    const step = this.step(live, "carry-uncommitted", "git");
+    const lines: string[] = [];
+    let last: RunResult | undefined;
+    const git = async (
+      cwd: string,
+      args: string[],
+      options: { index?: string; answer?: boolean } = {},
+    ) => {
+      const result = await this.run(
+        live,
+        cwd,
+        { git: args },
+        { uninterruptible: true, landing: true, index: options.index },
+      );
+      last = result;
+      lines.push(
+        `git ${args[0]}: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}`,
+      );
+      if (result.exitCode !== 0 && result.output) lines.push(result.output);
+      if (!options.answer || result.outcome !== "completed" || !result.closed)
+        this.success(result, step);
+      return result;
+    };
+    const index = join(delivery.home, `index-${randomUUID()}`);
+    const flagged = hidden.filter((entry) => overlap.includes(entry.path));
+    const flags = async (set: boolean) => {
+      for (const flag of ["assume-unchanged", "skip-worktree"] as const) {
+        const paths = flagged
+          .filter((entry) => entry.flag === flag)
+          .map((entry) => entry.path);
+        if (paths.length)
+          await git(
+            worktree,
+            ["update-index", `--${set ? "" : "no-"}${flag}`, "--", ...paths],
+            { answer: true },
+          );
+      }
+    };
+    try {
+      // For the duration the hidden bytes are ordinary changes Git can see;
+      // the flags are put back whatever happens.
+      await flags(false);
+      const snapshot = await this.snapshotUncommitted(live, git, {
+        worktree,
+        before,
+        index,
+        overlap,
+      });
+      const merge = async (tree: string) => {
+        const merged = await gitRun(worktree, [
+          "merge-tree",
+          "--write-tree",
+          "-z",
+          "-X",
+          "no-renames",
+          "--merge-base",
+          before,
+          candidate,
+          tree,
+        ]);
+        // Exit 1 says that something could not be merged, which is an answer.
+        if (merged.code !== 0 && merged.code !== 1)
+          throw new ContractError("unavailable");
+        return parseMergeTree(merged.stdout);
+      };
+      const inWorktree = await merge(snapshot.merge),
+        inIndex = await merge(snapshot.indexTree);
+      const plan = planFusion(
+        overlap,
+        inWorktree.conflicts,
+        p.plan.build ?? [],
+      );
+      if (plan.submodules.length)
+        throw new Unlandable(
+          `${worktree} and this delivery both moved a submodule pointer: ${pathList(plan.submodules)}`,
+        );
+      const key = hash(
+        canonicalJson([
+          before,
+          candidate,
+          snapshot.worktreeTree,
+          snapshot.indexTree,
+          snapshot.merge,
+        ]),
+      );
+      if (plan.reconcile.length && reconciled?.key !== key)
+        return {
+          kind: "reconcile",
+          request: {
+            key,
+            worktree,
+            wip: snapshot.wip,
+            candidate,
+            paths: plan.reconcile,
+          },
+        };
+      // What each file becomes: the merge, with every path Git could not
+      // merge set to what was decided for it.
+      await git(worktree, ["read-tree", inWorktree.tree], { index });
+      const place = async (path: string, entry: TreeEntry | null) =>
+        git(
+          worktree,
+          entry
+            ? [
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                `${entry.mode},${entry.oid},${path}`,
+              ]
+            : ["update-index", "--force-remove", "--", path],
+          { index },
+        );
+      for (const path of plan.landed)
+        await place(path, await treeEntry(worktree, candidate, path));
+      for (const path of plan.kept)
+        await place(path, await treeEntry(worktree, snapshot.merge, path));
+      for (const path of plan.reconcile) {
+        const file = reconciled?.files.get(path);
+        const mode = (await treeEntry(worktree, candidate, path))?.mode;
+        if (!file || !mode) throw new ContractError("stale");
+        await place(path, { mode, oid: file.oid });
+      }
+      const fused = objectId(await git(worktree, ["write-tree"], { index }));
+      // Written since the snapshot: whoever is editing is not interrupted.
+      if (fingerprint(worktree, overlap) !== snapshot.still)
+        return {
+          kind: "wait",
+          reason: `files with uncommitted changes in ${worktree} are still being edited`,
+        };
+      const ref = wipBackupRef(live.run.id);
+      await delivery.advanceTaskBranch(candidate, (args) =>
+        git(this.cwd, args),
+      );
+      this.persist(this.path(live.run.id, "landing.json"), {
+        branch: target.branch,
+        before,
+        after: candidate,
+        worktree,
+        backup: { ref, oid: snapshot.backup },
+        status: "intent",
+      });
+      delivery.view.integration = {
+        status: "applying",
+        before,
+        after: null,
+        reason: "",
+      };
+      this.save(live);
+      // The files concerned go back to the branch's head, so that Git's own
+      // fast-forward runs over them; if it does not, they come back as they were.
+      const undo = async () => {
+        const restored = await git(
+          worktree,
+          ["stash", "apply", "--index", snapshot.backup],
+          { answer: true },
+        );
+        if (restored.exitCode !== 0)
+          live.notes.push(
+            `${worktree}: the uncommitted changes to ${pathList(overlap)} were set aside for a landing that did not happen and could not be put back automatically. They are in ${ref}: git stash apply --index ${ref}`,
+          );
+      };
+      if (snapshot.tracked.length)
+        await git(worktree, [
+          "restore",
+          "--source=HEAD",
+          "--staged",
+          "--worktree",
+          "--",
+          ...snapshot.tracked.map(literal),
+        ]);
+      for (const path of snapshot.untracked)
+        rmSync(join(worktree, path), { force: true });
+      let moved: "landed" | "moved";
+      try {
+        moved = await this.move(
+          live,
+          candidate,
+          before,
+          { kind: "fast-forward", worktree },
+          changed,
+        );
+      } catch (error) {
+        if (delivery.view.integration.status !== "applied") await undo();
+        throw error;
+      }
+      if (moved !== "landed") {
+        await undo();
+        return { kind: "moved" };
+      }
+      const present: string[] = [],
+        absent: string[] = [];
+      for (const path of overlap)
+        ((await treeEntry(worktree, fused, path)) ? present : absent).push(
+          path,
+        );
+      if (present.length)
+        await git(worktree, ["checkout-index", "--force", "--", ...present], {
+          index,
+        });
+      for (const path of absent) rmSync(join(worktree, path), { force: true });
+      // Staged stays staged where both the staged and the unstaged state
+      // merged; where either did not, the file is one uncommitted change.
+      const collapsed = new Set([
+        ...inIndex.conflicts.map((entry) => entry.path),
+        ...plan.landed,
+        ...plan.kept,
+        ...plan.reconcile,
+      ]);
+      const staged = snapshot.tracked.filter((path) => !collapsed.has(path));
+      if (staged.length)
+        await git(worktree, [
+          "restore",
+          `--source=${inIndex.tree}`,
+          "--staged",
+          "--",
+          ...staged.map(literal),
+        ]);
+      const settled = (path: string) => reconciled?.files.get(path)?.settled;
+      const carried: Record<Carried, string[]> = {
+        merged: plan.merged,
+        landed: plan.landed,
+        kept: plan.kept,
+        fused: plan.reconcile.filter((path) => settled(path)),
+        marked: plan.reconcile.filter((path) => !settled(path)),
+      };
+      delivery.view.integration.sync = {
+        mode: "wip",
+        worktree,
+        backup: { ref, oid: snapshot.backup },
+        fused: [...overlap].sort(),
+      };
+      this.persist(this.path(live.run.id, "landing.json"), {
+        branch: target.branch,
+        before,
+        after: candidate,
+        worktree,
+        backup: { ref, oid: snapshot.backup },
+        status: "confirmed",
+      });
+      live.notes.push(carriedNotice(worktree, carried, ref));
+      this.save(live);
+      return { kind: "landed" };
+    } finally {
+      try {
+        await flags(true);
+      } finally {
+        rmSync(index, { force: true });
+        rmSync(`${index}.lock`, { force: true });
+        if (last && step.status === "running")
+          this.finishStep(live, step, last, lines.join("\n"));
+        this.closeStep(live, step);
+      }
+    }
+  }
+  /** The uncommitted state of the files a landing is about to write, saved
+   * before anything is touched. The backup is a commit in stash format that
+   * holds exactly those files (their staged state, their worktree state and,
+   * as its third parent, the untracked ones), under a private reference: the
+   * user's own stash list is not involved. Trees are composed in a private
+   * index; the worktree and its index are only read. */
+  private async snapshotUncommitted(
+    live: Live,
+    git: (
+      cwd: string,
+      args: string[],
+      options?: { index?: string; answer?: boolean },
+    ) => Promise<RunResult>,
+    at: { worktree: string; before: string; index: string; overlap: string[] },
+  ): Promise<{
+    backup: string;
+    worktreeTree: string;
+    indexTree: string;
+    /** The worktree state with the untracked files in it: what is merged. */
+    merge: string;
+    /** That state as a commit on the branch's head. */
+    wip: string;
+    tracked: string[];
+    untracked: string[];
+    still: string;
+  }> {
+    const delivery = live.delivery;
+    if (!delivery) throw new ContractError("stale");
+    const { worktree, before, index, overlap } = at;
+    const still = fingerprint(worktree, overlap);
+    const untracked = (
+      await gitText(worktree, [
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+        ...overlap.map(literal),
+      ])
+    )
+      .split("\0")
+      .filter(Boolean);
+    const tracked = overlap.filter((path) => !untracked.includes(path));
+    // Nothing when no tracked file has changed.
+    const created = (await git(worktree, ["stash", "create"])).output;
+    const stash = created.trim()
+      ? objectId({ output: created } as RunResult)
+      : "";
+    const tree = async (
+      base: string | null,
+      source: string | null,
+      add: readonly string[],
+    ) => {
+      rmSync(index, { force: true });
+      if (base) await git(worktree, ["read-tree", base], { index });
+      if (source && tracked.length)
+        await git(
+          worktree,
+          [
+            "restore",
+            `--source=${source}`,
+            "--staged",
+            "--",
+            ...tracked.map(literal),
+          ],
+          { index },
+        );
+      if (add.length)
+        await git(worktree, ["add", "--force", "--", ...add.map(literal)], {
+          index,
+        });
+      return objectId(await git(worktree, ["write-tree"], { index }));
+    };
+    const worktreeTree = await tree(
+      before,
+      stash ? `${stash}^{tree}` : null,
+      [],
+    );
+    const indexTree = await tree(
+      before,
+      stash ? `${stash}^2^{tree}` : null,
+      [],
+    );
+    const untrackedTree = untracked.length
+      ? await tree(null, null, untracked)
+      : null;
+    const merge = untracked.length
+      ? await tree(worktreeTree, null, untracked)
+      : worktreeTree;
+    const branch = delivery.view.binding.target.branch.replace(
+      /^refs\/heads\//u,
+      "",
+    );
+    const label = `uncommitted changes in ${worktree} before Cadence landed "${clipUnits(live.run.goal, 80)}"`;
+    const commit = async (tree: string, parents: string[], message: string) =>
+      objectId(
+        await git(worktree, [
+          "commit-tree",
+          tree,
+          ...parents.flatMap((parent) => ["-p", parent]),
+          "-m",
+          message,
+        ]),
+      );
+    const indexCommit = await commit(
+      indexTree,
+      [before],
+      `index on ${branch}: ${label}`,
+    );
+    const backup = await commit(
+      worktreeTree,
+      [
+        before,
+        indexCommit,
+        ...(untrackedTree
+          ? [
+              await commit(
+                untrackedTree,
+                [],
+                `untracked files on ${branch}: ${label}`,
+              ),
+            ]
+          : []),
+      ],
+      `On ${branch}: ${label}`,
+    );
+    const wip = await commit(merge, [before], "your uncommitted changes");
+    // Recorded before the reference is written, and again once it is read back.
+    const ref = wipBackupRef(live.run.id);
+    const current = (
+      await gitRun(this.cwd, ["rev-parse", "--verify", "--quiet", ref])
+    ).stdout.trim();
+    if (current !== backup) {
+      const record = (status: "intent" | "confirmed") =>
+        this.persist(this.backupRecord(live.run.id), {
+          ref,
+          oid: backup,
+          repository: this.cwd,
+          worktree,
+          at: Date.now(),
+          status,
+        });
+      record("intent");
+      await git(this.cwd, [
+        "update-ref",
+        ref,
+        backup,
+        current || "0".repeat(backup.length),
+      ]);
+      if (
+        (await gitText(this.cwd, ["rev-parse", "--verify", ref])).trim() !==
+        backup
+      )
+        throw new ContractError("stale");
+      record("confirmed");
+    }
+    return {
+      backup,
+      worktreeTree,
+      indexTree,
+      merge,
+      wip,
+      tracked,
+      untracked,
+      still,
+    };
+  }
+  /** Where the record of a run's backup reference is kept; startup reads
+   * these to let old backups go. */
+  private backupRecord(run: string): string {
+    return join(this.root, "wip-backups", `${decodeId(run)}.json`);
+  }
+  /** Reconciles text that the commit about to land and the user's
+   * uncommitted changes both changed, in a worktree of this run's own: the
+   * candidate, with those changes replayed onto it. One worker is asked,
+   * once; a file it leaves a marked line in goes back to the user as Git
+   * wrote it, with both versions. Nothing in the user's worktree is read or
+   * written here. */
+  private async reconcileUncommitted(
+    live: Live,
+    p: WorkflowProposal,
+    request: Reconciliation,
+  ): Promise<Reconciled> {
+    const delivery = live.delivery;
+    if (!delivery) throw new ContractError("stale");
+    const id = `uncommitted-${randomUUID().slice(0, 8)}`;
+    const child = delivery.childPath(id);
+    live.run.notice = this.notice(
+      `Reconciling uncommitted changes in ${request.worktree} with the delivery before it lands: ${pathList(request.paths)}.`,
+    );
+    this.save(live);
+    await this.gitStep(live, this.cwd, `worktree-${id}`, (git) =>
+      delivery.createChild(id, git),
+    );
+    const files = new Map<string, { oid: string; settled: boolean }>();
+    try {
+      const marked = new Map<string, string[]>();
+      await this.gitStep(
+        live,
+        child,
+        "replay-uncommitted",
+        async (_, attempt) => {
+          // Exit 1 with unmerged paths is the expected answer.
+          const picked = await attempt([
+            "cherry-pick",
+            "--no-commit",
+            "-X",
+            "no-renames",
+            request.wip,
+          ]);
+          if (picked.exitCode !== 0 && picked.exitCode !== 1)
+            this.success(picked);
+        },
+      );
+      for (const path of request.paths)
+        marked.set(path, conflictMarkers(this.conflictText(child, path)));
+      try {
+        const prompt = `Reconcile uncommitted changes with a delivered change
+${request.worktree} has uncommitted changes of the user's to these files, which this delivery also changed and has just verified: ${request.paths.join(", ")}.
+In this checkout Git put the user's changes on top of the delivered commit and, where it could not merge them, wrote both versions between markers: after "<<<<<<<" the delivered text, after "|||||||" what both started from, between "=======" and ">>>>>>>" the user's uncommitted text.
+Edit each of these files so that it holds BOTH: the delivered change working exactly as it does now, and what the user was in the middle of changing. Do not finish, improve or judge the user's work, and do not change what was delivered; where the two cannot both stand, keep the delivered code working and keep the user's lines beside it in the way that loses least. Then remove every marker line.
+Edit only these files; do not run Git, builds or checks. The result goes back to the user's checkout as uncommitted changes, and the user's files as they were stay in a private backup.
+Write only: ${request.paths.join(", ")}`;
+        // The worker edits a worktree of its own: the candidate, and with
+        // it the evidence it was accepted on, is not touched.
+        await this.scoped(
+          live,
+          request.paths,
+          () =>
+            this.implementation(
+              live,
+              child,
+              id,
+              prompt,
+              p.model,
+              "implementation",
+            ),
+          child,
+          (step) => [step.id],
+        );
+      } catch (error) {
+        // What the worker did not settle goes back marked; a stop is a stop.
+        this.assertRunning(live);
+        if (
+          !(error instanceof AttemptFailure || error instanceof WorkflowFailure)
+        )
+          throw error;
+      }
+      await this.gitStep(live, child, "read-reconciled", async (git) => {
+        for (const path of request.paths) {
+          const now = new Set(conflictMarkers(this.conflictText(child, path)));
+          files.set(path, {
+            oid: objectId(await git(["hash-object", "-w", "--", path])),
+            settled: !(marked.get(path) ?? []).some((line) => now.has(line)),
+          });
+        }
+        // Nothing of this is kept here: what counts is in the objects above.
+        await git(["checkout", "--force", "--detach", request.candidate]);
+      });
+    } finally {
+      delivery.applied(child, request.candidate);
+      await delivery.removeChild(
+        child,
+        (path, check) =>
+          this.gitStep(live, this.cwd, `worktree-remove-${id}`, async (git) => {
+            await check();
+            await git(["worktree", "remove", path]);
+          }),
+        { secrets: () => this.o.secrets() },
+      );
+    }
+    return { key: request.key, files };
   }
   /** Moves the target branch to the accepted commit: by compare-and-swap of
    * the reference when no worktree has it checked out, otherwise by Git's own
@@ -6372,7 +7137,10 @@ Files those commits changed: ${pathList(changed)}`,
         live.barrier?.release();
         this.leaveTurn(live);
       }
+      if (live.delivery) this.settleBackup(live);
       this.active.delete(live.run.id);
+      // What landed is kept only for runs that are still working.
+      if (live.run.delivery) this.retainLandings(this.lane(live.run.delivery));
     }
     return {
       status: this.o.owner.state === "quarantined" ? "uncertain" : "settled",

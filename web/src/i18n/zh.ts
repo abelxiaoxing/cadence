@@ -292,6 +292,8 @@ export const zh = {
   "Local integration": "本地合回",
   "Post-merge checks": "合回后检查",
   "Target branch update": "目标分支更新",
+  "Fast-forward in {worktree}; uncommitted changes to {count} files carried over, as they were in {backup}":
+    "在 {worktree} 中快进；{count} 个文件的未提交改动已带到新提交上，原样保存在 {backup}",
   "Fast-forward in {worktree}": "在 {worktree} 中快进",
   "Branch reference only; no worktree had it checked out":
     "仅移动分支引用；没有工作树检出该分支",

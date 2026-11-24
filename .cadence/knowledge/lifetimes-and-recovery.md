@@ -82,3 +82,15 @@ Live, unresponsive, foreign-host or unidentifiable holders are never reclaimed w
 Anchors: `src/service/self-heal.ts#healProjectAt`, `src/service/liveness.ts`, `test/self-heal.test.ts`, `test/service-owner.test.ts`
 
 Source: internalized from engineering/lifetimes.md, 2026-11-22
+
+### Backup references of uncommitted changes age from settlement and go by exact commit
+
+Kind: contract
+
+Why: Each `refs/cadence/wip-backup/<run-id>` has a record under `workflows-v1/wip-backups`, written before the reference and again once it is read back; settlement stamps it.
+At every start `expireBackups` deletes a reference 30 days after that, only while it still holds the recorded commit; one that holds another commit is left and its record says so, and a record that is not a backup record is moved to the recovery archive with a `storage` event.
+An interrupted landing's notice names the reference, because the files may already have been set aside.
+
+Anchors: `src/service/workflows.ts#expireBackups`, `src/service/workflows.ts#settleBackup`, `src/service/workflow-landing.ts#wipBackupRef`, `test/workflow-backup-expiry.test.ts`
+
+Source: this delivery, 2026-11-24

@@ -1,10 +1,18 @@
 /** Where a verified delivery commit goes: the target branch as Git has it
- * right now, and the worktree that has it checked out, if one does. Observing
- * and deciding are separate so the decision is a pure function of what was
- * seen. Nothing here verifies a candidate, resolves a conflict or moves a ref. */
-import { existsSync, readFileSync } from "node:fs";
+ * right now, and the worktree that has it checked out, if one does; and, when
+ * that worktree has uncommitted changes to files the landing changes, what
+ * becomes of each of them. Observing and deciding are separate so every
+ * decision is a pure function of what was seen. Nothing here verifies a
+ * candidate, reconciles a conflict or moves a ref. */
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ContractError } from "./contracts/core.ts";
+import type { WorkflowBuild } from "./contracts/workflow.ts";
+import {
+  classifyConflicts,
+  parseUnmerged,
+  type Unmerged,
+} from "./workflow-derived.ts";
 import { changedPaths, gitRun, gitText, overlapping } from "./workflow-git.ts";
 
 export interface Worktree {
@@ -136,4 +144,174 @@ export function planLanding(
   return paths.length
     ? { kind: "overlap", worktree: state.holder, paths }
     : { kind: "fast-forward", worktree: state.holder };
+}
+
+/** Where a run's backup of uncommitted changes is kept: a private reference
+ * holding a commit in stash format, so Git's own `stash apply` restores it. */
+export function wipBackupRef(run: string): string {
+  return `refs/cadence/wip-backup/${run}`;
+}
+/** The index flags that hide a tracked file's real bytes from Git. */
+export type HiddenFlag = "assume-unchanged" | "skip-worktree";
+/** Tracked paths among `paths` that carry such a flag and whose bytes in the
+ * worktree are not what the index has: Git reports nothing for them, yet
+ * refuses to fast-forward over them. */
+export async function hiddenChanges(
+  worktree: string,
+  paths: readonly string[],
+): Promise<{ path: string; flag: HiddenFlag }[]> {
+  if (!paths.length) return [];
+  const literal = paths.map((path) => `:(literal)${path}`);
+  const flagged = (
+    await gitText(worktree, ["ls-files", "-v", "-z", "--", ...literal])
+  )
+    .split("\0")
+    .flatMap((row): { path: string; flag: HiddenFlag }[] =>
+      row.startsWith("S ")
+        ? [{ path: row.slice(2), flag: "skip-worktree" }]
+        : /^[a-z] /u.test(row)
+          ? [{ path: row.slice(2), flag: "assume-unchanged" }]
+          : [],
+    );
+  const changed: { path: string; flag: HiddenFlag }[] = [];
+  for (const entry of flagged) {
+    const staged = (
+      await gitText(worktree, [
+        "ls-files",
+        "-s",
+        "-z",
+        "--",
+        `:(literal)${entry.path}`,
+      ])
+    ).split(" ")[1];
+    const actual = await gitRun(worktree, ["hash-object", "--", entry.path]);
+    // A file that is gone, or cannot be hashed, is not what the index has.
+    if (actual.code !== 0 || actual.stdout.trim() !== staged)
+      changed.push(entry);
+  }
+  return changed;
+}
+/** What the listed files look like on disk, cheaply: enough to notice that
+ * one of them was written between two looks. */
+export function fingerprint(
+  worktree: string,
+  paths: readonly string[],
+): string {
+  return JSON.stringify(
+    [...paths].sort().map((path) => {
+      try {
+        const stat = lstatSync(join(worktree, path), { bigint: true });
+        return [
+          path,
+          String(stat.size),
+          String(stat.mtimeNs),
+          String(stat.ino),
+        ];
+      } catch {
+        return [path, null];
+      }
+    }),
+  );
+}
+
+/** `git merge-tree --write-tree -z`: the resulting tree, then one entry per
+ * side of every path that could not be merged, then messages. */
+export function parseMergeTree(output: string): {
+  tree: string;
+  conflicts: Unmerged[];
+} {
+  const fields = output.split("\0");
+  const tree = fields[0] ?? "";
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(tree))
+    throw new Error("Unexpected merge-tree output");
+  const end = fields.indexOf("", 1);
+  return {
+    tree,
+    conflicts: parseUnmerged(
+      fields.slice(1, end < 0 ? fields.length : end).join("\0"),
+    ),
+  };
+}
+
+/** What became of a file the user had uncommitted changes to while a
+ * delivery that changes it landed. */
+export type Carried =
+  /** Both changes are there, merged by Git. */
+  | "merged"
+  /** A build derives it: the landed version stands. */
+  | "landed"
+  /** The two cannot be merged (one side deleted it, or it is not text): the
+   * user's version stays, as an uncommitted change against the landed one. */
+  | "kept"
+  /** A worker reconciled the two versions. */
+  | "fused"
+  /** Both versions are in the file, between markers, for the user. */
+  | "marked";
+export interface FusionPlan {
+  merged: string[];
+  landed: string[];
+  kept: string[];
+  /** Text both sides changed: a worker is asked to reconcile these. */
+  reconcile: string[];
+  /** A submodule pointer both moved: nothing here can carry that over. */
+  submodules: string[];
+}
+/** Sorts the paths a landing and the user's uncommitted changes share by
+ * what can be done about each. `conflicts` is what merging the user's
+ * worktree state onto the landed commit left unmerged (the landing as
+ * "ours", the user's changes as "theirs"). */
+export function planFusion(
+  overlap: readonly string[],
+  conflicts: readonly Unmerged[],
+  builds: readonly WorkflowBuild[],
+): FusionPlan {
+  const gitlink = (entry: Unmerged) =>
+    [entry.base, entry.ours, entry.theirs].some(
+      (side) => side?.mode === "160000",
+    );
+  const sorted = classifyConflicts(
+    conflicts.filter((entry) => !gitlink(entry)),
+    builds,
+  );
+  const paths = (entries: readonly Unmerged[]) =>
+    entries.map((entry) => entry.path);
+  const plan = {
+    // What a build writes is its to write again, values included.
+    landed: paths([...sorted.derived, ...sorted.refresh]),
+    kept: paths(sorted.other),
+    reconcile: paths(sorted.text),
+    submodules: paths(conflicts.filter(gitlink)),
+  };
+  const settled = new Set(Object.values(plan).flat());
+  return {
+    merged: overlap.filter((path) => !settled.has(path)).sort(),
+    ...plan,
+  };
+}
+/** The part of a delivery's result that tells the user what was done with
+ * their uncommitted changes, and how to have them back as they were. */
+export function carriedNotice(
+  worktree: string,
+  carried: Readonly<Record<Carried, readonly string[]>>,
+  backup: string,
+): string {
+  const list = (paths: readonly string[]) =>
+    `${paths.slice(0, 16).join(", ")}${paths.length > 16 ? ` and ${paths.length - 16} more` : ""}`;
+  const all = Object.values(carried).flat();
+  const parts = [
+    carried.merged.length ? `merged with them: ${list(carried.merged)}` : "",
+    carried.fused.length
+      ? `reconciled with them by a worker: ${list(carried.fused)}`
+      : "",
+    carried.marked.length
+      ? `left for you with both versions between conflict markers: ${list(carried.marked)}`
+      : "",
+    carried.kept.length
+      ? `kept as your uncommitted version, because the two could not be merged (the delivered version is in HEAD): ${list(carried.kept)}`
+      : "",
+    carried.landed.length
+      ? `replaced by the delivered version, because a build derives them: ${list(carried.landed)}`
+      : "",
+  ].filter(Boolean);
+  return `${worktree} had uncommitted changes to ${all.length} file${all.length === 1 ? "" : "s"} this delivery changes; they were carried over onto the new commit — ${parts.join("; ")}. Those files as they were before are in ${backup}: git show ${backup}:<file> prints one, and after git restore --source=HEAD --staged --worktree -- <files>, git stash apply --index ${backup} puts them back for Git to merge.`;
 }

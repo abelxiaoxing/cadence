@@ -182,7 +182,13 @@ The plan chooses one delivery policy:
   Failed or canceled work leaves actual edits in place; this is not transactional application or a sandbox.
 
 A local-merge plan works from committed history: uncommitted changes in your checkout are not its input and do not stop it from starting.
-When it lands, uncommitted and staged changes to other files are kept as they are by Git's own fast-forward; uncommitted changes to the files the delivery changes leave the verified result on the task branch instead.
+When it lands, uncommitted and staged changes to other files are kept as they are by Git's own fast-forward, and no other file of yours is touched.
+Uncommitted changes to the very files the delivery changes are carried over onto the new commit instead of stopping it.
+Those files are first saved as they are (staged state, worktree state and untracked files of the same name) in a commit under the private reference `refs/cadence/wip-backup/<run-id>`; your own stash list is not used.
+Then each is brought forward: where Git can merge your change with the delivered one it does, and what you had staged stays staged; a file a declared build derives takes the delivered version; a file one side deleted, or that is not text, stays as you had it, as an uncommitted change against the delivered one; and text both changed is reconciled by a worker in a copy of its own, never in your checkout, with a file it cannot settle handed back to you holding both versions between Git's conflict markers.
+The result names every such file and what was done with it.
+`git show refs/cadence/wip-backup/<run-id>:<file>` prints a file as it was, and `git stash apply --index refs/cadence/wip-backup/<run-id>` puts all of them back once those files have no uncommitted changes; the reference is deleted, by its exact commit, 30 days after the run settled.
+Bytes that `git update-index --assume-unchanged` or `--skip-worktree` hide are carried over the same way, and the flag is left on.
 A write path naming a directory covers the files below it; in Git, working-copy edits outside the declared writes fail the run (the edits stay).
 A target branch that moved while the delivery worked, through another delivery or your own commits, is followed: the delivery's single commit is replayed onto the branch's current head and checked and reviewed again as the commit that will land.
 Conflicts are settled in three layers, the cheapest first.
@@ -192,8 +198,8 @@ Lines Git cannot merge go to a worker that is given both versions and what the b
 If that does not produce something that passes, recovery may give the merge up and do the work again on the branch as it is now.
 The merged commit is then checked with this agreement's checks and with the checks of every delivery that landed on the same source files in the meantime, and the review reads what the branch gained (the `changes` tool's `frontier` scope) to confirm none of it was dropped.
 `AGENTS.md` files changed on the branch in the meantime are put before that review, which judges the candidate against their current text.
-Verified work is never thrown away: when nothing can be put on the branch (it was deleted, or no merge with what it gained passes verification), the last commit that passed checks and review is delivered on the task branch, the run completes, and its result says first that it was not merged, why, and the `git merge` command that takes it in.
-Cadence never resets, stashes, force-pushes or silently cleans uncertain worktrees.
+Verified work is never thrown away: when nothing can be put on the branch (it was deleted, no merge with what it gained passes verification, or your checkout has an uncommitted submodule pointer or a file where the delivery has a directory of the same name), the last commit that passed checks and review is delivered on the task branch, the run completes, and its result says first that it was not merged, why, and the `git merge` command that takes it in.
+Cadence never force-pushes, never uses your stash list and never silently cleans an uncertain worktree; the only files of yours it rewrites are the ones a landing changes that you had uncommitted changes to, and only after saving them under the private reference above.
 Ignored generated Markdown remains ignored and is published without forcing it into Git.
 The named task branch is kept.
 Only owned worktrees at the delivered commit, after it landed and without any residue, are removed with plain `git worktree remove`.
@@ -206,7 +212,7 @@ A local-merge workflow holds a checkout only for a `target` setup command and fo
 When no worktree has that branch checked out, for example because you switched your checkout to another branch, the branch reference alone is moved and no working file is touched.
 Nothing is checked in your checkout: every declared check runs on the exact commit, in the delivery's own worktree.
 Deliveries to the same target branch land one at a time, in the order they became ready; deliveries to different branches never wait on one another.
-A branch you are rebasing, or whose checkout has an unfinished merge, is waited for without a deadline and landed once it is free.
+A branch you are rebasing, a checkout with an unfinished merge, and files you are saving at that very moment are waited for without a deadline; the delivery lands once they are free.
 Ordinary browser conversations do not wait for this access.
 Like separate Pi terminals, they can edit the same files as each other or as a workflow.
 Coordinate overlapping edits yourself: a delivery lands through Git and never overwrites uncommitted work, but ordinary conversations edit files directly and can overwrite one another.

@@ -8,6 +8,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -632,4 +633,202 @@ it("a branch the user is rebasing is waited for; landing in between would strand
     "upstream",
   ]);
   expect(readFileSync(join(r.root, "b.txt"), "utf8")).toBe("B\n");
+});
+
+/** A delivery that changed a.txt (line two), b.txt (its last line), gone.txt
+ * and added new.txt, verified and ready, while the user's checkout still has
+ * the branch checked out. */
+const ready = async (
+  options: Parameters<ReturnType<typeof repository>["delivery"]>[1] = {},
+) => {
+  const r = repository();
+  writeFileSync(join(r.root, "b.txt"), "b1\nb2\nb3\nb4\nb5\n");
+  writeFileSync(join(r.root, "c.txt"), "c\n");
+  writeFileSync(join(r.root, "gone.txt"), "to be deleted\n");
+  r.git("add", "-A");
+  r.git("commit", "-qm", "more files");
+  const x = r.delivery("change two", {
+    scope: ["a.txt", "b.txt", "gone.txt", "new.txt"],
+    ...options,
+  });
+  await x.create();
+  writeFileSync(join(x.cwd, "a.txt"), "one\nTWO\nthree\nfour\nfive\n");
+  writeFileSync(join(x.cwd, "b.txt"), "b1\nb2\nb3\nb4\nB5 delivered\n");
+  writeFileSync(join(x.cwd, "gone.txt"), "changed by the delivery\n");
+  writeFileSync(join(x.cwd, "new.txt"), "added by the delivery\n");
+  await x.accept();
+  const backup = `refs/cadence/wip-backup/${x.id}`;
+  /** `git status --porcelain`, column for column. */
+  const status = (cwd = r.root) =>
+    spawnSync("git", ["status", "--porcelain"], { cwd, encoding: "utf8" })
+      .stdout.split("\n")
+      .filter(Boolean);
+  const put = (path: string, text: string, cwd = r.root) =>
+    writeFileSync(join(cwd, path), text);
+  const read = (path: string, cwd = r.root) =>
+    readFileSync(join(cwd, path), "utf8");
+  return { r, x, backup, status, put, read };
+};
+
+it("uncommitted changes to the files a delivery changes are carried over: staged stays staged, unstaged unstaged, and no other file is touched", async () => {
+  const { r, x, backup, status, put, read } = await ready();
+  // a.txt: an unstaged edit elsewhere in the file.
+  put("a.txt", "one\ntwo\nthree\nfour\nFIVE, mine\n");
+  // b.txt: one line staged, another not.
+  put("b.txt", "b1, staged\nb2\nb3\nb4\nb5\n");
+  r.git("add", "b.txt");
+  put("b.txt", "b1, staged\nb2\nb3, unstaged\nb4\nb5\n");
+  // c.txt is none of the delivery's business.
+  put("c.txt", "c, edited by me\n");
+  const untouched = statSync(join(r.root, "c.txt"), { bigint: true }).mtimeNs;
+  const stashes = r.git("stash", "list");
+  await x.land();
+  expect(r.git("rev-parse", "HEAD")).toBe(x.live.run.mergedCommit);
+  expect(status()).toEqual([" M a.txt", "MM b.txt", " M c.txt"]);
+  // Both the delivery's change and mine, in the worktree and in the index.
+  expect(read("a.txt")).toBe("one\nTWO\nthree\nfour\nFIVE, mine\n");
+  expect(r.git("show", ":b.txt")).toBe("b1, staged\nb2\nb3\nb4\nB5 delivered");
+  expect(read("b.txt")).toBe(
+    "b1, staged\nb2\nb3, unstaged\nb4\nB5 delivered\n",
+  );
+  expect(read("c.txt")).toBe("c, edited by me\n");
+  expect(statSync(join(r.root, "c.txt"), { bigint: true }).mtimeNs).toBe(
+    untouched,
+  );
+  // No worker was needed, and the user's own stash list was not used.
+  expect(x.asked.map((a) => a.kind)).toEqual(["review"]);
+  expect(r.git("stash", "list")).toBe(stashes);
+  expect(x.view.integration).toMatchObject({
+    status: "applied",
+    sync: {
+      mode: "wip",
+      worktree: r.root,
+      backup: { ref: backup, oid: r.git("rev-parse", backup) },
+      fused: ["a.txt", "b.txt"],
+    },
+  });
+  expect(x.live.notes.join("\n")).toContain(
+    `${r.root} had uncommitted changes to 2 files this delivery changes; they were carried over onto the new commit — merged with them: a.txt, b.txt.`,
+  );
+  // The backup holds exactly those files as they were, and Git restores it.
+  const before = join(r.home, "before");
+  r.git("worktree", "add", "-q", "--detach", before, `${backup}^1`);
+  r.gitAt(before, "stash", "apply", "--index", backup);
+  expect(status(before)).toEqual([" M a.txt", "MM b.txt"]);
+  expect(read("a.txt", before)).toBe("one\ntwo\nthree\nfour\nFIVE, mine\n");
+  expect(r.gitAt(before, "show", ":b.txt")).toBe("b1, staged\nb2\nb3\nb4\nb5");
+});
+
+it("the same lines changed by the user and the delivery are reconciled by a worker in a copy; the result is written back and the earlier version is restorable", async () => {
+  const { r, x, backup, status, put, read } = await ready();
+  put("a.txt", "one\ntwo, half done\nthree\nfour\nfive\n");
+  // My own untracked file where the delivery adds one of the same name.
+  put("new.txt", "my own notes\n");
+  let copy = "";
+  let seen = "";
+  x.hooks.repair = ({ cwd, prompt }) => {
+    copy = cwd;
+    expect(prompt).toContain(
+      `${r.root} has uncommitted changes of the user's to these files`,
+    );
+    seen = read("a.txt", cwd);
+    put("a.txt", "one\nTWO, half done\nthree\nfour\nfive\n", cwd);
+    put("new.txt", "added by the delivery\nmy own notes\n", cwd);
+  };
+  await x.land();
+  // The worker never worked in the user's checkout, and its copy is gone.
+  expect(copy).not.toBe(r.root);
+  expect(copy.startsWith(r.state)).toBe(true);
+  expect(existsSync(copy)).toBe(false);
+  expect(seen).toContain("<<<<<<< HEAD\nTWO\n");
+  expect(seen).toContain("=======\ntwo, half done\n>>>>>>> ");
+  expect(seen).toContain("(your uncommitted changes)");
+  expect(r.git("rev-parse", "HEAD")).toBe(x.live.run.mergedCommit);
+  // What was delivered is committed; what I had is uncommitted on top of it.
+  expect(r.git("show", "HEAD:a.txt")).toBe("one\nTWO\nthree\nfour\nfive");
+  expect(read("a.txt")).toBe("one\nTWO, half done\nthree\nfour\nfive\n");
+  expect(read("new.txt")).toBe("added by the delivery\nmy own notes\n");
+  expect(status()).toEqual([" M a.txt", " M new.txt"]);
+  expect(x.live.notes.join("\n")).toContain(
+    "reconciled with them by a worker: a.txt, new.txt",
+  );
+  // My files exactly as they were, the untracked one included.
+  expect(r.git("show", `${backup}:a.txt`)).toBe(
+    "one\ntwo, half done\nthree\nfour\nfive",
+  );
+  const before = join(r.home, "before");
+  r.git("worktree", "add", "-q", "--detach", before, `${backup}^1`);
+  r.gitAt(before, "stash", "apply", "--index", backup);
+  expect(status(before)).toEqual([" M a.txt", "?? new.txt"]);
+  expect(read("new.txt", before)).toBe("my own notes\n");
+  // The candidate's own acceptance was not disturbed by that worker.
+  expect(x.view.acceptance?.candidate).toBe(x.live.run.mergedCommit);
+});
+
+it("a file the worker leaves a marked line in goes back as Git wrote it; what cannot be merged stays as the user had it", async () => {
+  const { r, x, status, put, read } = await ready();
+  put("a.txt", "one\ntwo, half done\nthree\nfour\nfive\n");
+  // I deleted a file the delivery changed.
+  rmSync(join(r.root, "gone.txt"));
+  x.hooks.repair = () => {};
+  await x.land();
+  expect(r.git("rev-parse", "HEAD")).toBe(x.live.run.mergedCommit);
+  expect(read("a.txt")).toContain("<<<<<<< HEAD\nTWO\n");
+  expect(read("a.txt")).toContain("two, half done\n>>>>>>> ");
+  expect(status()).toEqual([" M a.txt", " D gone.txt"]);
+  const notice = x.live.notes.join("\n");
+  expect(notice).toContain(
+    "left for you with both versions between conflict markers: a.txt",
+  );
+  expect(notice).toContain(
+    "kept as your uncommitted version, because the two could not be merged (the delivered version is in HEAD): gone.txt",
+  );
+});
+
+it("an uncommitted change to a file a build derives is replaced by the delivered one, and bytes an index flag hides are carried over with the flag left on", async () => {
+  const { r, x, backup, status, put, read } = await ready({
+    build: [{ name: "bundle", command: "true", outputs: ["b.txt"] }],
+  });
+  // b.txt is derived: my local bytes there are not something to merge.
+  put("b.txt", "b1\nb2\nb3\nb4\nlocal build\n");
+  // a.txt has local bytes Git was told not to look at.
+  r.git("update-index", "--assume-unchanged", "a.txt");
+  put("a.txt", "one\ntwo\nthree\nfour\nFIVE, hidden\n");
+  expect(status()).toEqual([" M b.txt"]);
+  await x.land();
+  expect(r.git("rev-parse", "HEAD")).toBe(x.live.run.mergedCommit);
+  expect(read("b.txt")).toBe("b1\nb2\nb3\nb4\nB5 delivered\n");
+  expect(read("a.txt")).toBe("one\nTWO\nthree\nfour\nFIVE, hidden\n");
+  // Still hidden, as the user had set it.
+  expect(r.git("ls-files", "-v", "a.txt")).toBe("h a.txt");
+  expect(status()).toEqual([]);
+  expect(x.live.notes.join("\n")).toContain(
+    "replaced by the delivered version, because a build derives them: b.txt",
+  );
+  expect(r.git("show", `${backup}:b.txt`)).toBe("b1\nb2\nb3\nb4\nlocal build");
+  expect(r.git("show", `${backup}:a.txt`)).toContain("FIVE, hidden");
+});
+
+it("files that are written while the landing looks at them are waited for, not overwritten", async () => {
+  const { r, x, put, read } = await ready();
+  put("a.txt", "one\ntwo\nthree\nfour\nFIVE, mine\n");
+  // Somebody saves the file again between the snapshot and the landing.
+  const snapshot = x.engine.snapshotUncommitted.bind(x.engine);
+  let snapshots = 0;
+  x.engine.snapshotUncommitted = async (...args: unknown[]) => {
+    const taken = await snapshot(...args);
+    if (++snapshots === 1)
+      put("a.txt", "one\ntwo\nthree\nfour\nFIVE, mine, and more\n");
+    return taken;
+  };
+  const waits: string[] = [];
+  x.engine.pause = async () => {
+    waits.push(x.live.run.notice);
+  };
+  await x.land();
+  expect(waits).toHaveLength(1);
+  expect(waits[0]).toContain("are still being edited");
+  // Nothing was lost: the later save is what was carried over.
+  expect(read("a.txt")).toBe("one\nTWO\nthree\nfour\nFIVE, mine, and more\n");
+  expect(r.git("rev-parse", "HEAD")).toBe(x.live.run.mergedCommit);
 });

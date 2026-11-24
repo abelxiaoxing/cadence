@@ -981,7 +981,7 @@ it("a compare-and-swap that loses to another writer takes the new head in and la
   expect(seam.refs.get(BRANCH)).toBe(f.run.mergedCommit);
 });
 
-it("uncommitted changes to other files do not stop a fast-forward; changes to the same files leave the result on the task branch", async () => {
+it("uncommitted changes to other files do not stop a fast-forward; changes to the same files are carried over, with a worker asked in between where text has to be reconciled", async () => {
   const other = fixture("zero-edit-learn");
   seam.trees.get(other.root)!.dirty.add("notes.txt");
   await other.execute();
@@ -989,18 +989,64 @@ it("uncommitted changes to other files do not stop a fast-forward; changes to th
 
   const same = fixture("zero-edit-learn");
   seam.trees.get(same.root)!.dirty.add("a.txt");
+  const attempts: [string[], string | undefined][] = [];
+  const during: unknown[] = [];
+  // The mechanics against a real checkout are in merge-queue-delivery.test.ts.
+  same.engine.carryOver = async (
+    _live: unknown,
+    _p: unknown,
+    candidate: string,
+    landing: { worktree: string; paths: string[] },
+    changed: string[],
+    _hidden: unknown,
+    reconciled?: { key: string },
+  ) => {
+    attempts.push([landing.paths, reconciled?.key]);
+    // Text both changed: asked for first, then stale once, then used.
+    if (!reconciled || attempts.length === 2)
+      return {
+        kind: "reconcile",
+        request: {
+          key: `state-${attempts.length}`,
+          worktree: landing.worktree,
+          wip: "w".repeat(40),
+          candidate,
+          paths: landing.paths,
+        },
+      };
+    return {
+      kind: await same.engine.move(
+        same.live,
+        candidate,
+        same.base,
+        { kind: "fast-forward", worktree: landing.worktree },
+        changed,
+      ),
+    };
+  };
+  same.engine.reconcileUncommitted = async (
+    _live: unknown,
+    _p: unknown,
+    request: { key: string },
+  ) => {
+    // The branch is kept still while the worker works.
+    during.push(same.live.turn);
+    return { key: request.key, files: new Map() };
+  };
   await same.execute();
-  expect(same.events.some((e) => e.startsWith("land"))).toBe(false);
-  expect(seam.refs.get(BRANCH)).toBe(same.base);
-  // Verified work is not thrown away: it is on the task branch instead.
-  expect(same.d.integration).toMatchObject({
-    status: "branch",
-    reason: expect.stringContaining(
-      "has uncommitted changes to files this delivery changes: a.txt",
-    ),
-  });
-  expect(seam.refs.get(same.d.taskBranch)).toBe(same.d.candidate);
-  expect(same.cleanup).not.toHaveBeenCalled();
+  expect(attempts).toEqual([
+    [["a.txt"], undefined],
+    // The state had changed by the time the worker was done: waited, redone.
+    [["a.txt"], "state-1"],
+    [["a.txt"], undefined],
+    [["a.txt"], "state-3"],
+  ]);
+  expect(during).toHaveLength(2);
+  expect(during.every(Boolean)).toBe(true);
+  expect(same.events.filter((e) => e === "wait")).toHaveLength(1);
+  expect(same.events.filter((e) => e === "land:ff")).toHaveLength(1);
+  expect(same.d.integration.status).toBe("applied");
+  expect(seam.refs.get(BRANCH)).toBe(same.run.mergedCommit);
 });
 
 it("a branch that cannot take a landing just now is waited for, without holding its turn, and then landed", async () => {

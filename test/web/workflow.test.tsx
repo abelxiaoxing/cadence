@@ -10,6 +10,7 @@ import type {
   WorkflowRun,
   WorkflowStep,
 } from "../../src/service/contracts/workflow.ts";
+import { decodeDeliveryObservation } from "../../src/service/contracts/workflow.ts";
 import { deliveryObservation } from "../../src/service/workflow-delivery.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import {
@@ -1096,6 +1097,60 @@ it("delivery UI distinguishes an accepted candidate from an applied merge and na
   );
   d.integration.sync = { mode: "fast-forward", worktree: "/fixture" };
   expect(card("completed")).toContain("Fast-forward in /fixture");
+  // Uncommitted changes to the same files were carried over: where they are
+  // as they were is part of the delivery's own record.
+  const backup = "refs/cadence/wip-backup/0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10";
+  const carried = {
+    ...d,
+    integration: {
+      ...d.integration,
+      sync: {
+        mode: "wip" as const,
+        worktree: "/fixture",
+        backup: { ref: backup, oid: "c".repeat(40) },
+        fused: ["a.txt", "b.txt"],
+      },
+    },
+  };
+  expect(decodeDeliveryObservation(carried)).toEqual(carried);
+  expect(
+    renderToStaticMarkup(
+      <LocaleProvider initial="en">
+        <DeliveryDetails delivery={carried} status="completed" />
+      </LocaleProvider>,
+    ),
+  ).toContain(
+    `Fast-forward in /fixture; uncommitted changes to 2 files carried over, as they were in ${backup}`,
+  );
+  expect(
+    renderToStaticMarkup(
+      <LocaleProvider initial="zh">
+        <DeliveryDetails delivery={carried} status="completed" />
+      </LocaleProvider>,
+    ),
+  ).toContain(`2 个文件的未提交改动已带到新提交上，原样保存在 ${backup}`);
+  // A backup only ever belongs to that mode, under that private namespace.
+  for (const sync of [
+    {
+      mode: "fast-forward",
+      worktree: "/fixture",
+      backup: carried.integration.sync.backup,
+      fused: [],
+    },
+    { mode: "wip", worktree: "/fixture" },
+    {
+      mode: "wip",
+      worktree: "/fixture",
+      backup: { ref: "refs/heads/main", oid: "c".repeat(40) },
+      fused: [],
+    },
+  ])
+    expect(() =>
+      decodeDeliveryObservation({
+        ...d,
+        integration: { ...d.integration, sync },
+      }),
+    ).toThrow();
   const zhLanded = renderToStaticMarkup(
     <LocaleProvider initial="zh">
       <DeliveryDetails delivery={d} status="completed" />

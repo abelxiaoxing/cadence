@@ -237,8 +237,16 @@ export interface DeliveryObservation {
     after: string | null;
     reason: string;
     /** How the target branch was moved, once it was: by reference alone when
-     * no worktree had it checked out, otherwise by fast-forward there. */
-    sync?: { mode: "ref" | "fast-forward"; worktree: string | null };
+     * no worktree had it checked out, otherwise by fast-forward there. `wip`
+     * is a fast-forward in a worktree that had uncommitted changes to files
+     * the landing changes: `fused` are those files, carried over onto the new
+     * commit, and `backup` the private reference that holds them as they were. */
+    sync?: {
+      mode: "ref" | "fast-forward" | "wip";
+      worktree: string | null;
+      backup?: { ref: string; oid: string };
+      fused?: string[];
+    };
   };
   /** Retained runs only: checks once rerun in the target checkout. */
   postChecks?: "not-run" | "passed" | "failed" | "unknown";
@@ -1536,10 +1544,32 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
       ...(synced
         ? {
             sync: (() => {
-              const s = closed(i.sync, ["mode", "worktree"]);
+              const carried = Object.hasOwn((i.sync ?? {}) as object, "backup");
+              const s = closed(i.sync, [
+                "mode",
+                "worktree",
+                ...(carried ? ["backup", "fused"] : []),
+              ]);
+              const mode = oneOf(s.mode, [
+                "ref",
+                "fast-forward",
+                "wip",
+              ] as const);
+              if ((mode === "wip") !== carried)
+                throw new Error("Inconsistent delivery evidence");
+              const b = carried ? closed(s.backup, ["ref", "oid"]) : undefined;
+              const ref = b ? text(b.ref, 128, true) : "";
+              if (b && !/^refs\/cadence\/wip-backup\/[0-9a-f-]{36}$/u.test(ref))
+                throw new Error("Inconsistent delivery evidence");
               return {
-                mode: oneOf(s.mode, ["ref", "fast-forward"] as const),
+                mode,
                 worktree: nullable(s.worktree, deliveryPath),
+                ...(b
+                  ? {
+                      backup: { ref, oid: gitOid(b.oid) },
+                      fused: list(s.fused, 4096, (path) => workflowPath(path)),
+                    }
+                  : {}),
               };
             })(),
           }
@@ -1568,7 +1598,7 @@ export function readableDelivery(
   if (!binding) return "";
   const t = binding.target;
   if (binding.policy === "task-branch-v3")
-    return `Target: ${t.branch}${t.head ? ` @ ${t.head}` : " (its head when the run is admitted is the baseline)"}\nTarget checkout: ${t.checkoutRoot}\nExecution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Any number of conversations may deliver at once, each in its own candidate; nothing they do waits on your checkout.\nAcceptance: seal a single-parent delivery commit, run declared checks and independent Agent review on that exact OID, in the worktree only. When the target branch has moved, through another delivery or your own commits, the sealed commit is replayed onto its current head: declared build outputs are rebuilt, never merged; lines Git cannot merge are resolved by a worker that has to keep what both sides do; and the result is checked and reviewed again, together with the checks of deliveries that changed the same files in the meantime. That review also covers changed AGENTS.md rules and whether the branch's own changes to those files survive.\nDelivery: deliveries to one branch land one at a time in the order they became ready. The branch is moved to the exact verified OID: by reference alone when no worktree has it checked out, otherwise by fast-forward in that worktree, which keeps your uncommitted changes to other files; uncommitted changes to the same files retain the candidate. A branch that is being rebased is waited for. When no verified commit can be put on the branch (it was deleted, or nothing that merges with what it gained passes verification), the last verified commit is delivered on the task branch instead and the result says first that it was not merged. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
+    return `Target: ${t.branch}${t.head ? ` @ ${t.head}` : " (its head when the run is admitted is the baseline)"}\nTarget checkout: ${t.checkoutRoot}\nExecution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Any number of conversations may deliver at once, each in its own candidate; nothing they do waits on your checkout.\nAcceptance: seal a single-parent delivery commit, run declared checks and independent Agent review on that exact OID, in the worktree only. When the target branch has moved, through another delivery or your own commits, the sealed commit is replayed onto its current head: declared build outputs are rebuilt, never merged; lines Git cannot merge are resolved by a worker that has to keep what both sides do; and the result is checked and reviewed again, together with the checks of deliveries that changed the same files in the meantime. That review also covers changed AGENTS.md rules and whether the branch's own changes to those files survive.\nDelivery: deliveries to one branch land one at a time in the order they became ready. The branch is moved to the exact verified OID: by reference alone when no worktree has it checked out, otherwise by fast-forward in that worktree, which keeps your uncommitted changes to other files. Uncommitted changes to the same files are first saved under a private reference (refs/cadence/wip-backup/<run-id>, restorable with git stash apply), then carried over onto the new commit: merged where Git can, reconciled by a worker in an isolated copy where it cannot, and replaced where a build derives the file. A branch that is being rebased, or files that are being edited at that moment, are waited for. When no verified commit can be put on the branch (it was deleted, or nothing that merges with what it gained passes verification), the last verified commit is delivered on the task branch instead and the result says first that it was not merged. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
   if (binding.policy === "task-branch-v2")
     return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.\nAcceptance: seal a single-parent delivery commit on top of the verified target frontier, run declared checks and independent Agent review on that exact OID. A verified, non-overlapping sibling delivery may be incorporated before sealing, followed by fresh checks and review.\nDelivery: advance the task branch and fast-forward only into the bound target with that exact signed-off OID. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
   return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: new cadence/<goal>-<run-id> branch and one stable isolated worktree after approval. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.\nAcceptance: checks and automatic Agent review of the exact candidate. A verified, non-overlapping sibling delivery may be merged into the isolated candidate, followed by fresh checks and review.\nDelivery: serialized fast-forward only into the bound target at its approved, verified-sibling or own last confirmed baseline. Keep the task branch; remove only owned worktrees without any residue, including ignored files. No source/profile/dependency copying, push or deployment.`;
@@ -1612,7 +1642,7 @@ export function readableDeliveryRun(run: WorkflowRun): string {
     d.checkpointCount !== undefined
       ? `\nLast confirmed checkpoint: ${d.lastCheckpoint ?? labels.missingCandidate}${d.checkpointCount ? ` (${d.checkpointCount} total)` : ""}`
       : "";
-  return `Task branch: ${d.taskBranch}\nWorktree: ${d.worktreeRoot}\nTarget: ${d.binding.target.branch} @ ${d.binding.target.head}\nPreparation: ${labels.preparation}${checkpointLine}\nCandidate: ${d.candidate ?? labels.missingCandidate}\nAcceptance: ${d.acceptance ? `checks + automatic Agent review of ${d.acceptance.candidate}` : labels.missingCandidate}\nIntegration: ${labels.integration}${d.integration.after ? ` @ ${d.integration.after}` : ""}${d.integration.sync ? ` (${d.integration.sync.worktree ? `fast-forward in ${d.integration.sync.worktree}` : "branch reference only; no worktree had it checked out"})` : ""}${d.integration.reason ? ` — ${d.integration.reason}` : ""}${d.postChecks === undefined ? "" : `\nPost-merge checks: ${d.postChecks}`}\nWorktree cleanup: ${labels.cleanup}${d.cleanup.reason ? ` — ${d.cleanup.reason}` : ""}\nPolicy: keep the task branch; no push or deployment.`;
+  return `Task branch: ${d.taskBranch}\nWorktree: ${d.worktreeRoot}\nTarget: ${d.binding.target.branch} @ ${d.binding.target.head}\nPreparation: ${labels.preparation}${checkpointLine}\nCandidate: ${d.candidate ?? labels.missingCandidate}\nAcceptance: ${d.acceptance ? `checks + automatic Agent review of ${d.acceptance.candidate}` : labels.missingCandidate}\nIntegration: ${labels.integration}${d.integration.after ? ` @ ${d.integration.after}` : ""}${d.integration.sync ? ` (${d.integration.sync.worktree ? `fast-forward in ${d.integration.sync.worktree}${d.integration.sync.backup ? `, carrying over uncommitted changes to ${d.integration.sync.fused?.length ?? 0} file(s); as they were: ${d.integration.sync.backup.ref}` : ""}` : "branch reference only; no worktree had it checked out"})` : ""}${d.integration.reason ? ` — ${d.integration.reason}` : ""}${d.postChecks === undefined ? "" : `\nPost-merge checks: ${d.postChecks}`}\nWorktree cleanup: ${labels.cleanup}${d.cleanup.reason ? ` — ${d.cleanup.reason}` : ""}\nPolicy: keep the task branch; no push or deployment.`;
 }
 export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
   const modern =

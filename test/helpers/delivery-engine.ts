@@ -292,6 +292,21 @@ export function repository() {
         engine.finishStep(live, step, result);
         return { result, step, report: null };
       },
+      /** A worker sent to edit files of a worktree other than the candidate. */
+      async implementation(
+        _live: unknown,
+        cwd: string,
+        name: string,
+        prompt: string,
+      ) {
+        asked.push({ kind: "implementation", prompt });
+        const step = engine.step(live, name, "implementation", randomUUID());
+        if (!hooks.repair)
+          throw new Error(`unexpected worker: ${prompt.slice(0, 400)}`);
+        hooks.repair({ prompt, writes: [], cwd });
+        engine.finishStep(live, step, { ...OK, exitCode: 0, output: "" });
+        return step;
+      },
       /** A recovery decision's work item: the test edits the files. */
       async editAttempt(
         _live: unknown,

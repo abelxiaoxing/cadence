@@ -1140,9 +1140,18 @@ export function DeliveryDetails({
           [
             t("Target branch update"),
             d.integration.sync.worktree
-              ? t("Fast-forward in {worktree}", {
-                  worktree: d.integration.sync.worktree,
-                })
+              ? d.integration.sync.backup
+                ? t(
+                    "Fast-forward in {worktree}; uncommitted changes to {count} files carried over, as they were in {backup}",
+                    {
+                      worktree: d.integration.sync.worktree,
+                      count: d.integration.sync.fused?.length ?? 0,
+                      backup: d.integration.sync.backup.ref,
+                    },
+                  )
+                : t("Fast-forward in {worktree}", {
+                    worktree: d.integration.sync.worktree,
+                  })
               : t("Branch reference only; no worktree had it checked out"),
           ] as [string, string],
         ]

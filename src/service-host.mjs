@@ -6159,10 +6159,30 @@ function decodeDeliveryObservation(value) {
       reason: text(i.reason, 2048),
       ...synced ? {
         sync: (() => {
-          const s = closed(i.sync, ["mode", "worktree"]);
+          const carried = Object.hasOwn(i.sync ?? {}, "backup");
+          const s = closed(i.sync, [
+            "mode",
+            "worktree",
+            ...carried ? ["backup", "fused"] : []
+          ]);
+          const mode = oneOf(s.mode, [
+            "ref",
+            "fast-forward",
+            "wip"
+          ]);
+          if (mode === "wip" !== carried)
+            throw new Error("Inconsistent delivery evidence");
+          const b = carried ? closed(s.backup, ["ref", "oid"]) : undefined;
+          const ref = b ? text(b.ref, 128, true) : "";
+          if (b && !/^refs\/cadence\/wip-backup\/[0-9a-f-]{36}$/u.test(ref))
+            throw new Error("Inconsistent delivery evidence");
           return {
-            mode: oneOf(s.mode, ["ref", "fast-forward"]),
-            worktree: nullable(s.worktree, deliveryPath)
+            mode,
+            worktree: nullable(s.worktree, deliveryPath),
+            ...b ? {
+              backup: { ref, oid: gitOid(b.oid) },
+              fused: list(s.fused, 4096, (path) => workflowPath(path))
+            } : {}
           };
         })()
       } : {}
@@ -6190,7 +6210,7 @@ function readableDelivery(binding) {
 Target checkout: ${t.checkoutRoot}
 Execution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Any number of conversations may deliver at once, each in its own candidate; nothing they do waits on your checkout.
 Acceptance: seal a single-parent delivery commit, run declared checks and independent Agent review on that exact OID, in the worktree only. When the target branch has moved, through another delivery or your own commits, the sealed commit is replayed onto its current head: declared build outputs are rebuilt, never merged; lines Git cannot merge are resolved by a worker that has to keep what both sides do; and the result is checked and reviewed again, together with the checks of deliveries that changed the same files in the meantime. That review also covers changed AGENTS.md rules and whether the branch's own changes to those files survive.
-Delivery: deliveries to one branch land one at a time in the order they became ready. The branch is moved to the exact verified OID: by reference alone when no worktree has it checked out, otherwise by fast-forward in that worktree, which keeps your uncommitted changes to other files; uncommitted changes to the same files retain the candidate. A branch that is being rebased is waited for. When no verified commit can be put on the branch (it was deleted, or nothing that merges with what it gained passes verification), the last verified commit is delivered on the task branch instead and the result says first that it was not merged. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
+Delivery: deliveries to one branch land one at a time in the order they became ready. The branch is moved to the exact verified OID: by reference alone when no worktree has it checked out, otherwise by fast-forward in that worktree, which keeps your uncommitted changes to other files. Uncommitted changes to the same files are first saved under a private reference (refs/cadence/wip-backup/<run-id>, restorable with git stash apply), then carried over onto the new commit: merged where Git can, reconciled by a worker in an isolated copy where it cannot, and replaced where a build derives the file. A branch that is being rebased, or files that are being edited at that moment, are waited for. When no verified commit can be put on the branch (it was deleted, or nothing that merges with what it gained passes verification), the last verified commit is delivered on the task branch instead and the result says first that it was not merged. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
   if (binding.policy === "task-branch-v2")
     return `Target: ${t.branch} @ ${t.head}
 Target checkout: ${t.checkoutRoot}
@@ -20249,7 +20269,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "2f67d011d5f15c17134693cbb22c6f0aa9e0446448d635bf1d8003c4f32e3c3f",
+    contractHash: "5d2b13e81fd59b759aa1171190dc8aef878827b63dddbe807b936e72d4e0f878",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -21498,7 +21518,7 @@ Content-Length: 0\r
 
 // src/service/host.ts
 import { spawn as spawn7 } from "node:child_process";
-import { lstatSync as lstatSync31, opendirSync as opendirSync18 } from "node:fs";
+import { lstatSync as lstatSync32, opendirSync as opendirSync18 } from "node:fs";
 import { join as join49 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
@@ -39353,7 +39373,7 @@ class WorkflowHistoryScanner {
 }
 
 // src/service/workflow-landing.ts
-import { existsSync as existsSync4, readFileSync as readFileSync8 } from "node:fs";
+import { existsSync as existsSync4, lstatSync as lstatSync30, readFileSync as readFileSync8 } from "node:fs";
 import { join as join45 } from "node:path";
 function parseWorktrees(output) {
   const list4 = [];
@@ -39436,11 +39456,88 @@ function planLanding(base, state, dirty, changed) {
   const paths = overlapping(changed, dirty);
   return paths.length ? { kind: "overlap", worktree: state.holder, paths } : { kind: "fast-forward", worktree: state.holder };
 }
+function wipBackupRef(run) {
+  return `refs/cadence/wip-backup/${run}`;
+}
+async function hiddenChanges(worktree, paths) {
+  if (!paths.length)
+    return [];
+  const literal2 = paths.map((path) => `:(literal)${path}`);
+  const flagged = (await gitText(worktree, ["ls-files", "-v", "-z", "--", ...literal2])).split("\x00").flatMap((row) => row.startsWith("S ") ? [{ path: row.slice(2), flag: "skip-worktree" }] : /^[a-z] /u.test(row) ? [{ path: row.slice(2), flag: "assume-unchanged" }] : []);
+  const changed = [];
+  for (const entry of flagged) {
+    const staged = (await gitText(worktree, [
+      "ls-files",
+      "-s",
+      "-z",
+      "--",
+      `:(literal)${entry.path}`
+    ])).split(" ")[1];
+    const actual = await gitRun(worktree, ["hash-object", "--", entry.path]);
+    if (actual.code !== 0 || actual.stdout.trim() !== staged)
+      changed.push(entry);
+  }
+  return changed;
+}
+function fingerprint2(worktree, paths) {
+  return JSON.stringify([...paths].sort().map((path) => {
+    try {
+      const stat = lstatSync30(join45(worktree, path), { bigint: true });
+      return [
+        path,
+        String(stat.size),
+        String(stat.mtimeNs),
+        String(stat.ino)
+      ];
+    } catch {
+      return [path, null];
+    }
+  }));
+}
+function parseMergeTree(output) {
+  const fields3 = output.split("\x00");
+  const tree = fields3[0] ?? "";
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(tree))
+    throw new Error("Unexpected merge-tree output");
+  const end = fields3.indexOf("", 1);
+  return {
+    tree,
+    conflicts: parseUnmerged(fields3.slice(1, end < 0 ? fields3.length : end).join("\x00"))
+  };
+}
+function planFusion(overlap, conflicts, builds) {
+  const gitlink = (entry) => [entry.base, entry.ours, entry.theirs].some((side) => side?.mode === "160000");
+  const sorted = classifyConflicts(conflicts.filter((entry) => !gitlink(entry)), builds);
+  const paths = (entries3) => entries3.map((entry) => entry.path);
+  const plan = {
+    landed: paths([...sorted.derived, ...sorted.refresh]),
+    kept: paths(sorted.other),
+    reconcile: paths(sorted.text),
+    submodules: paths(conflicts.filter(gitlink))
+  };
+  const settled = new Set(Object.values(plan).flat());
+  return {
+    merged: overlap.filter((path) => !settled.has(path)).sort(),
+    ...plan
+  };
+}
+function carriedNotice(worktree, carried, backup) {
+  const list4 = (paths) => `${paths.slice(0, 16).join(", ")}${paths.length > 16 ? ` and ${paths.length - 16} more` : ""}`;
+  const all = Object.values(carried).flat();
+  const parts = [
+    carried.merged.length ? `merged with them: ${list4(carried.merged)}` : "",
+    carried.fused.length ? `reconciled with them by a worker: ${list4(carried.fused)}` : "",
+    carried.marked.length ? `left for you with both versions between conflict markers: ${list4(carried.marked)}` : "",
+    carried.kept.length ? `kept as your uncommitted version, because the two could not be merged (the delivered version is in HEAD): ${list4(carried.kept)}` : "",
+    carried.landed.length ? `replaced by the delivered version, because a build derives them: ${list4(carried.landed)}` : ""
+  ].filter(Boolean);
+  return `${worktree} had uncommitted changes to ${all.length} file${all.length === 1 ? "" : "s"} this delivery changes; they were carried over onto the new commit — ${parts.join("; ")}. Those files as they were before are in ${backup}: git show ${backup}:<file> prints one, and after git restore --source=HEAD --staged --worktree -- <files>, git stash apply --index ${backup} puts them back for Git to merge.`;
+}
 
 // src/service/workflow-links.ts
 import {
   existsSync as existsSync5,
-  lstatSync as lstatSync30,
+  lstatSync as lstatSync31,
   readdirSync as readdirSync7,
   readlinkSync as readlinkSync3,
   realpathSync as realpathSync16,
@@ -39499,7 +39596,7 @@ function discoverManagedLinks(checkoutRoot, writes = []) {
       const rel = current2.prefix ? `${current2.prefix}/${name}` : name;
       let st;
       try {
-        st = lstatSync30(full);
+        st = lstatSync31(full);
       } catch {
         continue;
       }
@@ -39569,12 +39666,12 @@ function ensurePlainParent(root, dir) {
       if (!part || part === ".")
         continue;
       current2 = resolve16(current2, part);
-      const st = lstatSync30(current2);
+      const st = lstatSync31(current2);
       if (st.isSymbolicLink() || !st.isDirectory())
         throw new ContractError("forbidden");
     }
   }
-  const parentStat = lstatSync30(current2);
+  const parentStat = lstatSync31(current2);
   if (parentStat.isSymbolicLink() || !parentStat.isDirectory())
     throw new ContractError("forbidden");
   return { dev: parentStat.dev, ino: parentStat.ino };
@@ -39597,7 +39694,7 @@ function provisionManagedLinks(targetCheckoutRoot, worktreeRoot, links, placemen
     const parent = ensurePlainParent(realWorktree, dirname28(linkFull));
     let exists = false;
     try {
-      lstatSync30(linkFull);
+      lstatSync31(linkFull);
       exists = true;
     } catch (error) {
       if (!isEnoent(error))
@@ -39619,7 +39716,7 @@ function provisionManagedLinks(targetCheckoutRoot, worktreeRoot, links, placemen
     journal.write(records);
     const isDir = statSync6(sourceFull).isDirectory();
     symlinkSync(sourceFull, linkFull, process.platform === "win32" ? isDir ? "junction" : "file" : undefined);
-    const st = lstatSync30(linkFull);
+    const st = lstatSync31(linkFull);
     const observedTarget = readlinkSync3(linkFull);
     if (!st.isSymbolicLink() || !sameLinkTarget(observedTarget, sourceFull))
       throw new WorkflowRefusal("stale", `Managed dependency link "${link.path}" could not be confirmed after creation.`);
@@ -39643,10 +39740,10 @@ function confirmedManagedLinkPaths(worktreeRoot, journal) {
     if (!withinWorkspace(realWorktree, linkFull))
       continue;
     try {
-      const parentStat = lstatSync30(parentDir);
+      const parentStat = lstatSync31(parentDir);
       if (parentStat.isSymbolicLink() || !parentStat.isDirectory() || parentStat.dev !== record3.parentDev || parentStat.ino !== record3.parentIno)
         continue;
-      const linkStat = lstatSync30(linkFull);
+      const linkStat = lstatSync31(linkFull);
       if (!linkStat.isSymbolicLink() || linkStat.dev !== record3.linkDev || linkStat.ino !== record3.linkIno)
         continue;
       if (!sameLinkTarget(readlinkSync3(linkFull), record3.source))
@@ -39673,7 +39770,7 @@ function unlinkManagedLinks(worktreeRoot, journal) {
     }
     let parentStat;
     try {
-      parentStat = lstatSync30(parentDir);
+      parentStat = lstatSync31(parentDir);
     } catch {
       record3.status = "retained";
       record3.reason = `Parent directory of managed link "${record3.path}" is unreadable; refused unlink.`;
@@ -39688,7 +39785,7 @@ function unlinkManagedLinks(worktreeRoot, journal) {
     }
     let linkStat;
     try {
-      linkStat = lstatSync30(linkFull);
+      linkStat = lstatSync31(linkFull);
     } catch (error) {
       if (isEnoent(error)) {
         record3.status = "unlinked";
@@ -39724,7 +39821,7 @@ function unlinkManagedLinks(worktreeRoot, journal) {
     }
     let stillPresent = false;
     try {
-      lstatSync30(linkFull);
+      lstatSync31(linkFull);
       stillPresent = true;
     } catch (error) {
       if (!isEnoent(error))
@@ -40134,7 +40231,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.7",
-  build: "5bd9f7bc1e1863838fc9b02eef641d2a126d0a2473a0cc1a130c74bf62b7df88",
+  build: "67ae4d94df8825cdccc29fa75862b233f5eb18c2ce7d9562a5c92e829eb11780",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -40147,14 +40244,23 @@ var PROMPT_BYTES = 32768;
 var MAX_STEPS = 256;
 var STEP_UNITS = 80;
 var LANDING_WAIT = { first: 2000, most: 30000 };
+var WIP_BACKUP_MS = 30 * 24 * 60 * 60 * 1000;
 var CONFLICT_BYTES = 8 * 1024 * 1024;
 var literal2 = (path) => `:(literal)${path}`;
 var pathList = (paths) => `${paths.slice(0, 32).join(", ")}${paths.length > 32 ? ` and ${paths.length - 32} more` : ""}`;
+var OBJECT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 function objectId(result) {
-  const oid = result.output.trim();
-  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oid))
+  const oid = result.output.split(/\r?\n/u).map((line) => line.trim()).filter((line) => OBJECT.test(line)).at(-1);
+  if (!oid)
     throw new ContractError("unavailable");
   return oid;
+}
+async function treeEntry(cwd, tree, path) {
+  const [entry] = (await gitText(cwd, ["ls-tree", "-z", tree, "--", path])).split("\x00");
+  if (!entry)
+    return null;
+  const [mode, , oid] = entry.slice(0, entry.indexOf("\t")).split(" ");
+  return { mode, oid };
 }
 var sources = (paths, builds) => paths.filter((path) => !workflowCovers(workflowBuildPaths(builds), path));
 var mergeLevels = (branch, sealed) => `Level "repair" reconciles those paths in place, in the worktree as it is. Level "replan" or "deviate" gives this merge up: the worktree is put back on ${branch}'s head without this delivery's change, and the work items do that change again there, with the earlier result readable as commit ${sealed}.`;
@@ -40235,6 +40341,7 @@ class Workflows {
       return this.files.directory(join47(this.root, "runs"));
     });
     this.recover();
+    this.expireBackups();
   }
   get files() {
     return this.o.coordination.files;
@@ -40280,6 +40387,79 @@ class Workflows {
     }
     for (const id of ids)
       this.settleInterrupted(id);
+  }
+  expireBackups() {
+    const directory2 = join47(this.root, "wip-backups");
+    let names3 = [];
+    try {
+      if (!this.files.directory(directory2))
+        return;
+      const dir = opendirSync16(directory2);
+      try {
+        for (let e = dir.readSync();e; e = dir.readSync())
+          if (e.isFile() && e.name.endsWith(".json"))
+            names3.push(e.name);
+      } finally {
+        dir.closeSync();
+      }
+    } catch {
+      names3 = [];
+    }
+    for (const name of names3) {
+      const path = join47(directory2, name);
+      try {
+        const file = this.files.read(path, RECORD_BYTES3);
+        if (!file)
+          continue;
+        let record3;
+        try {
+          const o = parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3);
+          if (o.ref !== wipBackupRef(decodeId(name.slice(0, -5))) || typeof o.oid !== "string" || !OBJECT.test(o.oid) || typeof o.at !== "number")
+            throw new Error("Unexpected backup record");
+          record3 = o;
+        } catch {
+          const log = new RecoveryLog(this.files);
+          const archive = log.archive();
+          archive.keep(path);
+          log.record({
+            scope: "project",
+            path: this.cwd,
+            cause: "storage",
+            actions: ["archived-state"],
+            workers: 0,
+            archive: archive.name
+          });
+          continue;
+        }
+        if (record3.left || Date.now() < (record3.settledAt ?? record3.at) + WIP_BACKUP_MS)
+          continue;
+        const current2 = gitAnswer(this.cwd, [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          record3.ref
+        ])?.trim();
+        if (current2 && current2 !== record3.oid) {
+          this.files.replace(path, file, canonicalJson({ ...record3, left: "holds another commit" }), RECORD_BYTES3);
+          continue;
+        }
+        if (current2)
+          gitRead(this.cwd, ["update-ref", "-d", record3.ref, current2]);
+        this.files.remove(path, file, RECORD_BYTES3);
+      } catch {}
+    }
+  }
+  settleBackup(live2) {
+    const path = this.backupRecord(live2.run.id);
+    try {
+      const file = this.files.read(path, RECORD_BYTES3);
+      if (!file)
+        return;
+      this.files.replace(path, file, canonicalJson({
+        ...parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3),
+        settledAt: Date.now()
+      }), RECORD_BYTES3);
+    } catch {}
   }
   retained(path) {
     try {
@@ -40384,8 +40564,10 @@ class Workflows {
       } catch {}
       if (typeof landing?.branch !== "string" || typeof landing.before !== "string" || typeof landing.after !== "string")
         landingNote = `The record of this run's landing could not be read: ${run.delivery?.binding.target.branch ?? "its target branch"} may or may not have been moved. Read the branch before acting; nothing is replayed.`;
-      else if (landing.status === "intent")
-        landingNote = `A landing had started: ${landing.branch} may already be at ${landing.after.slice(0, 12)} (it was at ${landing.before.slice(0, 12)}). Read the branch before acting; nothing is replayed.`;
+      else if (landing.status === "intent") {
+        const backup = landing.backup?.ref;
+        landingNote = `A landing had started: ${landing.branch} may already be at ${landing.after.slice(0, 12)} (it was at ${landing.before.slice(0, 12)}). Read the branch before acting; nothing is replayed.${typeof backup === "string" && typeof landing.worktree === "string" ? ` Uncommitted changes in ${landing.worktree} to files that landing changes were saved first and may have been set aside: they are in ${backup} (git stash apply --index ${backup}).` : ""}`;
+      }
     }
     run.notice = diagnosticText([run.notice, RESTARTED, landingNote, checkpointNote].filter(Boolean).join(`
 `), 2048);
@@ -42650,7 +42832,17 @@ ${changed.length ? markdownLiteral(changed.join(`
           }
         if (head === null)
           throw new Unlandable(gone(branch));
-        const landing = await this.integrate(live2, p, this.scope(live2, p));
+        const scope = this.scope(live2, p);
+        let landing = await this.integrate(live2, p, scope);
+        if (landing.kind === "reconcile") {
+          const reconciled = await this.reconcileUncommitted(live2, p, landing.request);
+          landing = await this.integrate(live2, p, scope, reconciled);
+          if (landing.kind === "reconcile")
+            landing = {
+              kind: "wait",
+              reason: `files with uncommitted changes in ${landing.request.worktree} are still being edited`
+            };
+        }
         if (landing.kind === "landed")
           return;
         if (landing.kind === "wait")
@@ -42685,7 +42877,7 @@ ${changed.length ? markdownLiteral(changed.join(`
   pause(live2, ms) {
     return delay2(ms, undefined, { signal: live2.abort.signal });
   }
-  async integrate(live2, p, scope) {
+  async integrate(live2, p, scope, reconciled) {
     const delivery = live2.delivery;
     if (!delivery)
       throw new ContractError("stale");
@@ -42700,7 +42892,13 @@ ${changed.length ? markdownLiteral(changed.join(`
         if (state.holder !== holder)
           return { kind: "moved" };
         const changed = await committedPaths(delivery.view.worktreeRoot, delivery.candidateBase(), candidate);
-        const landing = planLanding(delivery.candidateBase(), state, state.holder ? await uncommitted(state.holder) : [], changed);
+        const hidden = state.holder ? await hiddenChanges(state.holder, changed) : [];
+        const landing = planLanding(delivery.candidateBase(), state, state.holder ? [
+          ...new Set([
+            ...await uncommitted(state.holder),
+            ...hidden.map((entry) => entry.path)
+          ])
+        ] : [], changed);
         if (landing.kind === "moved")
           return { kind: "moved" };
         if (landing.kind === "wait")
@@ -42708,7 +42906,7 @@ ${changed.length ? markdownLiteral(changed.join(`
         if (landing.kind === "gone")
           throw new Unlandable(gone(target2.branch));
         if (landing.kind === "overlap")
-          throw new WorkflowRefusal("conflict", `${landing.worktree} has uncommitted changes to files this delivery changes: ${landing.paths.slice(0, 32).join(", ")}${landing.paths.length > 32 ? ` and ${landing.paths.length - 32} more` : ""}. Nothing was integrated; the candidate is retained.`);
+          return this.carryOver(live2, p, candidate, landing, changed, hidden, reconciled);
         await delivery.advanceTaskBranch(candidate, async (args) => {
           const r = await this.run(live2, this.cwd, { git: args });
           this.success(r);
@@ -42745,6 +42943,365 @@ ${changed.length ? markdownLiteral(changed.join(`
       if (permit && this.o.owner.state === "idle")
         permit.release();
     }
+  }
+  async carryOver(live2, p, candidate, landing, changed, hidden, reconciled) {
+    const delivery = live2.delivery;
+    if (!delivery)
+      throw new ContractError("stale");
+    const target2 = delivery.view.binding.target;
+    const before = delivery.candidateBase();
+    const { worktree, paths: overlap } = landing;
+    const structural = overlap.filter((path) => !changed.includes(path));
+    if (structural.length)
+      throw new Unlandable(`${worktree} has uncommitted files where this delivery has a directory of the same name, or the other way round: ${pathList(structural)}`);
+    const step = this.step(live2, "carry-uncommitted", "git");
+    const lines = [];
+    let last;
+    const git = async (cwd, args, options = {}) => {
+      const result = await this.run(live2, cwd, { git: args }, { uninterruptible: true, landing: true, index: options.index });
+      last = result;
+      lines.push(`git ${args[0]}: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}`);
+      if (result.exitCode !== 0 && result.output)
+        lines.push(result.output);
+      if (!options.answer || result.outcome !== "completed" || !result.closed)
+        this.success(result, step);
+      return result;
+    };
+    const index = join47(delivery.home, `index-${randomUUID29()}`);
+    const flagged = hidden.filter((entry) => overlap.includes(entry.path));
+    const flags = async (set) => {
+      for (const flag of ["assume-unchanged", "skip-worktree"]) {
+        const paths = flagged.filter((entry) => entry.flag === flag).map((entry) => entry.path);
+        if (paths.length)
+          await git(worktree, ["update-index", `--${set ? "" : "no-"}${flag}`, "--", ...paths], { answer: true });
+      }
+    };
+    try {
+      await flags(false);
+      const snapshot = await this.snapshotUncommitted(live2, git, {
+        worktree,
+        before,
+        index,
+        overlap
+      });
+      const merge = async (tree) => {
+        const merged = await gitRun(worktree, [
+          "merge-tree",
+          "--write-tree",
+          "-z",
+          "-X",
+          "no-renames",
+          "--merge-base",
+          before,
+          candidate,
+          tree
+        ]);
+        if (merged.code !== 0 && merged.code !== 1)
+          throw new ContractError("unavailable");
+        return parseMergeTree(merged.stdout);
+      };
+      const inWorktree = await merge(snapshot.merge), inIndex = await merge(snapshot.indexTree);
+      const plan = planFusion(overlap, inWorktree.conflicts, p.plan.build ?? []);
+      if (plan.submodules.length)
+        throw new Unlandable(`${worktree} and this delivery both moved a submodule pointer: ${pathList(plan.submodules)}`);
+      const key3 = hash(canonicalJson([
+        before,
+        candidate,
+        snapshot.worktreeTree,
+        snapshot.indexTree,
+        snapshot.merge
+      ]));
+      if (plan.reconcile.length && reconciled?.key !== key3)
+        return {
+          kind: "reconcile",
+          request: {
+            key: key3,
+            worktree,
+            wip: snapshot.wip,
+            candidate,
+            paths: plan.reconcile
+          }
+        };
+      await git(worktree, ["read-tree", inWorktree.tree], { index });
+      const place = async (path, entry) => git(worktree, entry ? [
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        `${entry.mode},${entry.oid},${path}`
+      ] : ["update-index", "--force-remove", "--", path], { index });
+      for (const path of plan.landed)
+        await place(path, await treeEntry(worktree, candidate, path));
+      for (const path of plan.kept)
+        await place(path, await treeEntry(worktree, snapshot.merge, path));
+      for (const path of plan.reconcile) {
+        const file = reconciled?.files.get(path);
+        const mode = (await treeEntry(worktree, candidate, path))?.mode;
+        if (!file || !mode)
+          throw new ContractError("stale");
+        await place(path, { mode, oid: file.oid });
+      }
+      const fused = objectId(await git(worktree, ["write-tree"], { index }));
+      if (fingerprint2(worktree, overlap) !== snapshot.still)
+        return {
+          kind: "wait",
+          reason: `files with uncommitted changes in ${worktree} are still being edited`
+        };
+      const ref = wipBackupRef(live2.run.id);
+      await delivery.advanceTaskBranch(candidate, (args) => git(this.cwd, args));
+      this.persist(this.path(live2.run.id, "landing.json"), {
+        branch: target2.branch,
+        before,
+        after: candidate,
+        worktree,
+        backup: { ref, oid: snapshot.backup },
+        status: "intent"
+      });
+      delivery.view.integration = {
+        status: "applying",
+        before,
+        after: null,
+        reason: ""
+      };
+      this.save(live2);
+      const undo = async () => {
+        const restored = await git(worktree, ["stash", "apply", "--index", snapshot.backup], { answer: true });
+        if (restored.exitCode !== 0)
+          live2.notes.push(`${worktree}: the uncommitted changes to ${pathList(overlap)} were set aside for a landing that did not happen and could not be put back automatically. They are in ${ref}: git stash apply --index ${ref}`);
+      };
+      if (snapshot.tracked.length)
+        await git(worktree, [
+          "restore",
+          "--source=HEAD",
+          "--staged",
+          "--worktree",
+          "--",
+          ...snapshot.tracked.map(literal2)
+        ]);
+      for (const path of snapshot.untracked)
+        rmSync6(join47(worktree, path), { force: true });
+      let moved;
+      try {
+        moved = await this.move(live2, candidate, before, { kind: "fast-forward", worktree }, changed);
+      } catch (error) {
+        if (delivery.view.integration.status !== "applied")
+          await undo();
+        throw error;
+      }
+      if (moved !== "landed") {
+        await undo();
+        return { kind: "moved" };
+      }
+      const present = [], absent3 = [];
+      for (const path of overlap)
+        (await treeEntry(worktree, fused, path) ? present : absent3).push(path);
+      if (present.length)
+        await git(worktree, ["checkout-index", "--force", "--", ...present], {
+          index
+        });
+      for (const path of absent3)
+        rmSync6(join47(worktree, path), { force: true });
+      const collapsed = new Set([
+        ...inIndex.conflicts.map((entry) => entry.path),
+        ...plan.landed,
+        ...plan.kept,
+        ...plan.reconcile
+      ]);
+      const staged = snapshot.tracked.filter((path) => !collapsed.has(path));
+      if (staged.length)
+        await git(worktree, [
+          "restore",
+          `--source=${inIndex.tree}`,
+          "--staged",
+          "--",
+          ...staged.map(literal2)
+        ]);
+      const settled = (path) => reconciled?.files.get(path)?.settled;
+      const carried = {
+        merged: plan.merged,
+        landed: plan.landed,
+        kept: plan.kept,
+        fused: plan.reconcile.filter((path) => settled(path)),
+        marked: plan.reconcile.filter((path) => !settled(path))
+      };
+      delivery.view.integration.sync = {
+        mode: "wip",
+        worktree,
+        backup: { ref, oid: snapshot.backup },
+        fused: [...overlap].sort()
+      };
+      this.persist(this.path(live2.run.id, "landing.json"), {
+        branch: target2.branch,
+        before,
+        after: candidate,
+        worktree,
+        backup: { ref, oid: snapshot.backup },
+        status: "confirmed"
+      });
+      live2.notes.push(carriedNotice(worktree, carried, ref));
+      this.save(live2);
+      return { kind: "landed" };
+    } finally {
+      try {
+        await flags(true);
+      } finally {
+        rmSync6(index, { force: true });
+        rmSync6(`${index}.lock`, { force: true });
+        if (last && step.status === "running")
+          this.finishStep(live2, step, last, lines.join(`
+`));
+        this.closeStep(live2, step);
+      }
+    }
+  }
+  async snapshotUncommitted(live2, git, at2) {
+    const delivery = live2.delivery;
+    if (!delivery)
+      throw new ContractError("stale");
+    const { worktree, before, index, overlap } = at2;
+    const still = fingerprint2(worktree, overlap);
+    const untracked = (await gitText(worktree, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      "--",
+      ...overlap.map(literal2)
+    ])).split("\x00").filter(Boolean);
+    const tracked = overlap.filter((path) => !untracked.includes(path));
+    const created = (await git(worktree, ["stash", "create"])).output;
+    const stash = created.trim() ? objectId({ output: created }) : "";
+    const tree = async (base, source, add) => {
+      rmSync6(index, { force: true });
+      if (base)
+        await git(worktree, ["read-tree", base], { index });
+      if (source && tracked.length)
+        await git(worktree, [
+          "restore",
+          `--source=${source}`,
+          "--staged",
+          "--",
+          ...tracked.map(literal2)
+        ], { index });
+      if (add.length)
+        await git(worktree, ["add", "--force", "--", ...add.map(literal2)], {
+          index
+        });
+      return objectId(await git(worktree, ["write-tree"], { index }));
+    };
+    const worktreeTree = await tree(before, stash ? `${stash}^{tree}` : null, []);
+    const indexTree = await tree(before, stash ? `${stash}^2^{tree}` : null, []);
+    const untrackedTree = untracked.length ? await tree(null, null, untracked) : null;
+    const merge = untracked.length ? await tree(worktreeTree, null, untracked) : worktreeTree;
+    const branch = delivery.view.binding.target.branch.replace(/^refs\/heads\//u, "");
+    const label2 = `uncommitted changes in ${worktree} before Cadence landed "${clipUnits(live2.run.goal, 80)}"`;
+    const commit = async (tree2, parents, message2) => objectId(await git(worktree, [
+      "commit-tree",
+      tree2,
+      ...parents.flatMap((parent) => ["-p", parent]),
+      "-m",
+      message2
+    ]));
+    const indexCommit = await commit(indexTree, [before], `index on ${branch}: ${label2}`);
+    const backup = await commit(worktreeTree, [
+      before,
+      indexCommit,
+      ...untrackedTree ? [
+        await commit(untrackedTree, [], `untracked files on ${branch}: ${label2}`)
+      ] : []
+    ], `On ${branch}: ${label2}`);
+    const wip = await commit(merge, [before], "your uncommitted changes");
+    const ref = wipBackupRef(live2.run.id);
+    const current2 = (await gitRun(this.cwd, ["rev-parse", "--verify", "--quiet", ref])).stdout.trim();
+    if (current2 !== backup) {
+      const record3 = (status) => this.persist(this.backupRecord(live2.run.id), {
+        ref,
+        oid: backup,
+        repository: this.cwd,
+        worktree,
+        at: Date.now(),
+        status
+      });
+      record3("intent");
+      await git(this.cwd, [
+        "update-ref",
+        ref,
+        backup,
+        current2 || "0".repeat(backup.length)
+      ]);
+      if ((await gitText(this.cwd, ["rev-parse", "--verify", ref])).trim() !== backup)
+        throw new ContractError("stale");
+      record3("confirmed");
+    }
+    return {
+      backup,
+      worktreeTree,
+      indexTree,
+      merge,
+      wip,
+      tracked,
+      untracked,
+      still
+    };
+  }
+  backupRecord(run) {
+    return join47(this.root, "wip-backups", `${decodeId(run)}.json`);
+  }
+  async reconcileUncommitted(live2, p, request3) {
+    const delivery = live2.delivery;
+    if (!delivery)
+      throw new ContractError("stale");
+    const id = `uncommitted-${randomUUID29().slice(0, 8)}`;
+    const child2 = delivery.childPath(id);
+    live2.run.notice = this.notice(`Reconciling uncommitted changes in ${request3.worktree} with the delivery before it lands: ${pathList(request3.paths)}.`);
+    this.save(live2);
+    await this.gitStep(live2, this.cwd, `worktree-${id}`, (git) => delivery.createChild(id, git));
+    const files = new Map;
+    try {
+      const marked = new Map;
+      await this.gitStep(live2, child2, "replay-uncommitted", async (_, attempt2) => {
+        const picked = await attempt2([
+          "cherry-pick",
+          "--no-commit",
+          "-X",
+          "no-renames",
+          request3.wip
+        ]);
+        if (picked.exitCode !== 0 && picked.exitCode !== 1)
+          this.success(picked);
+      });
+      for (const path of request3.paths)
+        marked.set(path, conflictMarkers(this.conflictText(child2, path)));
+      try {
+        const prompt = `Reconcile uncommitted changes with a delivered change
+${request3.worktree} has uncommitted changes of the user's to these files, which this delivery also changed and has just verified: ${request3.paths.join(", ")}.
+In this checkout Git put the user's changes on top of the delivered commit and, where it could not merge them, wrote both versions between markers: after "<<<<<<<" the delivered text, after "|||||||" what both started from, between "=======" and ">>>>>>>" the user's uncommitted text.
+Edit each of these files so that it holds BOTH: the delivered change working exactly as it does now, and what the user was in the middle of changing. Do not finish, improve or judge the user's work, and do not change what was delivered; where the two cannot both stand, keep the delivered code working and keep the user's lines beside it in the way that loses least. Then remove every marker line.
+Edit only these files; do not run Git, builds or checks. The result goes back to the user's checkout as uncommitted changes, and the user's files as they were stay in a private backup.
+Write only: ${request3.paths.join(", ")}`;
+        await this.scoped(live2, request3.paths, () => this.implementation(live2, child2, id, prompt, p.model, "implementation"), child2, (step) => [step.id]);
+      } catch (error) {
+        this.assertRunning(live2);
+        if (!(error instanceof AttemptFailure || error instanceof WorkflowFailure))
+          throw error;
+      }
+      await this.gitStep(live2, child2, "read-reconciled", async (git) => {
+        for (const path of request3.paths) {
+          const now = new Set(conflictMarkers(this.conflictText(child2, path)));
+          files.set(path, {
+            oid: objectId(await git(["hash-object", "-w", "--", path])),
+            settled: !(marked.get(path) ?? []).some((line) => now.has(line))
+          });
+        }
+        await git(["checkout", "--force", "--detach", request3.candidate]);
+      });
+    } finally {
+      delivery.applied(child2, request3.candidate);
+      await delivery.removeChild(child2, (path, check) => this.gitStep(live2, this.cwd, `worktree-remove-${id}`, async (git) => {
+        await check();
+        await git(["worktree", "remove", path]);
+      }), { secrets: () => this.o.secrets() });
+    }
+    return { key: request3.key, files };
   }
   async move(live2, candidate, before, landing, changed) {
     const delivery = live2.delivery;
@@ -43852,7 +44409,11 @@ ${deviations.map((d) => `${d.item} → ${d.delivered}`).join(`
         live2.barrier?.release();
         this.leaveTurn(live2);
       }
+      if (live2.delivery)
+        this.settleBackup(live2);
       this.active.delete(live2.run.id);
+      if (live2.run.delivery)
+        this.retainLandings(this.lane(live2.run.delivery));
     }
     return {
       status: this.o.owner.state === "quarantined" ? "uncertain" : "settled"
@@ -44264,7 +44825,7 @@ function legacy(store, budget, reader) {
       if (created.has(entry.name))
         continue;
       const path = join49(store.tasks, entry.name, "task.json");
-      const size3 = lstatSync31(path).size;
+      const size3 = lstatSync32(path).size;
       if (size3 > 128 * 1024)
         throw new ContractError("corrupt-selected");
       budget.reserve(size3);
@@ -44317,7 +44878,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "2f67d011d5f15c17134693cbb22c6f0aa9e0446448d635bf1d8003c4f32e3c3f";
+  const embedded = "5d2b13e81fd59b759aa1171190dc8aef878827b63dddbe807b936e72d4e0f878";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
