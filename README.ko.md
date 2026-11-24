@@ -81,7 +81,8 @@ cadence server install   # 선택 사항: WebUI와 부팅 서비스
 목표가 끝나도 모드는 유지됩니다.
 `exit cadence` 또는 `退出 Cadence`로 종료하며, 승인된 작업은 취소되지 않습니다.
 `/cadence-history [run-id]`는 읽기 전용입니다.
-`CADENCE_PARALLEL`(기본 4)이 동시 worker 수를 정합니다.
+설정할 작업 수나 worker 수 제한은 없습니다.
+서로 독립적인 작업은 나란히 실행되고, 셸 검사는 그 기기가 감당할 수 있는 만큼 순서대로 실행됩니다.
 자세히: [대화 모드](docs/conversation-mode.md), [기록](docs/history.md).
 
 ```sh

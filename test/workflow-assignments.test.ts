@@ -30,7 +30,7 @@ const task = (
 });
 function fixture(
   tasks: WorkflowTask[],
-  options: { parallel?: number; delivery?: boolean; fail?: string[] } = {},
+  options: { delivery?: boolean; fail?: string[] } = {},
 ) {
   const definition = { ...plan(), tasks };
   const proposal = { plan: definition, model: {} };
@@ -94,7 +94,6 @@ function fixture(
   const owner = Object.assign(Object.create(Workflows.prototype), {
     cwd: "/controlled/checkout",
     o: {
-      parallel: options.parallel,
       owner: { state: "idle" },
       secrets: () => [],
     },
@@ -180,14 +179,11 @@ function gate() {
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 it("independent assignments run side by side in their own worktrees; a dependent one waits for both and then runs in the candidate", async () => {
-  const f = fixture(
-    [
-      task("a", ["src/a.ts"]),
-      task("b", ["src/b.ts"]),
-      task("c", ["src/index.ts"], ["a", "b"]),
-    ],
-    { parallel: 4 },
-  );
+  const f = fixture([
+    task("a", ["src/a.ts"]),
+    task("b", ["src/b.ts"]),
+    task("c", ["src/index.ts"], ["a", "b"]),
+  ]);
   await f.run();
   expect(f.peak()).toBe(2);
   expect(f.states()).toEqual({
@@ -231,14 +227,11 @@ it("independent assignments run side by side in their own worktrees; a dependent
 });
 
 it("a plan with no two assignments able to start together runs exactly as before: one at a time in the candidate", async () => {
-  const f = fixture(
-    [
-      task("a", ["a.txt"]),
-      task("b", ["b.txt"], ["a"]),
-      task("c", ["c.txt"], ["b"]),
-    ],
-    { parallel: 8 },
-  );
+  const f = fixture([
+    task("a", ["a.txt"]),
+    task("b", ["b.txt"], ["a"]),
+    task("c", ["c.txt"], ["b"]),
+  ]);
   await f.run();
   expect(f.peak()).toBe(1);
   expect(f.attempts.map((a) => [a.id, a.cwd])).toEqual([
@@ -250,30 +243,27 @@ it("a plan with no two assignments able to start together runs exactly as before
   expect(f.events.some((e) => e.includes("cherry-pick"))).toBe(false);
 });
 
-it("the execution limit bounds how many run at once, and the rest wait their turn", async () => {
-  const tasks = ["a", "b", "c", "d", "e"].map((id) => task(id, [`${id}.txt`]));
-  const two = fixture(tasks, { parallel: 2 });
-  await two.run();
-  expect(two.peak()).toBe(2);
-  expect(Object.values(two.states())).toEqual(Array(5).fill("completed"));
-  // A limit of one, or a delivery without worktrees, never runs two together.
-  for (const options of [{ parallel: 1 }, { parallel: 4, delivery: false }]) {
-    const serial = fixture(tasks, options);
-    await serial.run();
-    expect(serial.peak()).toBe(1);
-    expect(serial.events.some((e) => e.includes("worktree"))).toBe(false);
-  }
+it("every independent assignment starts together; nothing limits how many run at once", async () => {
+  const tasks = Array.from({ length: 24 }, (_, i) =>
+    task(`t${i}`, [`t${i}.txt`]),
+  );
+  const all = fixture(tasks);
+  await all.run();
+  expect(all.peak()).toBe(24);
+  expect(Object.values(all.states())).toEqual(Array(24).fill("completed"));
+  // A delivery without worktrees never runs two together.
+  const serial = fixture(tasks, { delivery: false });
+  await serial.run();
+  expect(serial.peak()).toBe(1);
+  expect(serial.events.some((e) => e.includes("worktree"))).toBe(false);
 });
 
 it("assignments that would write the same path never run together, whichever names the wider path", async () => {
-  const f = fixture(
-    [
-      task("wide", ["src"]),
-      task("narrow", ["src/x.ts"]),
-      task("other", ["docs"]),
-    ],
-    { parallel: 4 },
-  );
+  const f = fixture([
+    task("wide", ["src"]),
+    task("narrow", ["src/x.ts"]),
+    task("other", ["docs"]),
+  ]);
   const hold = gate();
   f.gates.set("wide", hold.closed);
   const running = f.run();
@@ -302,7 +292,7 @@ it("when one assignment fails, the others already running are joined, nothing mo
       task("c", ["c.txt"]),
       task("d", ["d.txt"], ["b"]),
     ],
-    { parallel: 3, fail: ["a"] },
+    { fail: ["a"] },
   );
   const hold = gate();
   f.gates.set("b", hold.closed);
@@ -338,15 +328,12 @@ it("a failure in the candidate lane ends the stage at once, marked on that assig
 });
 
 it("a plan revision changes the assignments that have not started: a dropped one never starts, a rewritten one runs as rewritten, an added one is scheduled", async () => {
-  const f = fixture(
-    [
-      task("a", ["src/a.ts"]),
-      task("b", ["src/b.ts"], ["a"]),
-      task("c", ["src/c.ts"], ["a"]),
-      task("d", ["src/d.ts"], ["c"]),
-    ],
-    { parallel: 4 },
-  );
+  const f = fixture([
+    task("a", ["src/a.ts"]),
+    task("b", ["src/b.ts"], ["a"]),
+    task("c", ["src/c.ts"], ["a"]),
+    task("d", ["src/d.ts"], ["c"]),
+  ]);
   const held = gate();
   f.gates.set("a", held.closed);
   const running = f.run();
@@ -399,9 +386,7 @@ it("a plan revision changes the assignments that have not started: a dropped one
 });
 
 it("an assignment added while others run side by side starts without waiting for one of them to end", async () => {
-  const f = fixture([task("a", ["src/a.ts"]), task("b", ["src/b.ts"])], {
-    parallel: 4,
-  });
+  const f = fixture([task("a", ["src/a.ts"]), task("b", ["src/b.ts"])], {});
   const a = gate(),
     b = gate();
   f.gates.set("a", a.closed);

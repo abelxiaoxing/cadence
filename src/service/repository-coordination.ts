@@ -1,6 +1,9 @@
 /** Short repository mutation leases and exact managed-worktree ownership.
  * Never reclaims by age/PID here: only the existing owner healer may settle a
- * dead epoch, AFTER its process ledger has stopped the original children. */
+ * dead epoch, AFTER its process ledger has stopped the original children.
+ * Waiting for the lease has no deadline: inside one process callers take
+ * turns in arrival order, and another process is waited for only while it is
+ * provably running. */
 import { randomUUID } from "node:crypto";
 import { lstatSync, opendirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -14,7 +17,7 @@ import {
   text,
 } from "./contracts/core.ts";
 import type { ServiceCoordination } from "./coordination.ts";
-import { selfMark } from "./liveness.ts";
+import { holderState, selfMark, stampTime } from "./liveness.ts";
 import {
   encoded,
   type FileSnapshot,
@@ -22,10 +25,44 @@ import {
   json,
   type PrivateFiles,
 } from "./private-files.ts";
+import { WorkflowRefusal } from "./workflow-git.ts";
 
-const WAIT_MS = 30_000;
+/** How often another process's lease is looked at again, growing to the cap. */
 const POLL_MS = 50;
-const ACTIVE_RESOURCES = 256;
+const POLL_MAX_MS = 500;
+/** Callers of this process waiting for one repository, in arrival order. A
+ * lease file can only say that somebody holds it, not who is next. */
+const turns = new Map<string, Promise<void>>();
+async function localTurn(
+  repository: string,
+  signal: AbortSignal,
+): Promise<() => void> {
+  const previous = turns.get(repository) ?? Promise.resolve();
+  let leave!: () => void;
+  const mine = new Promise<void>((resolve) => {
+    leave = resolve;
+  });
+  const tail = previous.then(() => mine);
+  turns.set(repository, tail);
+  void tail.then(() => {
+    if (turns.get(repository) === tail) turns.delete(repository);
+  });
+  let abort!: () => void;
+  const aborted = new Promise<"aborted">((resolve) => {
+    abort = () => resolve("aborted");
+  });
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    if ((await Promise.race([previous, aborted])) === "aborted") {
+      // Give the turn up without breaking the order of those behind.
+      void previous.then(leave);
+      throw new ContractError("stale");
+    }
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+  return leave;
+}
 interface Resource {
   schema: "cadence-delivery-resource/1";
   kind: "mutation" | "workspace";
@@ -79,8 +116,10 @@ function decode(value: unknown): Resource {
 }
 const directory = (files: PrivateFiles) =>
   join(files.namespace, "delivery-resources-v1");
-const resourcePath = (files: PrivateFiles, row: Resource) =>
-  join(directory(files), row.kind, `${hash(row.resource)}.json`);
+const resourcePath = (
+  files: PrivateFiles,
+  row: Pick<Resource, "kind" | "resource">,
+) => join(directory(files), row.kind, `${hash(row.resource)}.json`);
 const ownerDirectory = (files: PrivateFiles, root: string, epoch: string) =>
   join(directory(files), "owners", hash(root), decodeId(epoch));
 const indexPath = (files: PrivateFiles, row: Resource) =>
@@ -189,22 +228,67 @@ export class RepositoryCoordination {
     operation: () => Promise<T>,
     settled: () => boolean,
   ): Promise<T> {
-    const deadline = performance.now() + WAIT_MS;
-    let held: ReturnType<RepositoryCoordination["reserve"]>;
-    for (;;) {
-      this.assertOwner();
-      if (signal.aborted) throw new ContractError("stale");
-      held = this.reserve("mutation", repository);
-      if (held) break;
-      if (performance.now() >= deadline) throw new ContractError("conflict");
-      await delay(POLL_MS, undefined, { signal });
-    }
+    this.assertOwner();
+    if (signal.aborted) throw new ContractError("stale");
+    const leave = await localTurn(repository, signal);
     try {
-      return await operation();
+      let held: ReturnType<RepositoryCoordination["reserve"]>;
+      for (let wait = POLL_MS; ; wait = Math.min(wait * 2, POLL_MAX_MS)) {
+        this.assertOwner();
+        if (signal.aborted) throw new ContractError("stale");
+        held = this.reserve("mutation", repository);
+        if (held) break;
+        this.assertWaitable(repository);
+        await delay(wait, undefined, { signal });
+      }
+      try {
+        return await operation();
+      } finally {
+        // The owner supplies actual native/auth/storage settlement, not a timeout.
+        if (settled()) this.release(held.row.token);
+      }
     } finally {
-      // The owner supplies actual native/auth/storage settlement, not a timeout.
-      if (settled()) this.release(held.row.token);
+      leave();
     }
+  }
+  /** Another process holding the lease is worth waiting for only while it is
+   * provably running. Anything else is named and refused: a dead epoch is
+   * settled by its own owner's healer, never by a waiter. */
+  private assertWaitable(repository: string): void {
+    let snapshot: FileSnapshot | null | undefined;
+    let holder: Resource["holder"];
+    try {
+      snapshot = this.c.files.read(
+        resourcePath(this.c.files, { kind: "mutation", resource: repository }),
+      );
+      // Released between the attempt and this look: simply try again.
+      if (!snapshot) return;
+      holder = decode(json(snapshot)).holder;
+    } catch {
+      throw new WorkflowRefusal(
+        "conflict",
+        "The repository's Git lease is held by a record that cannot be read. Run `cadence doctor`; nothing was changed.",
+      );
+    }
+    const who = `process ${holder.pid} on ${holder.host}`;
+    const state = holderState(holder, stampTime(snapshot.stamp)).state;
+    const self = selfMark();
+    if (
+      state === "live" &&
+      holder.pid === self.pid &&
+      (holder.started ?? null) === (self.started ?? null)
+    )
+      // Callers of this process take turns above, so this is a lease an
+      // earlier operation here kept because its settlement was not confirmed.
+      throw new WorkflowRefusal(
+        "conflict",
+        "An earlier Git operation of this owner did not settle, so its repository lease is kept until the owner restarts. Nothing was changed.",
+      );
+    if (state !== "live")
+      throw new WorkflowRefusal(
+        "conflict",
+        `The repository's Git lease belongs to ${who}, which is ${state === "dead" ? "no longer running" : "not observable from here"}. Start that project's Cadence owner so it can settle its own state, or run \`cadence doctor --fix\`; nothing was changed.`,
+      );
   }
   reserveWorkspace(path: string): string {
     const held = this.reserve("workspace", path);
@@ -297,7 +381,7 @@ export function recoverDeliveryResources(
   };
   try {
     for (let entry = dir.readSync(); entry; entry = dir.readSync()) {
-      if (++count > ACTIVE_RESOURCES) throw new ContractError("capacity");
+      count++;
       const match = /^(mutation|workspace)-([a-f0-9]{64})\.json$/u.exec(
         entry.name,
       );

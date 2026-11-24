@@ -18,9 +18,9 @@ Source: internalized from engineering/architecture.md, 2026-11-22
 Kind: contract
 
 Why: `Workbench` passes `CheckoutGate` to `Workflows`, not to `Conversations`.
-Ordinary turns in separate Pi sessions behave like separate Pi terminals (they can overwrite one another), while workflows serialize target mutations through shared/exclusive checkout permits.
+Ordinary turns in separate Pi sessions behave like separate Pi terminals (they can overwrite one another), while a workflow holds the checkout only while it writes its working files.
 
-Anchors: `src/service/workbench.ts`, `src/service/checkout-gate.ts#CHECKOUT_READERS`, `src/service/workflows.ts`
+Anchors: `src/service/workbench.ts`, `src/service/checkout-gate.ts#CheckoutGate`, `src/service/workflows.ts`
 
 Source: internalized from engineering/architecture.md, 2026-11-22
 

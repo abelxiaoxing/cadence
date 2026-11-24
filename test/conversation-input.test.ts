@@ -415,7 +415,7 @@ beforeEach(() => {
   child.launch.mockReset();
 });
 
-it("two sessions run independently even while a workflow holds exclusive checkout access", async () => {
+it("two sessions run independently even while a workflow holds the checkout", async () => {
   const f = fixture();
   const a = await f.start();
   a.worker.ready();
@@ -423,9 +423,9 @@ it("two sessions run independently even while a workflow holds exclusive checkou
   // The same gate the workbench supplies to workflows. A's worker is still
   // open: it neither holds this permit nor waits for it to make progress.
   const permit = await f.gate.acquire(
+    f.root,
     randomUUID(),
     new AbortController().signal,
-    "exclusive",
   );
   const auth = f.holdPreparation();
   const id = randomUUID();
@@ -513,7 +513,7 @@ it("cancel targets just its session, including while its worker is still startin
   expect(f.state(a.commandId).status).toBe("completed");
 });
 
-it("one live run per session and the owner limit refuse independent Sends without accepting or deferring them", async () => {
+it("one live run per session refuses a second Send there; other sessions are never refused for how many are live", async () => {
   const f = fixture();
   const refused = async (id: string, code: string) => {
     const command = f.message(id);
@@ -524,13 +524,14 @@ it("one live run per session and the owner limit refuse independent Sends withou
   };
   const first = await f.start();
   await refused(first.conversationId, "conflict");
-  const rest = await Promise.all(Array.from({ length: 7 }, () => f.start()));
-  await refused(randomUUID(), "capacity");
-  expect(f.owner.acceptedPending).toBe(8);
+  const rest = await Promise.all(Array.from({ length: 19 }, () => f.start()));
+  expect(f.owner.acceptedPending).toBe(20);
+  // Still only one live run in the first session.
+  await refused(first.conversationId, "conflict");
   for (const run of [first, ...rest]) run.worker.end();
   await f.owner.idle();
-  expect(f.settled).toHaveLength(8);
-  expect(child.launch).toHaveBeenCalledTimes(8);
+  expect(f.settled).toHaveLength(20);
+  expect(child.launch).toHaveBeenCalledTimes(20);
 });
 
 it.each(["A's auth settlement", "B's native close"] as const)(

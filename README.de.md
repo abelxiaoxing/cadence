@@ -77,7 +77,7 @@ Das Token gewährt Zugriff auf deinen Arbeitsbereich: Link nicht weitergeben.
 `/cadence <Ziel>` einmal im Pi-Gespräch eines vertrauten Projekts eingeben; der Modus bleibt nach Abschluss aktiv.
 `exit cadence` oder `退出 Cadence` beendet ihn, ohne angenommene Arbeit abzubrechen.
 `/cadence-history [run-id]` ist nur lesend.
-`CADENCE_PARALLEL` (Standard 4) legt die gleichzeitigen Worker fest.
+Es gibt kein Aufgaben- oder Worker-Limit einzustellen: Unabhängige Arbeit läuft nebeneinander, und Shell-Prüfungen warten, bis der Rechner sie verkraftet.
 Details: [Konversationsmodus](docs/conversation-mode.md), [Verlauf](docs/history.md).
 
 ```sh

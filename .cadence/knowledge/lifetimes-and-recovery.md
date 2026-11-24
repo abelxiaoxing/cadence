@@ -6,7 +6,7 @@
 
 Kind: contract
 
-Why: Replacing the old global boolean lock, `gateway.ts` queues up to 4 pre-admission waiters per canonical project root (`effect: "none"` on pre-admission refusal, disconnect abort or Stop), coalesces cold-to-warm tabs onto the warm fast-path without extra `commands/*.json`, runs up to `MAX_CONCURRENT_PREPARATIONS` (4) distinct projects at once, and evicts settled preparation failures past `MAX_SETTLED_PREP_FAILURES` (64 FIFO) while keeping disk intent receipts fail-closed.
+Why: Replacing the old global boolean lock, `gateway.ts` queues pre-admission waiters per canonical project root without counting them (`effect: "none"` on pre-admission refusal, disconnect abort or Stop), coalesces cold-to-warm tabs onto the warm fast-path without extra `commands/*.json`, runs up to `MAX_CONCURRENT_PREPARATIONS` (4) distinct projects at once, and evicts settled preparation failures past `MAX_SETTLED_PREP_FAILURES` (64 FIFO) while keeping disk intent receipts fail-closed.
 
 Anchors: `src/service/gateway.ts#MAX_CONCURRENT_PREPARATIONS`, `src/service/gateway.ts#MAX_SETTLED_PREP_FAILURES`, `src/service/gateway.ts#associatedWork`, `test/gateway-prepare.test.ts`
 
@@ -25,25 +25,37 @@ Source: internalized from engineering/lifetimes.md, 2026-11-22
 
 ## Checkout gate, auth queues and workflow lifetimes
 
-### FIFO checkout permits exclude writers without starving them or blocking isolated work
+### The checkout is held only while its working files are written; landing order is per branch
 
 Kind: contract
 
-Why: `CheckoutGate` allows up to 4 shared readers (`CHECKOUT_READERS`) or 1 exclusive writer (16 waiters max) in FIFO order so readers never bypass a waiting writer.
-Local-merge holds exclusive access only for target preflight/creation and final refresh/learn/integration, releasing it during isolated implementation; cancellation removes waiters only, never an unsettled holder.
+Why: `CheckoutGate` is one FIFO holder per checkout directory with uncounted waiters: a working-copy delivery for its whole run, a local-merge delivery for target preflight/creation and from its fast-forward through post-merge checks.
+Research and isolated work hold nothing; deliveries to one branch finish in `MergeQueue` ticket order, and a run that steps aside re-enters first with its own ticket.
+`HostCapacity` admits shell steps of all runs from live core count and available memory and queues the rest; cancellation removes waiters only, never an unsettled holder.
 
-Anchors: `src/service/checkout-gate.ts#CHECKOUT_READERS`, `src/service/workflows.ts`, `test/checkout-gate.test.ts`
+Anchors: `src/service/checkout-gate.ts#CheckoutGate`, `src/service/merge-queue.ts#MergeQueue`, `src/service/host-capacity.ts#HostCapacity`, `test/checkout-gate.test.ts`, `test/merge-queue.test.ts`, `test/host-capacity.test.ts`
 
-Source: internalized from engineering/lifetimes.md, 2026-11-22
+Source: this delivery, 2026-11-24
+
+### Repository Git leases wait in arrival order and only for a provably running holder
+
+Kind: contract
+
+Why: `RepositoryCoordination.mutate` takes turns inside one process and polls another process's lease only while its holder is live, without a deadline.
+A dead, foreign or unreadable holder is named and refused at once, and a lease this owner kept after an unconfirmed settlement refuses until restart; only the holder's own healer settles a dead epoch, whose resources are not counted.
+
+Anchors: `src/service/repository-coordination.ts#assertWaitable`, `src/service/repository-coordination.ts#recoverDeliveryResources`, `test/repository-coordination.test.ts`
+
+Source: this delivery, 2026-11-24
 
 ### Model-request retries stay inside one SDK session and auth preparations queue cleanly
 
 Kind: pitfall
 
 Why: Unattended workflow workers apply `UNATTENDED_RETRY` as a floor over Pi retry settings unless retries are disabled, retrying only failed responses inside the original worker without replaying commands or steps (except one lone retry for a failed readonly research question).
-Overlapping SDK startup auth resolutions serialize through the worker auth bridge and owner `PREPARATIONS` queue (64 waiters) rather than failing on concurrent preflight.
+Overlapping SDK startup auth resolutions serialize through the worker auth bridge and the owner's preparation queue, which runs one at a time and does not count its waiters, rather than failing on concurrent preflight.
 
-Anchors: `src/worker-model.mjs#UNATTENDED_RETRY`, `src/service/model-context.ts#PREPARATIONS`, `test/worker-model.test.mjs`, `test/workflow-research.test.ts`
+Anchors: `src/worker-model.mjs#UNATTENDED_RETRY`, `src/service/model-context.ts#prepareTracked`, `test/worker-model.test.mjs`, `test/workflow-research.test.ts`
 
 Source: internalized from engineering/lifetimes.md, 2026-11-22
 

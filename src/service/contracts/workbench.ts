@@ -1647,9 +1647,9 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
     const linked =
       v !== null && typeof v === "object" && Object.hasOwn(v, "links");
     const o = closed(v, ["kind", "runs", ...(linked ? ["links"] : [])]);
-    const runs = list(o.runs, 4, decodeWorkflowRun);
+    const runs = list(o.runs, WORKFLOW_LIMITS.roster, decodeWorkflowRun);
     const links = linked
-      ? list(o.links, 4, (value) => {
+      ? list(o.links, WORKFLOW_LIMITS.roster, (value) => {
           const l = closed(value, ["runId", "conversationId"]);
           return {
             runId: decodeId(l.runId),

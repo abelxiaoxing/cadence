@@ -192,7 +192,6 @@ export async function createGateway(
     throw new ContractError("quarantine");
   const assets = new Map(web.assets.map((asset) => [asset.path, asset]));
   const MAX_CONCURRENT_PREPARATIONS = 4;
-  const MAX_PROJECT_PREP_WAITERS = 4;
   const MAX_SETTLED_PREP_FAILURES = 64;
   const connections = new Set<Socket>(),
     relays = new Set<() => void>();
@@ -561,8 +560,8 @@ export async function createGateway(
       active.running = true;
       return false;
     }
-    if (active.waiters.length >= MAX_PROJECT_PREP_WAITERS)
-      throw new ContractError("capacity");
+    // Sends that arrive while one preparation of this project runs wait their
+    // turn, however many there are; each then takes the warm path.
     await new Promise<void>((resolve, reject) => {
       const onAbort = () => {
         const index = active.waiters.indexOf(waiter);

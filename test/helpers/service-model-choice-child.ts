@@ -528,6 +528,7 @@ try {
       assertQuiescent: () => host.gate.assertQuiescent(),
     });
     const permit = await host.gate.acquire(
+      host.coordination.store.root,
       randomUUID(),
       new AbortController().signal,
     );

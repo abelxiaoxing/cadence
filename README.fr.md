@@ -77,7 +77,7 @@ Le jeton donne accès à votre espace de travail : gardez le lien privé.
 Saisissez `/cadence <objectif>` une fois dans la conversation Pi d'un projet de confiance ; le mode reste actif après l'objectif.
 `exit cadence` ou `退出 Cadence` le quitte sans annuler le travail accepté.
 `/cadence-history [run-id]` est en lecture seule.
-`CADENCE_PARALLEL` (4 par défaut) fixe le nombre de workers simultanés.
+Il n'y a aucune limite de tâches ou de workers à régler : les travaux indépendants avancent côte à côte, et les vérifications shell attendent que la machine puisse les prendre.
 Détails : [mode conversation](docs/conversation-mode.md), [historique](docs/history.md).
 
 ```sh

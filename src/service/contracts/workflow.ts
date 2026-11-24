@@ -26,9 +26,8 @@ export const WORKFLOW_LIMITS = {
   /** Assignments one run may list in all, counting those its revisions added
    * and those they superseded. */
   route: 48,
-  /** Questions one research run may carry. How many run at once is the
-   * owner's execution limit (`parallelLimit`), not a property of the plan;
-   * the tool schema states no count, so only this bound refuses one. */
+  /** Questions one research run may carry; all of them are asked at once.
+   * The tool schema states no count, so only this bound refuses one. */
   questions: 32,
   checks: 16,
   builds: 8,
@@ -44,6 +43,9 @@ export const WORKFLOW_LIMITS = {
   historyPage: 20,
   historyScans: 16,
   historyIdleMs: 120000,
+  /** Live runs one roster reply lists. A wire bound on that one reply, never
+   * a limit on how many runs are admitted. */
+  roster: 4096,
 } as const;
 export type WorkflowCheckTier = "fast" | "heavy";
 export type WorkflowCheckTarget = "run" | "skip";

@@ -62,9 +62,6 @@ import { gitRun, WorkflowRefusal } from "./workflow-git.ts";
 import type { Workflows } from "./workflows.ts";
 
 const EVIDENCE_BYTES = 16384;
-/** Concurrent coordinator turns, one per conversation. Conversations still
- * enforces the shared eight-turn total with ordinary chat. */
-const COORDINATORS = 8;
 /** Recent control projection only. Every run link is retained separately. */
 const RECENT_RUNS = 200;
 /** Each research answer's initial preview; cadence_status reads the retained
@@ -101,8 +98,7 @@ const PLAN_REFUSALS: Partial<Record<string, string>> = {
 const RESEARCH_REFUSALS: Partial<Record<string, string>> = {
   stale:
     "The project, model selection or owner changed. No investigation started.",
-  capacity:
-    "The owner has no available workflow slot or storage. No investigation started.",
+  capacity: "Workflow storage is unavailable. No investigation started.",
   forbidden:
     "The request contains a protected value. No investigation started.",
 };
@@ -564,8 +560,6 @@ export class ConversationWorkflow {
       throw new ContractError("stale");
     if (enabled && this.active.has(c.conversationId))
       throw new ContractError("conflict");
-    if (enabled && this.active.size >= COORDINATORS)
-      throw new ContractError("capacity");
     let design = enabled ? state.design : undefined;
     const submitting =
       c.intent === "design" ||
@@ -1149,7 +1143,6 @@ export class ConversationWorkflow {
     if (c.kind === "cadence-prepare") {
       for (const [id, g] of this.grants)
         if (g.expiresAt < Date.now()) this.grants.delete(id);
-      if (this.grants.size >= 16) throw new ContractError("capacity");
       const prepared = this.o.workflows.command(c.commandId, epoch, {
         action: "prepare",
         proposalId: c.proposalId,

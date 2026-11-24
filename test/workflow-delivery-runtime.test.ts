@@ -13,6 +13,8 @@ import {
   type WorkflowProposal,
   type WorkflowRun,
 } from "../src/service/contracts/workflow.ts";
+import { HostCapacity } from "../src/service/host-capacity.ts";
+import { MergeQueue, type QueueTurn } from "../src/service/merge-queue.ts";
 import type { RepositoryCoordination } from "../src/service/repository-coordination.ts";
 import {
   deliveryObservation,
@@ -242,6 +244,7 @@ function fixture(mode = "pass") {
     delivery,
     guidance: { agents: null },
     barrier: undefined as CheckoutPermit | undefined,
+    turn: undefined as QueueTurn | undefined,
     knowledgeWrote: false,
     managed: undefined as boolean | undefined,
     lastReviewedCandidate: undefined as string | undefined,
@@ -287,6 +290,8 @@ function fixture(mode = "pass") {
     cwd: root,
     root: resolve("/controlled-records"),
     active: new Map([[run.id, live]]),
+    hostCapacity: new HostCapacity(),
+    queue: new MergeQueue(),
     o: {
       owner,
       gate,
@@ -521,6 +526,7 @@ function fixture(mode = "pass") {
     cleanup,
     execute: async () => {
       live.barrier = await engine.o.gate.acquire(
+        root,
         live.run.id,
         live.abort.signal,
       );
@@ -528,6 +534,7 @@ function fixture(mode = "pass") {
         return await engine.implement(live, p);
       } finally {
         live.barrier?.release();
+        live.turn?.release();
       }
     },
     counts: () => ({ implementations, candidateChecks, postChecks, reviews }),
@@ -616,11 +623,12 @@ it.each([false, true])(
   },
 );
 
-it("isolated implementations overlap and optimistic Stage 5 runs without holding exclusive target lock", async () => {
+it("isolated implementations overlap and optimistic Stage 5 runs while holding neither the checkout nor a landing turn", async () => {
   const first = fixture();
   const second = fixture();
   const gate = first.engine.o.gate;
   second.engine.o.gate = gate;
+  second.engine.queue = first.engine.queue;
   first.engine.active.set(second.run.id, second.live);
   const enteredFirst = latch();
   const enteredSecond = latch();
@@ -642,6 +650,7 @@ it("isolated implementations overlap and optimistic Stage 5 runs without holding
   try {
     await enteredFirst.promise;
     expect(() => gate.assertQuiescent()).not.toThrow();
+    expect(first.engine.queue.busy).toBe(false);
     b = expect(second.execute()).rejects.toThrow("second assignment settled");
     await enteredSecond.promise;
     expect(first.events).not.toContain("merge");
@@ -657,26 +666,51 @@ it("isolated implementations overlap and optimistic Stage 5 runs without holding
     await Promise.allSettled([a, ...(b ? [b] : [])]);
   }
   gate.assertQuiescent();
+  expect(first.engine.queue.busy).toBe(false);
 });
 
-it("canceling final-access admission leaves other original holders intact", async () => {
+it("canceling a run that waits for the checkout leaves its holder intact", async () => {
   const f = fixture();
   const gate = f.engine.o.gate;
-  const reader = await gate.acquire(
+  const holder = await gate.acquire(
+    f.engine.cwd,
     randomUUID(),
     new AbortController().signal,
-    "shared",
   );
-  const waiting = expect(
-    f.engine.checkoutAccess(f.live, "exclusive"),
-  ).rejects.toThrow("stale");
+  const waiting = expect(f.engine.checkoutAccess(f.live, true)).rejects.toThrow(
+    "stale",
+  );
   f.live.abort.abort();
   await waiting;
   expect(f.live.barrier).toBeUndefined();
-  reader.assertHeld();
+  holder.assertHeld();
   expect(() => gate.assertQuiescent()).toThrow("conflict");
-  reader.release();
+  holder.release();
   gate.assertQuiescent();
+});
+
+it("deliveries to one branch land in arrival order; canceling a waiting one leaves the holder's turn intact", async () => {
+  const first = fixture();
+  const second = fixture();
+  const third = fixture();
+  second.engine.queue = third.engine.queue = first.engine.queue;
+  await first.engine.landingTurn(first.live);
+  const order: string[] = [];
+  const b = second.engine.landingTurn(second.live).then(() => order.push("b"));
+  const c = expect(third.engine.landingTurn(third.live)).rejects.toThrow(
+    "stale",
+  );
+  expect(second.run.notice).toContain("1 delivery ahead");
+  expect(third.run.notice).toContain("2 deliveries ahead");
+  third.live.abort.abort();
+  await c;
+  expect(order).toEqual([]);
+  expect(third.live.turn).toBeUndefined();
+  first.live.turn?.release();
+  await b;
+  expect(order).toEqual(["b"]);
+  second.live.turn?.release();
+  expect(first.engine.queue.busy).toBe(false);
 });
 
 it("guidance drift during final review refuses the target merge", async () => {

@@ -13,6 +13,10 @@ import {
 } from "./core.ts";
 import { decodeSessionId, type ExecutionContext } from "./models.ts";
 
+/** Activities one owner reports in a reply, and one project lists in a
+ * discovery. A reading bound: an owner with more says so (`complete: false`),
+ * it does not refuse work. */
+export const ACTIVITY_LIST = 256;
 export const ACTIVITY_PHASES = [
   "turn",
   "starting",
@@ -98,7 +102,7 @@ export function decodeOwnerActivity(value: unknown): OwnerActivity {
     complete: bool(o.complete),
     epoch: decodeId(o.epoch),
     build: decodeServiceBuild(o.build),
-    activities: list(o.activities, 64, decodeActivity),
+    activities: list(o.activities, ACTIVITY_LIST, decodeActivity),
   };
 }
 export interface ActivityProject {
@@ -133,7 +137,7 @@ export function decodeActivityDiscovery(value: unknown): ActivityDiscovery {
       const p = closed(v, ["path", "activities"]);
       return {
         path: text(p.path, 4096, true),
-        activities: list(p.activities, 256, decodeActivity),
+        activities: list(p.activities, ACTIVITY_LIST, decodeActivity),
       };
     }),
   };

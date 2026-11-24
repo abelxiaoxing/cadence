@@ -6,6 +6,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { ServiceCoordination } from "../src/service/coordination.ts";
@@ -75,6 +76,87 @@ it("different checkout owners serialize the same repository and cancellation doe
     () => true,
   );
   expect(body).toHaveBeenCalledTimes(1);
+});
+it("callers of one process take turns in arrival order, however many wait", async () => {
+  const f = deliveryFixture();
+  const order: number[] = [];
+  const signal = new AbortController().signal;
+  await Promise.all(
+    Array.from({ length: 60 }, (_, i) =>
+      f.resources.mutate(
+        f.binding.target.repository,
+        signal,
+        async () => {
+          order.push(i);
+          await new Promise((resolve) => setImmediate(resolve));
+        },
+        () => true,
+      ),
+    ),
+  );
+  expect(order).toEqual(Array.from({ length: 60 }, (_, i) => i));
+});
+it("a lease whose holder is not running is named and refused instead of waited for", async () => {
+  const f = deliveryFixture();
+  const signal = new AbortController().signal;
+  const repository = f.binding.target.repository;
+  // The first operation creates the lease directory.
+  await f.resources.mutate(
+    repository,
+    signal,
+    async () => {},
+    () => true,
+  );
+  const lock = join(
+    f.c.files.namespace,
+    "delivery-resources-v1",
+    "mutation",
+    `${hash(repository)}.json`,
+  );
+  writeFileSync(
+    lock,
+    JSON.stringify({
+      schema: "cadence-delivery-resource/1",
+      kind: "mutation",
+      resource: repository,
+      root: join(f.root, "elsewhere"),
+      epoch: randomUUID(),
+      run: randomUUID(),
+      token: randomUUID(),
+      identity: null,
+      holder: { pid: 2147483646, host: hostname(), boot: null, started: null },
+    }),
+    { mode: 0o600 },
+  );
+  const body = vi.fn();
+  await expect(
+    f.resources.mutate(repository, signal, body, () => true),
+  ).rejects.toMatchObject({
+    code: "conflict",
+    detail: expect.stringContaining("process 2147483646"),
+  });
+  expect(body).not.toHaveBeenCalled();
+  // The stranger's lease is evidence for its own healer, never removed here.
+  expect(existsSync(lock)).toBe(true);
+});
+it("a lease this owner kept after an unsettled operation refuses the next one at once", async () => {
+  const f = deliveryFixture();
+  const signal = new AbortController().signal;
+  const repository = f.binding.target.repository;
+  await f.resources.mutate(
+    repository,
+    signal,
+    async () => {},
+    () => false,
+  );
+  const body = vi.fn();
+  await expect(
+    f.resources.mutate(repository, signal, body, () => true),
+  ).rejects.toMatchObject({
+    code: "conflict",
+    detail: expect.stringContaining("did not settle"),
+  });
+  expect(body).not.toHaveBeenCalled();
 });
 it("unconfirmed settlement keeps its lease; exact recovered epoch releases coordination only, never workspace data", async () => {
   const f = deliveryFixture();

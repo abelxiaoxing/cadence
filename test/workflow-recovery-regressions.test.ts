@@ -11,6 +11,8 @@ import {
   readableWorkflowPlan,
   type WorkflowRun,
 } from "../src/service/contracts/workflow.ts";
+import { HostCapacity } from "../src/service/host-capacity.ts";
+import { MergeQueue } from "../src/service/merge-queue.ts";
 import { RunEnvironment } from "../src/service/run-environment.ts";
 import { AttemptFailure } from "../src/service/workflow-controller.ts";
 import { deliveryObservation } from "../src/service/workflow-delivery.ts";
@@ -62,6 +64,8 @@ function fixture() {
     cwd,
     root: join(cwd, "state"),
     active: new Map(),
+    hostCapacity: new HostCapacity(),
+    queue: new MergeQueue(),
     o: {
       owner: { state: "idle" },
       secrets: () => [],

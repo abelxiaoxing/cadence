@@ -684,7 +684,6 @@ export class Conversations {
     const session = this.records.sessions.session(input.conversationId);
     if (input.head !== null && !session?.byId.has(input.head))
       throw new ContractError("stale");
-    if (this.active.size >= 8) throw new ContractError("capacity");
     if (!input.text.trim() && !input.images?.length)
       throw new ContractError("invalid");
     if (input.images?.length && (!claimImages || control?.reply))

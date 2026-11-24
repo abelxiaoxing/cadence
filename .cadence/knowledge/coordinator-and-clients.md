@@ -13,7 +13,7 @@ Anchors: `src/coordinator-context.ts#buildCoordinatorContext`, `src/coordinator-
 
 Native `/cadence` and `/cadence-history` retain raw-terminal guards; `commandTerminalInput` observes Pi's autocomplete provider so Enter completion updates the pending raw entry only in that same synchronous dispatch (preserving timestamp, exact args, paste and one-use guards).
 Browser auth is never action consent (`ApprovalScope` binds exact plan, conversation and attachment).
-Owner-held mode survives refresh; the bounded SDK coordinator cannot edit or self-approve and releases the checkout gate while waiting for subagents.
+Owner-held mode survives refresh; the bounded SDK coordinator cannot edit or self-approve and holds neither the checkout nor a landing turn while waiting for subagents.
 
 Anchors: `src/cadence-mode.ts#registerCadenceMode`, `src/native-command-input.ts#commandTerminalInput`, `src/service/conversation-workflow.ts#BROWSER_COORDINATOR_INSTRUCTIONS`, `web/src/components/workspace/WorkflowPanel.tsx#ApprovalScope`, `test/native-command-completion.test.mjs`
 

@@ -88,7 +88,7 @@ const refusedByProvider = async (
     truncated: false,
   };
 };
-function fixture(parallel?: number) {
+function fixture() {
   const home = mkdtempSync(join(tmpdir(), "workflow-research-"));
   const cwd = join(home, "project");
   mkdirSync(cwd, { mode: 0o700 });
@@ -123,7 +123,6 @@ function fixture(parallel?: number) {
     gate: new CheckoutGate(owner),
     cwd,
     secrets: () => [],
-    ...(parallel ? { parallel } : {}),
     models: {
       workerSettings: () => fixtureRuntime(),
       assertCurrent() {},
@@ -165,7 +164,7 @@ function fixture(parallel?: number) {
   return { workflows, research, owner, runtimes };
 }
 it("a question whose worker failed is asked once more, alone, and every answer is recorded as it settles", async () => {
-  const f = fixture(2);
+  const f = fixture();
   const inFlight = { now: 0, most: 0, second: [] as number[] };
   let failures = 0;
   worker.mockImplementation(async (...call: Launch) => {
@@ -186,7 +185,8 @@ it("a question whose worker failed is asked once more, alone, and every answer i
   try {
     const run = await f.research(["one", "two", "three"]);
     expect(worker).toHaveBeenCalledTimes(4);
-    expect(inFlight.most).toBe(2);
+    // Every question is asked at once: nothing limits how many run together.
+    expect(inFlight.most).toBe(3);
     // The second asking runs by itself.
     expect(inFlight.second).toEqual([1]);
     expect(run.status).toBe("completed");

@@ -75,7 +75,8 @@ An ordinary browser turn starts independently of turns in other Pi sessions, eve
 **Starting** means the service has accepted the turn and is preparing it, not that it is queued or the model has replied.
 You can stop it without stopping the other sessions.
 Only one browser run at a time is allowed in a session.
-If the owner refuses a new Send at capacity, no turn is created; your draft stays editable and nothing sends it later.
+If the owner refuses a new Send (for example because storage is full), no turn is created; your draft stays editable and nothing sends it later.
+The owner does not limit how many sessions have a turn running.
 
 The service accepts a further message for a reply that is still running, in one of two ways.
 A **steer** reaches the model at its next opportunity, after the tool calls in progress and before its next request, and continues the conversation as its own turn from there.
@@ -168,7 +169,7 @@ The plan chooses one delivery policy:
 
 - **Local merge:** requires an existing Git branch and configured commit identity.
   After approval, each delivery creates its own `cadence/<goal>-<run-id>` branch and one stable worktree; mode entry and research create neither.
-  Assignments that neither depend on one another nor write the same file run side by side, each in a temporary worktree beside it, as many at once as `CADENCE_PARALLEL` allows.
+  Assignments that neither depend on one another nor write the same file run side by side, each in a temporary worktree beside it, with no limit on how many run at once.
   Assignments, diagnosis, recovery and knowledge updates reuse that candidate, preserving partial work.
   The target is the current local branch displayed in the agreement, not necessarily `main`; the conversation stays in its original directory.
   The owner commits only declared file changes, runs independent readonly Agent review and real checks, then fast-forwards the unchanged target branch.
@@ -188,9 +189,12 @@ Ignored generated Markdown remains ignored and is published without forcing it i
 The named task branch is kept.
 Only owned worktrees at the delivered commit, after successful post-merge checks and without any residue, are removed with plain `git worktree remove`.
 Ignored setup/build output such as `node_modules` also retains the worktree; failures, cancellation and unknown outcomes never trigger cleanup.
-Separate WebUI or terminal conversations may run independent local-merge workflows concurrently, within the owner's four-active-run limit including investigations.
+Separate WebUI or terminal conversations may run independent local-merge workflows concurrently; the owner does not limit how many runs or investigations are active.
+Shell steps (setup, builds and checks) of all runs are admitted by what the machine can take right now: a `heavy` check counts as four cores and 2 GiB, any other step as one core and 512 MiB, and a step that does not fit waits in arrival order instead of being refused.
+Model workers are not held back; a provider's own rate limits are absorbed by request retries.
 A single conversation still permits only one approved implementation at a time; open another conversation for an independent goal.
-Local-merge workflows take exclusive checkout access for target preflight and candidate creation, release it during isolated implementation, checks and automatic review, then take it again from candidate refresh through shared project-knowledge maintenance, post-merge checks and cleanup.
+A local-merge workflow holds the checkout for target preflight and candidate creation, and again from its fast-forward through post-merge checks and cleanup; isolated implementation, checks, automatic review and project-knowledge maintenance hold nothing.
+Deliveries to the same target branch finish one at a time, in the order they became ready.
 Ordinary browser conversations do not wait for this access.
 Like separate Pi terminals, they can edit the same files as each other or as a workflow.
 Coordinate overlapping edits yourself: delivery rechecks the target branch, HEAD and declared paths, but these checks are not a file transaction and do not merge concurrent edits or prevent overwrites.
@@ -285,7 +289,7 @@ Conversation response completion is distinct from workflow completion; read the 
 ### Research scope, timing and retained results
 
 Each research call accepts as many independent questions as the goal needs (up to 32) and optional specific `roots` (default: the conversation directory).
-The service runs as many of them at once as `CADENCE_PARALLEL` allows (default 4, at most 16) and queues the rest; set it in the service's environment to match what your model provider or local model server can serve.
+The service asks all of them at once; a provider's own rate limits are absorbed by request retries.
 Every question has its own outcome.
 An answer is recorded as soon as it is given, whatever happens to the other questions; a question whose subagent failed is asked once more by itself after the others, and if it still has no answer the result says why in the provider's own words.
 The investigation is complete when any question was answered.
@@ -295,7 +299,7 @@ Search limits and omitted coverage are reported explicitly; a partial search doe
 The bounded `grep` tool searches literal text, not regular expressions.
 No files are copied to accelerate research.
 
-Readonly runs in one project share checkout access; questions inside a run can also overlap.
+Readonly runs hold no checkout access and never wait for a delivery; questions inside a run overlap too.
 An investigation in a conversation with its own active implementation waits for that implementation, while other conversations remain independent.
 Agents have no total process deadline or substitute idle/step/tool-call quota.
 Leaving the page or losing a coordinator bridge does not cancel accepted investigations.

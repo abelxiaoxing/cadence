@@ -11,9 +11,9 @@ Anchors: `test/workflow-v5-planning.test.ts`, `test/workflow-links.test.ts`, `te
 
 ### Gateway, owner lifetimes, self-heal and maintenance
 
-Multi-project gateway preparation, concurrent Send queueing, owner overlap protection, startup self-heal of provably dead holders, checkout-gate fairness and OS service maintenance (`install`/`restart`/`stop`/`uninstall`/`upgrade`) are covered by the gateway, owner and maintenance suites.
+Multi-project gateway preparation, concurrent Send queueing, owner overlap protection, startup self-heal of provably dead holders, checkout, landing-queue and host-capacity ordering and OS service maintenance (`install`/`restart`/`stop`/`uninstall`/`upgrade`) are covered by the gateway, owner and maintenance suites.
 
-Anchors: `test/gateway-prepare.test.ts`, `test/gateway-send.test.ts`, `test/gateway-availability.test.ts`, `test/service-owner.test.ts`, `test/self-heal.test.ts`, `test/checkout-gate.test.ts`, `test/service-maintenance.test.ts`
+Anchors: `test/gateway-prepare.test.ts`, `test/gateway-send.test.ts`, `test/gateway-availability.test.ts`, `test/service-owner.test.ts`, `test/self-heal.test.ts`, `test/checkout-gate.test.ts`, `test/merge-queue.test.ts`, `test/host-capacity.test.ts`, `test/service-maintenance.test.ts`
 
 ## Runtime, Client and Packaging Suites
 

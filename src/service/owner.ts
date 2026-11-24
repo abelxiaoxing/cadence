@@ -139,17 +139,13 @@ export class ServiceOwner {
     } catch {
       /* fail closed below */
     }
-    // Real W3 hooks can represent both child queues plus the owner queue; retain
-    // that existing reservation ceiling, with bounded internal-operation headroom.
+    // Registrations are not counted: how much may run at once is decided
+    // where the work is admitted, not by this ledger.
     const refused =
       !owned ||
-      (this.phase !== "idle" && !(continuation && this.phase !== "stopped")) ||
-      this.activities.size >=
-        LIMITS.ownerQueueFrames * (LIMITS.childReservations + 1) + 256;
+      (this.phase !== "idle" && !(continuation && this.phase !== "stopped"));
     // Even refused late registrations describe already-started effects. Retain
     // their original promises for diagnosis; quarantine is not settlement.
-    // Capacity must be reserved BEFORE effects by scheduler/writer. The guard here
-    // quarantines a broken adapter, but cannot discard its outstanding effects.
     const activity: Activity = {
       kind,
       settled: Promise.resolve(),

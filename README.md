@@ -79,7 +79,7 @@ The token grants access to your workspace: keep the link private.
 Enter `/cadence <goal>` once in a trusted project's Pi conversation; the mode stays on after a goal completes.
 `exit cadence` or `退出 Cadence` leaves it and never cancels accepted work.
 `/cadence-history [run-id]` is readonly.
-`CADENCE_PARALLEL` (default 4) sets concurrent workers.
+There is no task or worker limit to set: independent work runs side by side, and shell checks queue by what the machine can take.
 Details: [conversation mode](docs/conversation-mode.md), [history](docs/history.md).
 
 ```sh

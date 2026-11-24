@@ -34,6 +34,7 @@ import {
 } from "./auth.ts";
 import { AuthNetwork } from "./auth-network.ts";
 import { CheckoutGate } from "./checkout-gate.ts";
+import { ACTIVITY_LIST } from "./contracts/activity.ts";
 import { ServiceCoordination, waitForRegistry } from "./coordination.ts";
 import { ServiceHttpServer } from "./http.ts";
 import { processStart, stopProcessGroup } from "./liveness.ts";
@@ -57,7 +58,6 @@ import {
 import { healProject, RegistryHealer } from "./self-heal.ts";
 import { readServerConfig } from "./server-config.ts";
 import { Workbench } from "./workbench.ts";
-import { parallelLimit } from "./workflows.ts";
 
 /** A restarted owner waits this long for the process it replaces to exit. */
 const SUCCESSOR_WAIT_MS = 60_000;
@@ -461,8 +461,6 @@ export async function createServiceHost(
           agentDir: input.config.agentDir,
           projectsEnabled: !input.config.http.proxy,
           checkEnvironment,
-          // The owner's own setting; workers never see CADENCE_* variables.
-          parallel: parallelLimit(process.env),
           hostUrl: new URL(
             sourceBuild ? "../service-host.mjs" : "./service-host.mjs",
             import.meta.url,
@@ -573,11 +571,12 @@ export async function createServiceHost(
               kind: "owner-activity",
               complete:
                 heldOwner.state === "idle" &&
-                heldOwner.acceptedPending === activities.length,
+                heldOwner.acceptedPending === activities.length &&
+                activities.length <= ACTIVITY_LIST,
               readerScope: workbench.activityReaderScope(),
               epoch: native.epoch,
               build,
-              activities,
+              activities: activities.slice(0, ACTIVITY_LIST),
             };
           }
           if (operation === "status" || operation === "diagnose")

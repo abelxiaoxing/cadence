@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import type { ChoiceVersion } from "../src/service/contracts/models.ts";
+import { decodeWorkbenchResult } from "../src/service/contracts/workbench.ts";
 import type { WorkflowRequest } from "../src/service/contracts/workflow.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
 import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
@@ -41,9 +42,23 @@ function owner(scoped = false) {
     trackConversation() {},
   };
   let runtime = fixtureRuntime();
+  /** Settles only when its run is stopped: admitted work stays live. */
+  const parked = (signal: AbortSignal) =>
+    new Promise<never>((_resolve, reject) => {
+      if (signal.aborted) reject(Error("stale"));
+      else
+        signal.addEventListener("abort", () => reject(Error("stale")), {
+          once: true,
+        });
+    });
   const models = {
     workerSettings: vi.fn(() => structuredClone(runtime)),
     assertCurrent() {},
+    // Research holds no checkout: its worker waits here instead.
+    prepareTracked: (input: { signal: AbortSignal }) => ({
+      result: parked(input.signal),
+      settled: Promise.resolve(),
+    }),
   };
   const workflows = new Workflows({
     coordination,
@@ -80,15 +95,9 @@ function owner(scoped = false) {
       }),
     },
     gate: {
-      // The gate never opens; cancellation settles only this queued original.
-      acquire: (_id: string, signal: AbortSignal) =>
-        new Promise((_resolve, reject) => {
-          if (signal.aborted) reject(Error("stale"));
-          else
-            signal.addEventListener("abort", () => reject(Error("stale")), {
-              once: true,
-            });
-        }),
+      // The checkout never frees; cancellation settles only this original.
+      acquire: (_checkout: string, _id: string, signal: AbortSignal) =>
+        parked(signal),
     },
     cwd: root,
     secrets: () => [],
@@ -167,17 +176,32 @@ it("native workflow refusals are definite only without any prior record, admissi
     workflows.command(randomUUID(), randomUUID(), research()),
   );
   expect(ordinary).not.toBeInstanceOf(UnacceptedConversationCommand);
-  // Four admitted runs wait on the gate; the fifth is refused before admission.
-  const admitted = Array.from({ length: 4 }, () => randomUUID());
+  // Admission is not counted: every run is accepted, however many are live.
+  const admitted = Array.from({ length: 24 }, () => randomUUID());
   for (const id of admitted)
     expect(workflows.command(id, epoch, research(), definite)).toMatchObject({
       kind: "workflow",
     });
-  const capacity = refusal(() =>
-    workflows.command(randomUUID(), epoch, research(), definite),
-  );
-  expect(capacity).toBeInstanceOf(UnacceptedWorkflowCommand);
-  expect(capacity).toMatchObject({ code: "capacity" });
+  const roster = workflows.activeRuns();
+  expect(roster.runs.map((run) => run.id).sort()).toEqual([...admitted].sort());
+  // The roster stays complete by staying small: identity and state only.
+  expect(Object.keys(roster.runs[0]).sort()).toEqual([
+    "diagnostics",
+    "epoch",
+    "execution",
+    "goal",
+    "humanReviewed",
+    "id",
+    "mergedCommit",
+    "notice",
+    "phase",
+    "status",
+    "steps",
+  ]);
+  expect(decodeWorkbenchResult(JSON.parse(JSON.stringify(roster)))).toEqual({
+    ...roster,
+    links: [],
+  });
   // A retried identity with a different request observes its original record.
   const changed = refusal(() =>
     workflows.command(admitted[0], epoch, research("Different"), definite),
@@ -283,7 +307,7 @@ it("a refused native execute leaves its grant usable; retained non-conforming pr
   );
   if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
     throw Error("grant");
-  const busy = Array.from({ length: 4 }, () => randomUUID());
+  const busy = Array.from({ length: 8 }, () => randomUUID());
   for (const id of busy) workflows.command(id, epoch, research(), definite);
   const execute: WorkflowRequest = {
     action: "execute",
@@ -291,13 +315,20 @@ it("a refused native execute leaves its grant usable; retained non-conforming pr
     digest: p.digest,
     grant: prepared.response.grant,
   };
-  const capacity = refusal(() =>
-    workflows.command(randomUUID(), epoch, execute, definite),
+  // A refusal before admission (here a wrong digest) leaves the grant usable.
+  const refused = refusal(() =>
+    workflows.command(
+      randomUUID(),
+      epoch,
+      { ...execute, digest: "0".repeat(64) },
+      definite,
+    ),
   );
-  expect(capacity).toBeInstanceOf(UnacceptedWorkflowCommand);
-  expect(capacity).toMatchObject({ code: "capacity" });
+  expect(refused).toBeInstanceOf(UnacceptedWorkflowCommand);
+  expect(refused).toMatchObject({ code: "stale" });
   workflows.command(randomUUID(), epoch, { action: "cancel", runId: busy[0] });
   await workflows.join(busy[0]);
+  // Live runs never refuse another one.
   const admitted = workflows.command(randomUUID(), epoch, execute, definite);
   expect(admitted).toMatchObject({
     kind: "workflow",

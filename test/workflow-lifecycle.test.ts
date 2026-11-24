@@ -243,7 +243,9 @@ it.each([
         expect(owner.state).toBe("quarantined");
         // Test-only observation of the gate's held reservation, without releasing it.
         owner.state = "idle";
-        expect(() => gate.assertQuiescent()).toThrow("conflict");
+        // Only a run that edits the checkout holds it; research holds nothing.
+        if (editing) expect(() => gate.assertQuiescent()).toThrow("conflict");
+        else gate.assertQuiescent();
         owner.state = "quarantined";
       } else gate.assertQuiescent();
     } finally {

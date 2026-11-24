@@ -79,7 +79,7 @@ cadence server install   # 可选的 WebUI 与开机服务
 在受信任项目的 Pi 对话里输入一次 `/cadence <目标>`；目标完成后模式仍保持开启。
 `exit cadence` 或 `退出 Cadence` 退出模式，不会取消已接受的工作。
 `/cadence-history [run-id]` 为只读。
-`CADENCE_PARALLEL`（默认 4）设置并发 worker 数。
+没有任务数或 worker 数上限需要设置：互不依赖的工作并行执行，shell 检查按本机当下的承载能力排队。
 详情：[对话模式](docs/conversation-mode.md)、[历史](docs/history.md)。
 
 ```sh

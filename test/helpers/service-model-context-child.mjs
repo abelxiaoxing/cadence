@@ -118,9 +118,6 @@ const make = (extra = {}) =>
     environment: { ...process.env },
     owner,
     accounting,
-    // A small waiting bound keeps the capacity scenarios short; the service
-    // composes the default (`PREPARATIONS`, see model-preparation-bound.test).
-    preparations: 2,
     ...extra,
   });
 const context = make();
@@ -695,10 +692,16 @@ try {
           const queued = prepare(selection, active, {
             signal: queuedController.signal,
           });
-          refused(await prepare(selection, active), "capacity");
+          // Waiting is not counted: one more queues behind it, none is refused.
+          const furtherController = new AbortController();
+          const further = prepare(selection, active, {
+            signal: furtherController.signal,
+          });
           queuedController.abort();
+          furtherController.abort();
           refused(await queued);
-          assert.equal(active.pending, 2);
+          refused(await further);
+          assert.equal(active.pending, 3);
           assert.equal(records.length, 1);
           assert.equal(originalSignal.aborted, false);
           authGate.resolve({ auth: { apiKey: canary } });
@@ -746,10 +749,16 @@ try {
           if (scenario === "oauth-queue") {
             const competingSelection = select(active, { model: "second" });
             second = prepare(competingSelection, active);
-            refused(await prepare(selection, active), "capacity");
+            // Waiting is not counted: a third request queues too.
+            const thirdController = new AbortController();
+            const third = prepare(selection, active, {
+              signal: thirdController.signal,
+            });
+            thirdController.abort();
+            refused(await third);
             controller.abort();
             refused(await pending);
-            assert.equal(active.pending, 2);
+            assert.equal(active.pending, 3);
             assert.equal(authCalls, 1);
           } else if (scenario === "oauth-stop") {
             const report = await owner.stop(20);

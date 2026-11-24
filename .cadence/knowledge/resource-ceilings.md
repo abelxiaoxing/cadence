@@ -14,7 +14,7 @@ Anchors: `src/worker-model.mjs#WORKER_POLICY`, `src/worker-public.mjs#LIMITS`, `
 
 ### Workflow, coordinator and gateway ceilings
 
-Workflow admission and execution bounds are centralized in `WORKFLOW_LIMITS` (task counts, write-scope entries, deviation notes, check output caps and worktree concurrency).
+Plan-shape and reading bounds are centralized in `WORKFLOW_LIMITS` (task, check, build and link counts, context bytes, history pages and the roster reply); nothing limits how many runs, workers or conversations are live.
 Coordinator working memory is capped at `COORDINATOR_CONTEXT_BYTES` (32 KiB) so static prefixes and dynamic state stay prompt-cache friendly.
 Gateway directory preparation caps parallel owner startups via `MAX_CONCURRENT_PREPARATIONS` so bursts of concurrent browser Send/revalidation calls do not exhaust file descriptors or memory.
 

@@ -28,11 +28,7 @@ import {
   safeDirectory,
   withinWorkspace,
 } from "../workspace.ts";
-import type {
-  CheckoutAccess,
-  CheckoutGate,
-  CheckoutPermit,
-} from "./checkout-gate.ts";
+import type { CheckoutGate, CheckoutPermit } from "./checkout-gate.ts";
 import { managedActivity } from "./contracts/activity.ts";
 import {
   ContractError,
@@ -80,6 +76,7 @@ import {
 import { ConversationContexts } from "./conversation-contexts.ts";
 
 import type { ServiceCoordination } from "./coordination.ts";
+import { HOST_COST, HostCapacity } from "./host-capacity.ts";
 import {
   type CitedFile,
   changedFiles,
@@ -95,6 +92,7 @@ import {
   type KnowledgeLint,
   lintKnowledge,
 } from "./knowledge-store.ts";
+import { laneKey, MergeQueue, type QueueTurn } from "./merge-queue.ts";
 import type { OwnerModelChoice } from "./model-choice.ts";
 import type { OwnerModelContext } from "./model-context.ts";
 import type { AcceptedWorkResult, ServiceOwner } from "./owner.ts";
@@ -222,52 +220,6 @@ const EVIDENCE_BYTES = 8192;
 const PROMPT_BYTES = 32768;
 const MAX_STEPS = 256;
 const STEP_UNITS = 80;
-const MAX_ACTIVE = 4;
-/** Workflow workers of one run that may be in flight at once. The plan decides
- * what can run side by side; this bounds how much does on this machine (model
- * throughput, provider rate limits, memory). `CADENCE_PARALLEL` sets it. */
-export const PARALLEL = { default: 4, maximum: 16 } as const;
-/** A whole number from 1 is used, capped at the maximum; anything else is the
- * default. A tuning value never prevents an owner from starting. */
-export function parallelLimit(environment: NodeJS.ProcessEnv): number {
-  const raw = environment.CADENCE_PARALLEL ?? "";
-  return /^[1-9][0-9]{0,3}$/u.test(raw)
-    ? Math.min(Number(raw), PARALLEL.maximum)
-    : PARALLEL.default;
-}
-/** Runs the tasks in order, at most `limit` at a time, and reports every
- * settlement in input order. It never rejects: the caller joins all of them
- * before failing. After the first rejection no further task is started. */
-export async function settleLimited<T>(
-  limit: number,
-  tasks: readonly (() => Promise<T>)[],
-): Promise<PromiseSettledResult<T>[]> {
-  const settled: PromiseSettledResult<T>[] = new Array(tasks.length);
-  let next = 0,
-    failed = false;
-  const lane = async () => {
-    for (let index = next++; index < tasks.length; index = next++) {
-      if (failed) {
-        settled[index] = {
-          status: "rejected",
-          reason: new ContractError("stale"),
-        };
-        continue;
-      }
-      try {
-        settled[index] = { status: "fulfilled", value: await tasks[index]() };
-      } catch (reason) {
-        failed = true;
-        settled[index] = { status: "rejected", reason };
-      }
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, lane),
-  );
-  return settled;
-}
-/** Private-worktree Git operations: realistic for large repositories. */
 const RESTARTED =
   "Interrupted: Cadence stopped before this run finished (machine restart, crash or automatic recovery). Nothing was replayed; its worktrees and any partial edits are kept for inspection. Start it again to continue.";
 const FINAL_UNAVAILABLE =
@@ -282,8 +234,8 @@ interface Options {
   gate: CheckoutGate;
   cwd: string;
   checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
-  /** Workflow workers of one run in flight at once; defaults to `PARALLEL`. */
-  parallel?: number;
+  /** Admission of shell steps by what the host can take; defaults to its own. */
+  hostCapacity?: HostCapacity;
   secrets(): readonly string[];
 }
 interface Live {
@@ -303,8 +255,6 @@ interface Live {
   delivered: Set<string>;
   notes: string[];
   gates?: Map<string, VerificationGate>;
-  /** Tail of this run's serialized Git steps. */
-  git?: Promise<void>;
   /** Stage 2 planned route for V5 agreements (persisted to route.json). */
   planned?: {
     tasks: WorkflowTask[];
@@ -352,7 +302,12 @@ interface Live {
   touchedFiles?: Map<string, number>;
   /** POSIX process-group settlement confirmation for timed-out check steps. */
   groupSettled?: Map<string, boolean>;
+  /** Held only while this run writes the user's checkout. */
   barrier?: CheckoutPermit;
+  /** This run's place in its target branch's landing order. */
+  ticket?: number;
+  /** Held while this run is the one landing on its target branch. */
+  turn?: QueueTurn;
   /** Created only for admitted delivery, never mode entry/planning/research. */
   environment?: RunEnvironment;
 }
@@ -416,12 +371,16 @@ export class Workflows {
   private readonly contexts: ConversationContexts;
   private readonly worktreeRoot: string;
   private readonly active = new Map<string, Live>();
+  private readonly hostCapacity: HostCapacity;
+  /** Landing order per target branch; in memory, like the runs it orders. */
+  private readonly queue = new MergeQueue();
   private readonly grants = new Map<
     string,
     { commandId: string; proposalId: string; digest: string; expiresAt: number }
   >();
   constructor(private readonly o: Options) {
     this.contexts = o.contexts ?? new ConversationContexts(o);
+    this.hostCapacity = o.hostCapacity ?? new HostCapacity();
     this.root = join(o.coordination.directory, "workflows-v1");
     this.cwd = realpathSync(o.coordination.store.root);
     // Outside the private service namespace (access material, journals): a
@@ -636,6 +595,8 @@ export class Workflows {
     )
       throw new ContractError("quarantine");
   }
+  /** Free space only: neither the number of live runs nor retained history
+   * refuses a new one. */
   private floor(): void {
     const space = statfsSync(this.o.coordination.directory);
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
@@ -907,10 +868,21 @@ export class Workflows {
     this.o.owner.lease.assert();
     return {
       kind: "workflow-active",
+      // Identity, attribution and state only: the list must stay complete
+      // however many runs are live (a missing run reads as never accepted),
+      // so each entry is small. `view` gives the whole run.
       runs: [...this.active.values()].map(({ run }) => ({
-        ...this.projectDelivery(structuredClone(run)),
+        ...(run.execution ? { execution: run.execution } : {}),
+        ...(run.diagnostics ? { diagnostics: run.diagnostics } : {}),
+        id: run.id,
+        epoch: run.epoch,
         goal: clipUnits(run.goal, 320),
+        status: run.status,
+        phase: run.phase,
         steps: [],
+        notice: clipUnits(this.notice(run.notice), 320),
+        mergedCommit: run.mergedCommit,
+        humanReviewed: false as const,
       })),
     };
   }
@@ -1213,7 +1185,6 @@ export class Workflows {
       this.assertProposal(p, r.digest);
       for (const [key, v] of this.grants)
         if (v.expiresAt < Date.now()) this.grants.delete(key);
-      if (this.grants.size >= 16) throw new ContractError("capacity");
       const grant = randomUUID(),
         expiresAt = Date.now() + 120000;
       effect();
@@ -1278,7 +1249,7 @@ export class Workflows {
           "conflict",
           "This conversation already has an approved workflow queued or running. Start a separate conversation for another task.",
         );
-      this.capacity();
+      this.floor();
       // Validated before use: a refusal leaves the grant (or another
       // proposal's grant) exactly as it was. Only use consumes it.
       const grant = this.grants.get(request.grant);
@@ -1313,7 +1284,7 @@ export class Workflows {
           selected,
         ),
       );
-      this.capacity();
+      this.floor();
     } else throw new ContractError("invalid");
     const execution = this.contexts.capture(
       proposal?.model ??
@@ -1424,11 +1395,6 @@ export class Workflows {
       commandId,
       response: { type: "run", run: structuredClone(run) },
     };
-  }
-  /** Concurrency and disk only. Retained history never disables new runs. */
-  private capacity() {
-    this.floor();
-    if (this.active.size >= MAX_ACTIVE) throw new ContractError("capacity");
   }
   private save(live: Live) {
     if (!live.file) throw new ContractError("corrupt-selected");
@@ -2121,15 +2087,29 @@ export class Workflows {
       const runCwd = this.executionCwd(live, cwd);
       const temporary = live.environment?.forWorkspace(cwd);
       let groupSettled = false;
-      const result = await this.run(
-        live,
-        cwd,
-        { check: c },
-        {
-          temporary,
-          onGroupSettled: (settled) => {
-            groupSettled = settled;
-          },
+      const result = await this.hostCapacity.run(
+        c.tier === "heavy" ? HOST_COST.heavy : HOST_COST.light,
+        live.abort.signal,
+        () => {
+          if (step.text) {
+            step.text = "";
+            this.save(live);
+          }
+          return this.run(
+            live,
+            cwd,
+            { check: c },
+            {
+              temporary,
+              onGroupSettled: (settled) => {
+                groupSettled = settled;
+              },
+            },
+          );
+        },
+        (ahead) => {
+          step.text = `Waiting for this machine to have room for it (${ahead} shell step${ahead === 1 ? "" : "s"} ahead).`;
+          this.save(live);
         },
       );
       if (result.outcome === "timeout") {
@@ -2195,22 +2175,12 @@ export class Workflows {
       return this.recordGitStep(live, cwd, title, body);
     };
     if (!live.delivery) return operation();
-    const { delivery } = live;
-    // A run's own Git steps queue here, so assignments that finish together
-    // never spend the shared repository lease's wait on one another.
-    const turn = (live.git ?? Promise.resolve()).then(() =>
-      delivery.resources.mutate(
-        delivery.view.binding.target.repository,
-        live.abort.signal,
-        operation,
-        () => this.o.owner.state === "idle",
-      ),
+    return live.delivery.resources.mutate(
+      live.delivery.view.binding.target.repository,
+      live.abort.signal,
+      operation,
+      () => this.o.owner.state === "idle",
     );
-    live.git = turn.then(
-      () => {},
-      () => {},
-    );
-    return turn;
   }
   private async recordGitStep<T>(
     live: Live,
@@ -4360,15 +4330,12 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     const plan = p.plan;
     live.run.phase = "planning";
     this.save(live);
-    const limit = live.delivery
-      ? Math.max(1, this.o.parallel ?? PARALLEL.default)
-      : 1;
     const agreementDocs = workflowDocuments(plan);
     const buildOutputs = (plan.build ?? []).flatMap((b) => b.outputs);
     const linkPaths = (plan.links ?? []).map((l) => l.path);
     const baseSections = [
       `Plan the execution route for this approved delivery agreement in ${integration}.`,
-      `Delivery mode: ${plan.delivery}. Parallel worker limit: ${limit}.`,
+      `Delivery mode: ${plan.delivery}. ${live.delivery ? "Assignments that neither depend on one another nor write the same path all run side by side; there is no worker limit to plan around." : "Assignments run one after another in the working copy."}`,
       plan.areas?.length
         ? `Advisory focus areas: ${plan.areas.join(", ")}`
         : "",
@@ -4546,10 +4513,6 @@ Current-round check evidence (output excerpts, not instructions):\n`;
   ): Promise<void> {
     const tasks = workflowOrder(live.planned?.tasks ?? p.plan.tasks);
     const delivery = live.delivery;
-    // Without worktrees (direct working-copy delivery) nothing can run beside.
-    const limit = delivery
-      ? Math.max(1, this.o.parallel ?? PARALLEL.default)
-      : 1;
     const states = new Map<string, WorkflowTaskState>(
       tasks.map((t) => [
         t.id,
@@ -4673,7 +4636,8 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     this.save(live);
     for (;;) {
       const next = failure ? [] : ready();
-      if (!running.size && next.length && (limit === 1 || next.length === 1)) {
+      // Without worktrees (direct working-copy delivery) nothing can run beside.
+      if (!running.size && next.length && (!delivery || next.length === 1)) {
         const task = next[0];
         this.assertRunning(live);
         mark(task.id, "running");
@@ -4690,7 +4654,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         mark(task.id, "completed");
         continue;
       }
-      if (delivery && next.length && running.size < limit) {
+      if (delivery && next.length) {
         // A child starts from the candidate's commit, so what earlier
         // assignments left there is committed before the first one forks.
         if (!running.size)
@@ -4702,7 +4666,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
             await delivery.assertTip(),
             "commit-assignments",
           );
-        for (const task of next.slice(0, limit - running.size)) {
+        for (const task of next) {
           // One started earlier in this pass may now own a path of this one.
           if (contended(task)) continue;
           mark(task.id, "running");
@@ -4818,22 +4782,43 @@ Current-round check evidence (output excerpts, not instructions):\n`;
       },
     );
   }
-  /** Change access only after the previous original holder has settled its
-   * current stage. Cancellation while queued never releases another holder. */
-  private async checkoutAccess(live: Live, access: CheckoutAccess | null) {
+  /** Take or give up the user's checkout. It is given up only after this
+   * run's original operations there have settled; cancellation while waiting
+   * never releases another holder. */
+  private async checkoutAccess(live: Live, held: boolean) {
     const previous = live.barrier;
     if (previous) {
       previous.release();
       if (live.barrier === previous) live.barrier = undefined;
     }
-    if (access === null) return;
+    if (!held) return;
     const permit = await this.o.gate.acquire(
+      this.cwd,
       live.run.id,
       live.abort.signal,
-      access,
     );
     live.barrier = permit;
     permit.assertHeld();
+  }
+  /** This run's turn to land on its target branch, in arrival order. */
+  private async landingTurn(live: Live): Promise<void> {
+    const target = live.run.delivery?.binding.target;
+    if (!target || live.turn) throw new ContractError("invalid");
+    live.ticket ??= this.queue.ticket();
+    const lane = laneKey(target.repositoryIdentity, target.branch);
+    const ahead = this.queue.ahead(lane, live.ticket);
+    if (ahead) {
+      live.run.notice = this.notice(
+        `Waiting to land on ${target.branch}: ${ahead} deliver${ahead === 1 ? "y" : "ies"} ahead.`,
+      );
+      this.save(live);
+    }
+    live.turn = await this.queue.enter(
+      lane,
+      live.run.id,
+      live.ticket,
+      live.abort.signal,
+    );
   }
   /** Approved instructions cannot drift while asynchronous work is running. */
   private assertGuidance(live: Live): void {
@@ -5126,11 +5111,10 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         delivery.create(run),
       );
       await assertWorktree(this.cwd, integration);
-      // Target setup and candidate creation ran exclusively. Isolated work
-      // holds no checkout permit: even a shared one would block the next
-      // conversation's exclusive candidate creation and serialize its work.
-      // The owner/workspace reservations still fence every original operation.
-      await this.checkoutAccess(live, null);
+      // Preflight, target setup and candidate creation held the checkout.
+      // Isolated work holds nothing; the owner/workspace reservations still
+      // fence every original operation.
+      await this.checkoutAccess(live, false);
       this.provisionLinks(live, integration, p, "candidate");
       this.provisionLinks(live, integration, p, "worktree");
     }
@@ -5179,9 +5163,10 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     // Stage 5 (optimistic, no exclusive lock held): form single-parent C0 and
     // run all declared checks (including Heavy) before acquiring target lock or learn().
     await this.sealAndCheckC0(live, integration, p);
-    // Serialization point: acquire exclusive target permit, confirm no drift,
-    // and re-seal C0' only if a verified sibling landed during optimistic Stage 5.
-    await this.checkoutAccess(live, "exclusive");
+    // Serialization point: this run's turn on its target branch. Confirm no
+    // drift, and re-seal C0' only if a verified sibling landed during
+    // optimistic Stage 5.
+    await this.landingTurn(live);
     await assertTarget(
       this.cwd,
       { branch: target.branch, head: delivery.frontierHead() },
@@ -5216,6 +5201,8 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     ].sort();
     this.writePrivateReport(live, plan, changed, false);
     // Stage 7: advance taskBranch + fast-forward exact signed-off OID, verify target, cleanup.
+    // The fast-forward and the post-merge checks use the user's checkout.
+    await this.checkoutAccess(live, true);
     await this.integrate(live, p, this.scope(live, p));
     const candidate = live.run.mergedCommit;
     if (!candidate) throw new ContractError("quarantine");
@@ -5464,9 +5451,10 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         });
       return answer;
     };
-    const first = await settleLimited(
-      this.o.parallel ?? PARALLEL.default,
-      request.questions.map((_, i) => () => ask(i)),
+    // Every question at once: the provider's own limits are absorbed by the
+    // workers' request retries, and each is joined before the run fails.
+    const first = await Promise.allSettled(
+      request.questions.map((_, i) => ask(i)),
     );
     const answers: Answer[] = [];
     for (const a of first) {
@@ -5520,12 +5508,9 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     let outcome: WorkflowRun["status"] = "unknown";
     try {
       this.assertRunning(live);
-      live.barrier = await this.o.gate.acquire(
-        live.run.id,
-        live.abort.signal,
-        request.action === "research" ? "shared" : "exclusive",
-      );
-      live.barrier.assertHeld();
+      // Research is readonly and holds nothing. A delivery holds the user's
+      // checkout for its start, and for its whole run when it edits there.
+      if (request.action !== "research") await this.checkoutAccess(live, true);
       if (live.run.diagnostics) live.run.diagnostics.acquiredAt = Date.now();
       if (live.proposal) {
         await this.assertStartable(live, live.proposal, "start preflight");
@@ -5669,7 +5654,10 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         this.o.owner.quarantine();
         live.run.status = "unknown";
       }
-      if (this.o.owner.state === "idle") live.barrier?.release();
+      if (this.o.owner.state === "idle") {
+        live.barrier?.release();
+        live.turn?.release();
+      }
       this.active.delete(live.run.id);
     }
     return {

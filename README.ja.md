@@ -81,7 +81,8 @@ cadence server install   # 任意の WebUI と起動時サービス
 目標が完了してもモードは維持されます。
 `exit cadence` または `退出 Cadence` で終了しますが、承認済みの作業は取り消されません。
 `/cadence-history [run-id]` は読み取り専用です。
-`CADENCE_PARALLEL`（既定 4）で同時 worker 数を設定します。
+タスク数や worker 数の上限設定はありません。
+独立した作業は並行して進み、シェルのチェックはそのマシンが処理できる分だけ順番に実行されます。
 詳細：[会話モード](docs/conversation-mode.md)、[履歴](docs/history.md)。
 
 ```sh

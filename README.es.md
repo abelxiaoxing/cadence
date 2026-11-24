@@ -77,7 +77,7 @@ El token da acceso a tu espacio de trabajo: mantén el enlace privado.
 Escribe `/cadence <objetivo>` una vez en la conversación de Pi de un proyecto de confianza; el modo sigue activo al terminar.
 `exit cadence` o `退出 Cadence` lo cierra sin cancelar el trabajo aceptado.
 `/cadence-history [run-id]` es de solo lectura.
-`CADENCE_PARALLEL` (4 por defecto) fija los workers simultáneos.
+No hay límite de tareas ni de workers que configurar: el trabajo independiente avanza en paralelo y las comprobaciones de shell esperan a que la máquina pueda asumirlas.
 Detalles: [modo conversación](docs/conversation-mode.md), [historial](docs/history.md).
 
 ```sh
