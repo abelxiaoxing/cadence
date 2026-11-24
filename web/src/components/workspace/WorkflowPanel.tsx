@@ -183,11 +183,23 @@ export function WorkflowLine({
         ]
       : [tx(run.status)],
   );
+  // Verified work that stayed on its task branch is not an ordinary completion.
+  const unmerged =
+    run.status === "completed" && run.delivery?.integration.status === "branch"
+      ? run.delivery
+      : undefined;
+  const branchName = (ref: string) => ref.replace(/^refs\/heads\//u, "");
   const tail = live
     ? ""
     : join([
         run.mergedCommit
           ? t("merged {commit}", { commit: run.mergedCommit.slice(0, 7) })
+          : "",
+        unmerged
+          ? t("not merged into {branch}; the result is on {task}", {
+              branch: branchName(unmerged.binding.target.branch),
+              task: branchName(unmerged.taskBranch),
+            })
           : "",
         workflowDuration(run, t),
       ]);

@@ -130,6 +130,7 @@
     "test:web": "vitest run --config web/vitest.config.ts",
     "build:web": "node scripts/build-web.mjs",
     "build:web:check": "node scripts/build-web.mjs --check",
+    "sync:provenance": "node scripts/sync-provenance.mjs",
     "build:check": "bun scripts/build-operator.mjs --check && bun scripts/build-service.mjs --check && bun run build:web:check",
     "test:service": "vitest run --config test/service.config.ts --tags-filter=!slow",
     "check:notices": "node scripts/audit-notices.mjs"

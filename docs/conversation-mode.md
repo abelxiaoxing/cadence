@@ -31,7 +31,7 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
    Quoted/generated text, an old session entry and vague agreement are not approval; browser authentication alone is not consent.
 5. The persistent owner implements, reviews, verifies and delivers.
    Nothing asks for more approval.
-   It stops early only for a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, a change on the target branch that Git cannot merge with the delivery, an installation the agreement does not allow, or a missing tool.
+   It stops early only for a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, an installation the agreement does not allow, or a missing tool.
 6. Completion returns the conversation to Cadence **ready**, not ordinary mode.
    Ask for status, more detail, cancellation, or the next goal normally.
 
@@ -182,11 +182,17 @@ The plan chooses one delivery policy:
   Failed or canceled work leaves actual edits in place; this is not transactional application or a sandbox.
 
 A local-merge plan works from committed history: uncommitted changes in your checkout are not its input and do not stop it from starting.
-When it lands, uncommitted and staged changes to other files are kept as they are by Git's own fast-forward; uncommitted changes to the files the delivery changes retain the candidate instead.
+When it lands, uncommitted and staged changes to other files are kept as they are by Git's own fast-forward; uncommitted changes to the files the delivery changes leave the verified result on the task branch instead.
 A write path naming a directory covers the files below it; in Git, working-copy edits outside the declared writes fail the run (the edits stay).
 A target branch that moved while the delivery worked, through another delivery or your own commits, is followed: the delivery's single commit is replayed onto the branch's current head and checked and reviewed again as the commit that will land.
-The same file changed in different places merges by itself; a replay Git cannot merge retains the candidate.
+Conflicts are settled in three layers, the cheapest first.
+What a declared build derives is never merged: outputs a build writes as a whole are left as the branch has them and rebuilt from the merged sources, and a file a build only refreshes (a table of content hashes) has its values recomputed on all three sides before it is merged, so only entries both sides changed are left.
+The same file changed in different places merges by itself.
+Lines Git cannot merge go to a worker that is given both versions and what the branch gained, and has to keep what both sides do; it edits only those files, and the delivery does not continue while a line Git marked is still there.
+If that does not produce something that passes, recovery may give the merge up and do the work again on the branch as it is now.
+The merged commit is then checked with this agreement's checks and with the checks of every delivery that landed on the same source files in the meantime, and the review reads what the branch gained (the `changes` tool's `frontier` scope) to confirm none of it was dropped.
 `AGENTS.md` files changed on the branch in the meantime are put before that review, which judges the candidate against their current text.
+Verified work is never thrown away: when nothing can be put on the branch (it was deleted, or no merge with what it gained passes verification), the last commit that passed checks and review is delivered on the task branch, the run completes, and its result says first that it was not merged, why, and the `git merge` command that takes it in.
 Cadence never resets, stashes, force-pushes or silently cleans uncertain worktrees.
 Ignored generated Markdown remains ignored and is published without forcing it into Git.
 The named task branch is kept.
@@ -216,6 +222,10 @@ Credential-looking text in plans and research questions is shown and approved re
 
 An isolated worktree does **not** inherit ignored build output, credentials or profiles.
 For `local-merge` agreements without dependency installation (`policy.installs: false`), omitting `links` lets the owner auto-discover plain untracked Git-ignored `node_modules` directories at proposal time, display and bind them into the approval digest, and unlink them strictly after identity verification during cleanup (passing `links: []` disables auto-discovery).
+A repository declares what its builds derive in `.cadence/derived.json`: `{"build": [{"name", "command", "outputs"?, "refreshes"?, "timeoutMs"?}]}`, at most eight steps, run in order.
+`outputs` are paths the command writes as a whole from the sources (bundles, generated code); `refreshes` are files whose entries people maintain and whose values the command only recomputes in place; a step names at least one path, and a path is one or the other.
+An agreement that leaves `build` out is bound to that declaration when it is published, and the plan card shows the commands for approval with the rest; `build: []` declares none, and an explicit list replaces it.
+The owner runs the steps after edits and again after every merge with the target branch; a step that changes anything it did not declare fails the round.
 Investigate any other prerequisites during planning.
 If dependencies/setup are needed, include the exact commands and their execution placement in the plan for explicit approval: `target` for original-checkout preflight, `candidate` for preparation needed once in the stable candidate, or `worktree` for the candidate and each parallel child.
 Every delivery worktree has a detached HEAD, so a check must not depend on the name of the checked-out branch.

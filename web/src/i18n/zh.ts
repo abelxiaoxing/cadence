@@ -242,6 +242,7 @@ export const zh = {
   learning: "沉淀项目知识",
   knowledge: "项目知识",
   "Not executed": "未执行",
+  "Not merged; delivered on the task branch": "未合入；已交付到任务分支",
   "Not recorded": "未记录",
   "Task branch": "任务分支",
   "Task worktree": "任务工作区",
@@ -436,6 +437,8 @@ export const zh = {
   Stop: "停止",
   researching: "调研中",
   "merged {commit}": "合并 {commit}",
+  "not merged into {branch}; the result is on {task}":
+    "未合入 {branch}，结果在 {task}",
   "{s}s": "{s} 秒",
   "{m}m {s}s": "{m} 分 {s} 秒",
   "{h}h {m}m": "{h} 小时 {m} 分",

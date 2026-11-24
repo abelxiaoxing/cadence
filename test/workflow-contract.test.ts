@@ -14,6 +14,7 @@ import {
   decodeWorkflowProposal,
   decodeWorkflowRequest,
   decodeWorkflowRun,
+  deliveryLabels,
   investigationId,
   readableWorkflowPlan,
   researchInput,
@@ -21,9 +22,11 @@ import {
   WorkflowInputError,
   type WorkflowPlan,
   workflowAncestors,
+  workflowBuildPaths,
   workflowCovers,
   workflowOrder,
   workflowPlanInput,
+  workflowWrites,
 } from "../src/service/contracts/workflow.ts";
 import {
   decodeRoutePlan,
@@ -646,6 +649,118 @@ it("v5 plans express build outputs, check tiers and managed links without extra 
     { ...p, checks: [{ name: "c", command: "run", target: "always" }] },
   ])
     expect(() => workflowPlanInput(invalid)).toThrow(WorkflowInputError);
+});
+
+it("a build step declares what it derives as a whole and what it only refreshes; a current agreement may leave build to the repository", () => {
+  const { build: _build, links: _links, ...partial } = plan();
+  // Left out: the owner binds the repository's own declaration on publication.
+  expect(workflowPlanInput(partial).build).toBeUndefined();
+  expect(workflowPlanInput({ ...partial, build: null }).build).toBeUndefined();
+  expect(workflowPlanInput({ ...partial, build: [] }).build).toEqual([]);
+  const p = workflowPlanInput({
+    ...partial,
+    build: [
+      { name: "bundle", command: "make dist", outputs: ["dist"] },
+      { name: "pins", command: "make pins", refreshes: ["pins.json"] },
+      {
+        name: "both",
+        command: "make both",
+        outputs: ["gen"],
+        refreshes: ["lock.json"],
+        timeoutMs: 1000,
+      },
+    ],
+  });
+  expect(p.build).toEqual([
+    { name: "bundle", command: "make dist", outputs: ["dist"] },
+    {
+      name: "pins",
+      command: "make pins",
+      outputs: [],
+      refreshes: ["pins.json"],
+    },
+    {
+      name: "both",
+      command: "make both",
+      timeoutMs: 1000,
+      outputs: ["gen"],
+      refreshes: ["lock.json"],
+    },
+  ]);
+  // A step that refreshes nothing reads exactly as it did before: an
+  // agreement saved earlier keeps its digest.
+  expect(Object.keys(p.build?.[0] ?? {}).sort()).toEqual([
+    "command",
+    "name",
+    "outputs",
+  ]);
+  // Both kinds of path are the builds' to write, so both are in the scope.
+  expect(workflowBuildPaths(p.build ?? [])).toEqual([
+    "dist",
+    "pins.json",
+    "gen",
+    "lock.json",
+  ]);
+  expect(workflowWrites(p)).toEqual(
+    expect.arrayContaining(["dist", "pins.json", "gen", "lock.json"]),
+  );
+  const readable = readableWorkflowPlan(p);
+  expect(readable).toContain(
+    "pins: make pins (no timeout) -> refreshes: pins.json",
+  );
+  expect(readable).toContain(
+    "both: make both (1000ms) -> outputs: gen -> refreshes: lock.json",
+  );
+  for (const [step, said] of [
+    [
+      { name: "b", command: "run" },
+      /^build\[0\]\.outputs: needs at least one declared repository-relative path here or in refreshes/u,
+    ],
+    [
+      { name: "b", command: "run", refreshes: [] },
+      /^build\[0\]\.outputs: needs at least one/u,
+    ],
+    [
+      {
+        name: "b",
+        command: "run",
+        outputs: ["dist"],
+        refreshes: ["dist/pins.json"],
+      },
+      /^build\[0\]\.refreshes: "dist\/pins\.json" is also under outputs/u,
+    ],
+    [
+      { name: "b", command: "run", outputs: ["meta/out"], refreshes: ["meta"] },
+      /^build\[0\]\.refreshes: "meta" is also under outputs/u,
+    ],
+    [
+      { name: "b", command: "run", refreshes: ["a.json", "a.json"] },
+      /^build\[0\]\.refreshes: lists a path twice/u,
+    ],
+    [
+      { name: "b", command: "run", refreshes: ["../a.json"] },
+      /^build\[0\]\.refreshes\[0\]:/u,
+    ],
+    [
+      { name: "b", command: "run", refreshes: [".env"] },
+      /^build\[0\]\.refreshes\[0\]: /u,
+    ],
+  ] as const)
+    expect(() => workflowPlanInput({ ...partial, build: [step] })).toThrow(
+      said,
+    );
+});
+
+it("a delivery that stayed on its task branch is labelled as that, never as merged or pending", () => {
+  const delivery = {
+    preparation: "ready",
+    workspace: { head: "a".repeat(40), state: "retained" },
+    integration: { status: "branch", before: "a".repeat(40), after: null },
+    cleanup: { status: "retained", reason: "" },
+  } as unknown as Parameters<typeof deliveryLabels>[0];
+  expect(deliveryLabels(delivery, "completed").integration).toBe(
+    "Not merged; delivered on the task branch",
+  );
 });
 
 it("decodeRoutePlan validates Stage 2 DAGs, blocked replies and rejects unsafe or cyclic routes", () => {

@@ -359,6 +359,42 @@ export class DirectCheckRepair extends AttemptFailure {
   }
 }
 
+/** Lines Git could not merge when a delivery was replayed onto what its target
+ * branch has become. The files hold both versions between markers, so the
+ * first answer needs no diagnosis: a worker reconciles exactly those files.
+ * Only if the failure still stands afterwards does the gate ask how to go on. */
+export class ConflictRepair extends AttemptFailure {
+  readonly decision: RecoveryDecision;
+  constructor(
+    message: string,
+    step: string,
+    paths: readonly string[],
+    instructions: string,
+  ) {
+    super(message, [step], `conflict:${[...paths].sort().join(",")}`);
+    this.decision = {
+      action: "continue",
+      level: "repair",
+      cause:
+        "Git could not merge this delivery with what its target branch gained.",
+      evidence: [step],
+      strategy:
+        "Reconcile the conflicting files so that what both sides changed holds, then verify again.",
+      work: [
+        {
+          title: "Reconcile merge conflicts",
+          instructions,
+          writes: [...paths],
+        },
+      ],
+      scope: [],
+      route: null,
+      deviation: null,
+      blocker: null,
+    };
+  }
+}
+
 /** A recovery reply the owner cannot act on. The diagnosis is asked again with
  * this reason; it is never a failed delivery by itself. */
 export class InvalidDecision extends Error {}
@@ -1231,16 +1267,18 @@ export class VerificationGate {
             attempt instanceof ReviewRepair &&
             required === "repair" &&
             attempt.keys.every((k) => !reviewed.has(k));
-          const canDirectCheck =
-            attempt instanceof DirectCheckRepair &&
+          // A failure whose first answer is known is given that answer once.
+          const direct =
+            (attempt instanceof DirectCheckRepair ||
+              attempt instanceof ConflictRepair) &&
             required === "repair" &&
             attempt.identity !== undefined &&
-            !directChecks.has(attempt.identity);
+            !directChecks.has(attempt.identity)
+              ? attempt.decision
+              : undefined;
           decision = canDirectReview
             ? attempt.decision
-            : canDirectCheck
-              ? attempt.decision
-              : await this.kernel.decide(attempt, required);
+            : (direct ?? (await this.kernel.decide(attempt, required)));
           ports.assertRunning();
           if (decision.action === "blocked") break;
           const key = fingerprint(decision.level);
@@ -1265,7 +1303,11 @@ export class VerificationGate {
         );
         if (attempt instanceof ReviewRepair)
           for (const k of attempt.keys) reviewed.add(k);
-        if (attempt instanceof DirectCheckRepair && attempt.identity)
+        if (
+          (attempt instanceof DirectCheckRepair ||
+            attempt instanceof ConflictRepair) &&
+          attempt.identity
+        )
           directChecks.add(attempt.identity);
         if (decision.action === "blocked")
           throw new Error(

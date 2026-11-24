@@ -215,5 +215,5 @@ it("syncBuild accepts edits inside declared outputs and refuses unauthorized edi
   const badCase = makeOwner("LICENSE");
   await expect(
     badCase.owner.syncBuild(badCase.live, "/candidate", { plan: p }),
-  ).rejects.toThrow(/modified files outside its declared outputs.*LICENSE/u);
+  ).rejects.toThrow(/modified files outside its declared paths.*LICENSE/u);
 });

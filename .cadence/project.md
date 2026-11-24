@@ -6,7 +6,7 @@ Keep it short.
 ## Routes
 
 - `src/index.ts`, `src/service/`, `package.json`, `agents/` -> `.cadence/knowledge/architecture-packaging.md` — module boundaries, SDK isolation, OIDC npm release and agent pins
-- `src/service/workflows.ts`, `src/service/workflow-git.ts`, `src/service/workflow-landing.ts`, `src/service/workflow-links.ts` -> `.cadence/knowledge/workflow-v5-delivery.md` — V5 planning, auto-links, replay and landing
+- `src/service/workflows.ts`, `src/service/workflow-git.ts`, `src/service/workflow-landing.ts`, `src/service/workflow-derived.ts`, `src/service/workflow-links.ts` -> `.cadence/knowledge/workflow-v5-delivery.md` — V5 planning, replay, conflicts, landing
 - `src/service/workflow-delivery.ts`, `src/service/workflow-review-ledger.ts`, `src/service/run-environment.ts` -> `.cadence/knowledge/checks-and-review.md` — Stage 4 checks, recovery, Agent review and scratch pools
 - `src/service/gateway.ts`, `src/service/checkout-gate.ts`, `src/service/merge-queue.ts`, `src/service/host-capacity.ts`, `src/service/self-heal.ts` -> `.cadence/knowledge/lifetimes-and-recovery.md` — preparation, checkout, landing order, host load, Stop and self-heal
 - `src/worker-toolkit.mjs`, `src/worker-tools.mjs`, `src/research-tools.mjs`, `src/change-tools.mjs`, `src/sdk-worker.mjs` -> `.cadence/knowledge/worker-tools-and-sdk.md` — worker capabilities, frozen settings and cancel settlement
@@ -16,7 +16,7 @@ Keep it short.
 - `src/worker-public.mjs`, `src/worker-model.mjs`, `src/service/contracts/workflow.ts` -> `.cadence/knowledge/resource-ceilings.md` — no Agent deadlines, workflow ceilings and storage floor
 - `scripts/verify.mjs`, `scripts/build-web.mjs`, `scripts/qualify-optical.mjs`, `test/no-fsync.mjs` -> `.cadence/knowledge/verification-and-builds.md` — verify gate, disk TMPDIR, Node-only web builds and slow tags
 - `test/workflow-v5-planning.test.ts`, `test/gateway-prepare.test.ts`, `test/web/chat-timeline.test.tsx`, `test/service-package.test.ts` -> `.cadence/knowledge/regression-owners.md` — targeted regression suites across workflow, gateway, Web and packaging
-- `provenance/webui-reuse.json`, `provenance/package-members.json`, `scripts/build-identity.mjs` -> `.cadence/knowledge/provenance-pins.md` — content vs membership pins and shared build identity
+- `provenance/webui-reuse.json`, `provenance/package-members.json`, `scripts/sync-provenance.mjs`, `.cadence/derived.json` -> `.cadence/knowledge/provenance-pins.md` — content vs membership pins, declared builds
 - `test/research-tools.test.mjs`, `test/service-autostart.test.ts` -> `.cadence/knowledge/controlled-fixtures.md` — long socket paths, manager and cgroup fixtures
 - `test/web/workspace-states.test.tsx` -> `.cadence/knowledge/web-test-fixtures.md` — mocked model catalog versions must be UUID v4
 - `web/src/optical-tokens.css`, `web/src/styles.css`, `web/src/timeline`, `test/web/theme.test.tsx` -> `.cadence/knowledge/web-theme-tokens.md` — source vs shipped CSS and timeline swatches

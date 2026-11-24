@@ -551,7 +551,9 @@ it("a plan may leave out what is empty, and an investigation takes what a model 
   const id = randomUUID();
   const turn = f.send(id, "enter", "/cadence plan");
   const full = plan();
-  const { links: _links, ...expectedWithoutLinks } = full;
+  // What the owner binds itself when it publishes (dependency links, the
+  // repository's declared builds) stays out of what the coordinator gave.
+  const { links: _links, build: _build, ...expectedWithoutLinks } = full;
   const brief = {
     goal: full.goal,
     design: full.design,

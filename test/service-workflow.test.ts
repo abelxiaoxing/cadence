@@ -226,8 +226,8 @@ it("real generated owner: independent assignments run in their own worktrees bes
   const { f, git, propose, start, wait, worktrees } = await setup();
   try {
     writeFileSync(join(f.root, "unrelated.txt"), "user-owned bytes\n");
-    // Tracked but dirty project context: delivered after the fast-forward
-    // around the user's uncommitted text, never silently dropped.
+    // Tracked but dirty project context: the fast-forward keeps the user's
+    // uncommitted text, never silently dropped.
     writeFileSync(join(f.root, ".cadence/project.md"), "# Team notes\n");
     git("add", ".cadence/project.md");
     git("commit", "-qm", "Team notes");
@@ -312,7 +312,9 @@ it("real generated owner: independent assignments run in their own worktrees bes
         join(f.c.directory, "workflows-v1", "runs", run.id, "report.md"),
         "utf8",
       ),
-    ).toMatch(/^# Workflow delivery report\n\nWritten after the fast-forward/u);
+    ).toMatch(
+      /^# Workflow delivery report\n\nWritten after the delivery landed/u,
+    );
     expect(
       run.steps.some(
         (s) =>
@@ -323,7 +325,12 @@ it("real generated owner: independent assignments run in their own worktrees bes
     expect(run.delivery?.taskBranch).toMatch(/^refs\/heads\/cadence\//u);
     expect(run.delivery?.acceptance?.candidate).toBe(run.mergedCommit);
     expect(run.delivery?.integration.status).toBe("applied");
-    expect(run.delivery?.postChecks).toBe("passed");
+    // Nothing is checked in the user's checkout; it followed by fast-forward.
+    expect(run.delivery?.postChecks).toBeUndefined();
+    expect(run.delivery?.integration.sync).toEqual({
+      mode: "fast-forward",
+      worktree: f.root,
+    });
     expect(git("rev-parse", run.delivery?.taskBranch ?? "missing").trim()).toBe(
       run.mergedCommit,
     );
@@ -386,8 +393,9 @@ it("real generated owner: independent assignments run in their own worktrees bes
       mergedCommit: null,
     });
     expect(recovered.value.response.run.notice).toContain("Interrupted");
-    expect(recovered.value.response.run.notice).toContain(
-      "fast-forward may have completed",
+    // No landing intent was recorded: the branch had not been touched.
+    expect(recovered.value.response.run.notice).not.toContain(
+      "A landing had started",
     );
     expect(recovered.value.response.run.steps[0].status).toBe("unknown");
   } finally {

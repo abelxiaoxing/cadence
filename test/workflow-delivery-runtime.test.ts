@@ -14,7 +14,11 @@ import {
   type WorkflowRun,
 } from "../src/service/contracts/workflow.ts";
 import { HostCapacity } from "../src/service/host-capacity.ts";
-import { MergeQueue, type QueueTurn } from "../src/service/merge-queue.ts";
+import {
+  LandingLog,
+  MergeQueue,
+  type QueueTurn,
+} from "../src/service/merge-queue.ts";
 import type { RepositoryCoordination } from "../src/service/repository-coordination.ts";
 import {
   deliveryObservation,
@@ -45,8 +49,10 @@ const seam = vi.hoisted(() => ({
   busy: null as string | null,
   /** The target cannot be read back. */
   missing: false,
-  /** What a replay leaves unmerged. */
+  /** What a replay leaves unmerged: both sides changed these files. */
   unmerged: [] as string[],
+  /** The lines Git marked in a file it wrote both versions into. */
+  marked: new Map<string, string>(),
   /** Further paths a range between two commits changed. */
   changed: [] as string[],
 }));
@@ -75,8 +81,15 @@ vi.mock("../src/service/workflow-git.ts", async (original) => ({
       return seam.trees.get(cwd)?.parent ?? "1".repeat(40);
     if (args[0] === "show" && args.includes("--format=%B"))
       return seam.trees.get(cwd)?.message ?? "";
-    if (args[0] === "diff" && args.includes("--diff-filter=U"))
-      return seam.unmerged.join("\0");
+    if (args[0] === "ls-files" && args.includes("--unmerged"))
+      return seam.unmerged
+        .flatMap((path) =>
+          [1, 2, 3].map(
+            (stage) => `100644 ${"c".repeat(40)} ${stage}\t${path}`,
+          ),
+        )
+        .join("\0");
+    if (args[0] === "log") return "abc1234 what the branch gained\n";
     if (args[0] === "diff") return "+ a changed rule\n";
     if (args[0] === "rev-parse" && args.includes("--verify")) {
       const ref = args.at(-1)!;
@@ -133,6 +146,7 @@ afterEach(() => {
   seam.busy = null;
   seam.missing = false;
   seam.unmerged = [];
+  seam.marked.clear();
   seam.changed = [];
 });
 
@@ -272,14 +286,21 @@ function fixture(mode = "pass") {
           revision: number;
           scope: string[];
           steps: unknown[];
+          expected: number;
           waived: Set<string>;
         }
       | undefined,
+    merging: undefined as
+      | { sealed: string; frontier: string; discard?: boolean }
+      | undefined,
+    accepted: undefined as { candidate: string } | undefined,
+    landed: 0,
   };
   let serial = 2,
     implementations = 0,
     candidateChecks = 0,
-    reviews = 0;
+    reviews = 0,
+    reconciles = 0;
   const prompts: string[] = [];
   const oid = () => (serial++).toString(16).padStart(40, "0");
   const ok = {
@@ -311,6 +332,9 @@ function fixture(mode = "pass") {
     active: new Map([[run.id, live]]),
     hostCapacity: new HostCapacity(),
     queue: new MergeQueue(),
+    landings: new LandingLog(),
+    // What Git wrote into a conflicting file, as the seam says it did.
+    conflictText: (_cwd: string, path: string) => seam.marked.get(path) ?? "",
     o: {
       owner,
       gate,
@@ -320,7 +344,7 @@ function fixture(mode = "pass") {
           read: (path: string) =>
             records.has(path)
               ? { bytes: Buffer.from(JSON.stringify(records.get(path))) }
-              : null,
+              : undefined,
           create: (path: string, body: string) => {
             records.set(path, body.startsWith("{") ? JSON.parse(body) : body);
           },
@@ -415,15 +439,30 @@ function fixture(mode = "pass") {
     } else if (args[0] === "reset" && args[1] === "--soft") {
       tree.head = args[2];
     } else if (args[0] === "checkout") {
-      // The candidate moves onto the branch's head, or back off it.
-      events.push(args.includes("--force") ? "restore" : "onto");
+      // The candidate moves onto the branch's head; forced, an unfinished
+      // merge there is given up.
+      events.push(args.includes("--force") ? "discard" : "onto");
       tree.head = args.at(-1)!;
       tree.dirty.clear();
+      if (args.includes("--force")) {
+        seam.unmerged = [];
+        seam.marked.clear();
+      }
     } else if (args[0] === "cherry-pick") {
       events.push("replay");
-      if (seam.unmerged.length) return { ...ok, exitCode: 1 };
       // The candidate's change, staged on the branch's head.
       tree.dirty.add("a.txt");
+      if (mode.startsWith("conflict")) {
+        seam.unmerged = ["a.txt"];
+        seam.marked.set(
+          "a.txt",
+          "<<<<<<< HEAD\nthe branch's line\n||||||| parent of 1234567 (sources)\nthe old line\n=======\nthis delivery's line\n>>>>>>> 1234567 (sources)\n",
+        );
+        return { ...ok, exitCode: 1, output: "CONFLICT (content): a.txt" };
+      }
+    } else if (args[0] === "add" && args[1] === "-A") {
+      events.push("stage");
+      seam.unmerged = [];
     } else if (args[0] === "merge") {
       expect(args).toContain("--ff-only");
       expect(cwd).toBe(seam.holder);
@@ -472,13 +511,17 @@ function fixture(mode = "pass") {
           ["failed", "rejected", "partial", "blocked"].includes(s.status),
         )!;
       text = JSON.stringify({
-        action: "continue",
+        action: mode === "conflict-stuck" ? "blocked" : "continue",
+        ...(mode === "conflict-stuck" ? { blocker: "tool" } : {}),
+        ...(mode === "conflict-replan" ? { level: "replan" } : {}),
         cause: "controlled observed failure",
         ...(mode === "baseline-scope" ? { scope: ["test/fixture.ts"] } : {}),
         evidence: [failed.id],
         strategy: `Continue from preserved evidence, revision ${(run.revision ?? 0) + 1}`,
         work:
-          mode === "partial" || mode === "unparseable"
+          mode === "partial" ||
+          mode === "unparseable" ||
+          mode === "conflict-stuck"
             ? []
             : [
                 {
@@ -511,11 +554,17 @@ function fixture(mode = "pass") {
               blockingIssues: [],
             });
       // The branch moves while the candidate is being reviewed.
-      if (mode === "moved" && reviews === 1)
+      if ((mode === "moved" || mode.startsWith("conflict")) && reviews === 1)
         seam.refs.set(BRANCH, "f".repeat(40));
       if (mode === "review-change")
         put(cwd, "a.txt", "foreign edit during review");
       if (mode === "cancel") live.abort.abort();
+    } else if (seam.marked.size && name.startsWith("repair-")) {
+      events.push("reconcile");
+      // Only the worker that is told what both sides did takes the marks out.
+      if (mode === "conflict" || reconciles++ > 0) seam.marked.clear();
+      put(cwd, "a.txt", "what both sides changed");
+      report = { status: "completed", summary: "Reconciled both versions" };
     } else if (mode === "baseline-scope" && name.startsWith("repair-")) {
       events.push("baseline-repair");
       put(cwd, "test/fixture.ts", "environment-independent fixture");
@@ -526,7 +575,7 @@ function fixture(mode = "pass") {
     } else {
       events.push("implementation");
       implementations++;
-      if (implementations > 1)
+      if (implementations > 1 && !mode.startsWith("conflict"))
         expect(seam.trees.get(cwd)!.files.get("a.txt")).toContain("partial");
       put(cwd, "a.txt", `partial outputs through attempt ${implementations}`);
       report = {
@@ -701,7 +750,7 @@ it("isolated implementations overlap and optimistic Stage 5 runs while holding n
     expect(second.d.integration.status).toBe("pending");
     // Nothing told the second run: the branch itself says where it is now.
     expect(seam.refs.get(BRANCH)).toBe(first.run.mergedCommit);
-    expect(await second.engine.targetHead(second.live)).toBe(
+    expect(await second.engine.branchHead(second.live)).toBe(
       first.run.mergedCommit,
     );
   } finally {
@@ -798,21 +847,108 @@ it("rule files the branch changed are put before the review instead of refusing 
   expect(f.d.integration.status).toBe("applied");
 });
 
-it("a replay Git cannot merge retains the candidate exactly as it was verified", async () => {
-  const f = fixture("moved");
-  seam.unmerged = ["a.txt"];
-  await expect(f.execute()).rejects.toMatchObject({
-    code: "conflict",
-    detail: expect.stringContaining("changed the same lines"),
+it("lines Git cannot merge go to a worker without a diagnosis; what it reconciled is staged, verified again and landed", async () => {
+  const f = fixture("conflict");
+  await f.execute();
+  const at = (event: string) => f.events.lastIndexOf(event);
+  // Replayed, reconciled, staged, sealed on the branch's head, then landed.
+  expect(at("replay")).toBeLessThan(at("reconcile"));
+  expect(at("reconcile")).toBeLessThan(at("stage"));
+  expect(at("stage")).toBeLessThan(at("seal"));
+  expect(at("seal")).toBeLessThan(at("land:ff"));
+  expect(f.events).not.toContain("diagnosis");
+  expect(f.events).not.toContain("discard");
+  // The worker is told which files, what each side is, and what the branch gained.
+  const brief = f.prompts.find((p) =>
+    p.startsWith("Reconcile merge conflicts"),
+  );
+  expect(brief).toContain("could not merge these files: a.txt");
+  expect(brief).toContain("what BOTH sides changed it to do");
+  expect(brief).toContain("abc1234 what the branch gained");
+  expect(brief).toContain("Write only: a.txt");
+  // Recorded as a plan revision of its own, at the least level.
+  expect(f.run.revision).toBe(1);
+  expect(f.run.steps.some((s) => s.id.startsWith("merge-conflicts-"))).toBe(
+    true,
+  );
+  // The review of the merged commit is pointed at what was done by hand.
+  const review = f.prompts.filter((p) => p.startsWith("Independently inspect"));
+  expect(review.at(-1)).toContain(`${BRANCH} moved while this delivery worked`);
+  expect(review.at(-1)).toContain(
+    "Git could not merge a.txt; a worker reconciled them by hand.",
+  );
+  expect(review.at(-1)).toContain('scope:"frontier"');
+  expect(f.live.merging).toBeUndefined();
+  expect(seam.trees.get(f.d.worktreeRoot)!.parent).toBe("f".repeat(40));
+  expect(f.d.integration).toMatchObject({
+    status: "applied",
+    before: "f".repeat(40),
+    after: f.run.mergedCommit,
   });
-  expect(f.events.filter((e) => e.startsWith("land"))).toEqual([]);
-  expect(f.events.at(-1)).toBe("restore");
-  // Back on the sealed commit, on the base it had.
-  expect(seam.trees.get(f.d.worktreeRoot)!.head).toBe(f.d.candidate);
-  expect(f.live.delivery.candidateBase()).toBe(f.base);
+});
+
+it("a marked line left behind is not a reconciled file: recovery is asked, and its repair works on the same merge", async () => {
+  const f = fixture("conflict-left");
+  await f.execute();
+  expect(f.events.filter((e) => e === "reconcile")).toHaveLength(2);
+  expect(f.events.filter((e) => e === "diagnosis")).toHaveLength(1);
+  // Nothing was staged while a marked line was still there.
+  expect(f.events.indexOf("stage")).toBeGreaterThan(
+    f.events.lastIndexOf("reconcile"),
+  );
+  expect(f.events).not.toContain("discard");
+  const diagnosis = f.prompts.find((p) => p.includes("Stage failure:"));
+  expect(diagnosis).toContain(
+    "Lines Git marked as conflicting are still in: a.txt.",
+  );
+  // Whoever decides is told what each level does to the unfinished merge.
+  expect(diagnosis).toContain(
+    'Level "replan" or "deviate" gives this merge up',
+  );
+  expect(f.d.integration.status).toBe("applied");
+});
+
+it("a replan gives the unfinished merge up and does the work again on the branch's head", async () => {
+  const f = fixture("conflict-replan");
+  await f.execute();
+  const at = (event: string) => f.events.lastIndexOf(event);
+  // The merge was discarded before the replanned work started.
+  expect(at("diagnosis")).toBeLessThan(at("discard"));
+  expect(at("discard")).toBeLessThan(at("implementation"));
+  expect(f.events).not.toContain("stage");
+  expect(f.live.merging).toBeUndefined();
+  expect(f.live.notes.join("\n")).toContain(
+    "was not reconciled; the work was done again on the branch's head",
+  );
+  expect(seam.trees.get(f.d.worktreeRoot)!.parent).toBe("f".repeat(40));
+  expect(f.d.integration.status).toBe("applied");
+});
+
+it("when nothing that merges can be verified, the last accepted candidate is delivered on the task branch and the run completes", async () => {
+  const f = fixture("conflict-stuck");
+  await f.execute();
+  const accepted = f.live.accepted?.candidate;
+  expect(accepted).toBeTruthy();
+  // The target branch is where its own history left it.
   expect(seam.refs.get(BRANCH)).toBe("f".repeat(40));
+  expect(f.events.filter((e) => e.startsWith("land"))).toEqual([]);
   expect(f.run.mergedCommit).toBeNull();
+  expect(seam.refs.get(f.d.taskBranch)).toBe(accepted);
+  expect(f.d.candidate).toBe(accepted);
+  expect(f.d.acceptance?.candidate).toBe(accepted);
+  expect(f.d.integration).toMatchObject({
+    status: "branch",
+    after: null,
+    reason: expect.stringMatching(
+      /^Completed, not merged into main: Delivery blocked \(tool\)/u,
+    ),
+  });
+  expect(f.d.integration.reason).toContain(
+    `The verified result is commit ${accepted} on ${f.d.taskBranch.replace("refs/heads/", "")}; to merge it yourself: git merge cadence/`,
+  );
+  // The worktree, with the unfinished merge in it, is kept.
   expect(f.cleanup).not.toHaveBeenCalled();
+  expect(f.d.cleanup.status).toBe("retained");
 });
 
 it("a branch nobody has checked out moves by reference alone; no checkout is touched", async () => {
@@ -845,7 +981,7 @@ it("a compare-and-swap that loses to another writer takes the new head in and la
   expect(seam.refs.get(BRANCH)).toBe(f.run.mergedCommit);
 });
 
-it("uncommitted changes to other files do not stop a fast-forward; changes to the same files retain the candidate", async () => {
+it("uncommitted changes to other files do not stop a fast-forward; changes to the same files leave the result on the task branch", async () => {
   const other = fixture("zero-edit-learn");
   seam.trees.get(other.root)!.dirty.add("notes.txt");
   await other.execute();
@@ -853,18 +989,17 @@ it("uncommitted changes to other files do not stop a fast-forward; changes to th
 
   const same = fixture("zero-edit-learn");
   seam.trees.get(same.root)!.dirty.add("a.txt");
-  await expect(same.execute()).rejects.toMatchObject({
-    code: "conflict",
-    detail: expect.stringContaining("uncommitted changes to files"),
-  });
+  await same.execute();
   expect(same.events.some((e) => e.startsWith("land"))).toBe(false);
-  expect(same.d.integration).toMatchObject({
-    status: "blocked",
-    reason: expect.stringContaining("a.txt"),
-  });
   expect(seam.refs.get(BRANCH)).toBe(same.base);
-  // The task branch was not advanced for a landing that did not happen.
-  expect(seam.refs.get(same.d.taskBranch)).toBe(same.base);
+  // Verified work is not thrown away: it is on the task branch instead.
+  expect(same.d.integration).toMatchObject({
+    status: "branch",
+    reason: expect.stringContaining(
+      "has uncommitted changes to files this delivery changes: a.txt",
+    ),
+  });
+  expect(seam.refs.get(same.d.taskBranch)).toBe(same.d.candidate);
   expect(same.cleanup).not.toHaveBeenCalled();
 });
 
@@ -886,36 +1021,62 @@ it("a branch that cannot take a landing just now is waited for, without holding 
   expect(f.d.integration.status).toBe("applied");
 });
 
-it("a deleted branch is never recreated: the candidate is retained", async () => {
+it("a deleted branch is never recreated: the verified result is delivered on the task branch", async () => {
   const f = fixture("zero-edit-learn");
   const learn = f.engine.learn.bind(f.engine);
   vi.spyOn(f.engine, "learn").mockImplementation(async (live, cwd, p) => {
     await learn(live, cwd, p);
     seam.refs.delete(BRANCH);
   });
-  await expect(f.execute()).rejects.toMatchObject({
-    code: "stale",
-    detail: expect.stringContaining("no longer exists"),
-  });
+  await f.execute();
   expect(seam.refs.has(BRANCH)).toBe(false);
   expect(f.run.mergedCommit).toBeNull();
+  // Verification went on without a branch to compare against.
+  expect(f.counts().reviews).toBe(1);
+  expect(f.d.integration).toMatchObject({
+    status: "branch",
+    reason: expect.stringMatching(
+      /^Completed, not merged into main: refs\/heads\/main no longer exists\. The verified result is commit /u,
+    ),
+  });
+  expect(seam.refs.get(f.d.taskBranch)).toBe(f.d.candidate);
   expect(f.cleanup).not.toHaveBeenCalled();
 });
 
-it("a fast-forward Git refuses leaves the branch where it was and reports nothing as merged", async () => {
+it("a fast-forward Git refuses leaves the branch where it was; the result stays on the task branch with Git's own words", async () => {
   const f = fixture("zero-edit-learn");
   // Something a path comparison did not catch (Git still refuses it).
   seam.trees.get(f.root)!.dirty.add("blocked.txt");
-  await expect(f.execute()).rejects.toThrow();
+  await f.execute();
   expect(seam.refs.get(BRANCH)).toBe(f.base);
   expect(f.run.mergedCommit).toBeNull();
   expect(f.d.integration).toMatchObject({
-    status: "blocked",
+    status: "branch",
     after: null,
-    // Git's own words say why.
     reason: expect.stringContaining("would be overwritten"),
   });
+  expect(seam.refs.get(f.d.taskBranch)).toBe(f.d.candidate);
   expect(f.cleanup).not.toHaveBeenCalled();
+});
+
+it("a cancellation or an unknown outcome is reported as what it is, never as a delivery on the task branch", async () => {
+  const unknown = fixture("unknown");
+  await expect(unknown.execute()).rejects.toThrow("could not be read back");
+  expect(unknown.d.integration.status).toBe("unknown");
+  expect(seam.refs.get(unknown.d.taskBranch)).not.toBe(unknown.base);
+
+  const canceled = fixture("zero-edit-learn");
+  seam.trees.get(canceled.root)!.dirty.add("a.txt");
+  const integrate = canceled.engine.integrate.bind(canceled.engine);
+  vi.spyOn(canceled.engine, "integrate").mockImplementation(
+    async (...args: unknown[]) => {
+      canceled.live.abort.abort();
+      return integrate(...args);
+    },
+  );
+  await expect(canceled.execute()).rejects.toThrow();
+  expect(canceled.d.integration.status).not.toBe("branch");
+  expect(seam.refs.get(canceled.d.taskBranch)).toBe(canceled.base);
 });
 
 it("baseline repair can expand the original scope and deliver without another approval", async () => {
@@ -1049,7 +1210,7 @@ it("crash recovery settleInterrupted marks unknown, distinguishes confirmed chec
     `refs/cadence/runs/${f.run.id}/checkpoints/2`,
   );
   // A run that was only waiting its turn had moved nothing.
-  expect(settled.notice).not.toContain("A landing had started");
+  expect(settled.notice).not.toContain("landing");
 
   const g = fixture();
   const of = (name: string) =>
@@ -1066,6 +1227,17 @@ it("crash recovery settleInterrupted marks unknown, distinguishes confirmed chec
   g.engine.settleInterrupted(g.run.id);
   expect((g.records.get(of("state.json")) as WorkflowRun).notice).toContain(
     `A landing had started: ${BRANCH} may already be at 444444444444 (it was at 111111111111).`,
+  );
+
+  // A journal that cannot be read says so instead of implying nothing moved.
+  const h = fixture();
+  const on = (name: string) =>
+    resolve("/controlled-records", "runs", h.run.id, name);
+  h.records.set(on("state.json"), h.run);
+  h.records.set(on("landing.json"), { status: "intent", branch: BRANCH });
+  h.engine.settleInterrupted(h.run.id);
+  expect((h.records.get(on("state.json")) as WorkflowRun).notice).toContain(
+    `The record of this run's landing could not be read: ${BRANCH} may or may not have been moved.`,
   );
 });
 
@@ -1136,23 +1308,22 @@ it("a replay clears the review's delta base and the C0 evidence, so neither span
     revision: 0,
     scope: ["a.txt"],
     steps: [],
+    expected: 1,
     waived: new Set(),
   };
   const frontier = "9".repeat(40);
   seam.refs.set(BRANCH, frontier);
-  const head = await f.engine.sealCandidate(
-    f.live,
-    candidateCwd,
-    f.live.proposal,
-    ["a.txt"],
-  );
+  const head = await f.engine.candidate(f.live, candidateCwd, f.live.proposal, [
+    "a.txt",
+  ]);
   expect(head).not.toBe(sealed);
   expect(f.d.candidate).toBe(head);
   expect(f.live.delivery.candidateBase()).toBe(frontier);
   expect(f.live.lastReviewedCandidate).toBeUndefined();
   expect(f.live.c0Checks).toBeUndefined();
-  // Sealed once already: the same commit is not sealed a second time.
-  expect(f.events).toEqual(["onto", "replay", "commit"]);
+  // What the replay staged on the branch's head is committed and sealed
+  // there like any other candidate.
+  expect(f.events).toEqual(["onto", "replay", "commit", "seal"]);
 });
 
 it("verifyAndRepair stops honestly on ReviewLedger exhaustedFamilies after 2 failed architectural replan routes without a 3rd replan", async () => {

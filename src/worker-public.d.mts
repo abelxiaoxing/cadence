@@ -446,6 +446,9 @@ export interface WorkerPublicRequest {
     base: string;
     candidate: string;
     deltaBase?: string;
+    /** Where the delivery started, when its target branch moved since:
+     * `frontierBase..base` is what the branch gained. */
+    frontierBase?: string;
   };
   protocol: 2;
   taskId: string;

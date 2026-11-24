@@ -33,10 +33,18 @@ const PLAN_CHECK = Type.Object({
 });
 const BUILD = Type.Object({
   ...CHECK.properties,
-  outputs: Type.Array(Type.String(), {
-    description:
-      "Declared repository-relative derived output paths this build may write (never tests, licenses or upstream provenance).",
-  }),
+  outputs: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Repository-relative paths this build derives as a whole from the sources (bundles, generated code); never tests, licenses or upstream provenance. They are rebuilt, never merged, when the delivery meets other changes.",
+    }),
+  ),
+  refreshes: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Repository-relative files whose entries are maintained by hand and whose values this build only recomputes in place (a table of content hashes). A build names at least one path in outputs or refreshes.",
+    }),
+  ),
 });
 const SETUP_LINK = Type.Object({
   path: Type.String({
@@ -264,7 +272,7 @@ export const PLAN_PARAMETERS = Type.Object({
   build: Type.Optional(
     Type.Array(BUILD, {
       description:
-        "Optional owner-synced build commands run after edits before combined verification, at most eight. Each names the exact repository-relative derived outputs it may touch.",
+        "Owner-run build commands, run after edits before combined verification, at most eight; each names the exact repository-relative paths it may write. Omit to use the builds the repository itself declares in .cadence/derived.json (none when it has no such file); pass [] for none; pass a list to state your own.",
     }),
   ),
   links: Type.Optional(

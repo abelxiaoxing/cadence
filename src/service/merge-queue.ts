@@ -28,6 +28,45 @@ export function laneKey(repositoryIdentity: string, branch: string): string {
   return `${repositoryIdentity}\0${branch}`;
 }
 
+/** What landed on each lane while this owner ran, in landing order. A run
+ * takes the lane's mark together with its baseline; whatever was added after
+ * that mark landed while it worked. Entries no run can ask for any more are
+ * dropped. In memory only: nothing interrupted is continued after a restart,
+ * so nothing would ask. */
+export class LandingLog<T> {
+  private readonly lanes = new Map<
+    string,
+    { added: number; entries: { at: number; value: T }[] }
+  >();
+
+  /** How many landings this lane has seen so far. */
+  mark(key: string): number {
+    return this.lanes.get(key)?.added ?? 0;
+  }
+  add(key: string, value: T): void {
+    let lane = this.lanes.get(key);
+    if (!lane) {
+      lane = { added: 0, entries: [] };
+      this.lanes.set(key, lane);
+    }
+    lane.entries.push({ at: ++lane.added, value });
+  }
+  /** What landed after `mark`, oldest first. */
+  since(key: string, mark: number): T[] {
+    return (this.lanes.get(key)?.entries ?? [])
+      .filter((entry) => entry.at > mark)
+      .map((entry) => entry.value);
+  }
+  /** Drops what no run asks for: `oldest` is the lowest mark a run on this
+   * lane still holds, null when none holds one. */
+  retain(key: string, oldest: number | null): void {
+    const lane = this.lanes.get(key);
+    if (!lane) return;
+    if (oldest === null) this.lanes.delete(key);
+    else lane.entries = lane.entries.filter((entry) => entry.at > oldest);
+  }
+}
+
 export class MergeQueue {
   private issued = 0;
   private readonly lanes = new Map<string, Lane>();

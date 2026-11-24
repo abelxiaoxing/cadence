@@ -361,6 +361,43 @@ it("a settled line keeps its outcome, owner-clock duration and, when unsuccessfu
   expect(line(merged, "zh")).toContain("已完成 · 合并 9a94027 · 1 分 12 秒");
   expect(line(merged)).not.toContain("Cancel workflow");
   expect(line(merged)).not.toContain("Changed files");
+  // Verified work that stayed on its task branch completes, and says where
+  // it is: never the line of an ordinary merge.
+  const delivery = deliveryObservation(
+    {
+      policy: "task-branch-v3",
+      target: {
+        checkoutRoot: "/fixture",
+        repository: "/fixture/.git",
+        repositoryIdentity: "a".repeat(64),
+        branch: "refs/heads/main",
+        head: "a".repeat(40),
+      },
+    },
+    "/worktrees",
+    randomUUID(),
+    "feature",
+  );
+  delivery.integration = {
+    status: "branch",
+    before: "a".repeat(40),
+    after: null,
+    reason:
+      "Completed, not merged into main: refs/heads/main no longer exists.",
+  };
+  const unmerged = run(
+    { status: "completed", phase: "finished", delivery },
+    1_000_000,
+    1_072_000,
+  );
+  const task = delivery.taskBranch.replace("refs/heads/", "");
+  expect(line(unmerged)).toContain(
+    `completed · not merged into main; the result is on ${task} · 1m 12s`,
+  );
+  expect(line(unmerged)).not.toContain("merged 9a94027");
+  expect(line(unmerged, "zh")).toContain(
+    `已完成 · 未合入 main，结果在 ${task} · 1 分 12 秒`,
+  );
   const failed = run(
     {
       status: "failed",
@@ -1078,6 +1115,28 @@ it("delivery UI distinguishes an accepted candidate from an applied merge and na
   expect(retained).toContain(
     "<dt>Post-merge checks</dt><dd><code>passed</code></dd>",
   );
+  // A verified result that stayed on its task branch, with the reason.
+  d.integration = {
+    status: "branch",
+    before: "a".repeat(40),
+    after: null,
+    reason:
+      "Completed, not merged into main: refs/heads/main no longer exists.",
+  };
+  expect(card("completed")).toContain(
+    "<dt>Local integration</dt><dd><code>Not merged; delivered on the task branch</code></dd>",
+  );
+  expect(card("completed")).toContain(
+    "<p>Completed, not merged into main: refs/heads/main no longer exists.</p>",
+  );
+  expect(card("completed")).not.toContain("Target branch update");
+  expect(
+    renderToStaticMarkup(
+      <LocaleProvider initial="zh">
+        <DeliveryDetails delivery={d} status="completed" />
+      </LocaleProvider>,
+    ),
+  ).toContain("未合入；已交付到任务分支");
 });
 it("approval card displays the owner-bound target and branch/worktree delivery policy", () => {
   const s = state();

@@ -368,8 +368,8 @@ export class WorkflowDelivery {
   }
 
   /** The candidate's worktree now stands on the target branch's current head,
-   * ready for the sealed commit to be replayed there. Until that replay is
-   * committed there is no candidate and no acceptance. */
+   * ready for the sealed commit to be replayed there. Until what the replay
+   * leaves is committed and sealed there is no candidate and no acceptance. */
   moved(frontier: string): void {
     if (this.view.workspace?.state !== "ready")
       throw new ContractError("stale");
@@ -380,23 +380,8 @@ export class WorkflowDelivery {
     this.save();
   }
 
-  /** The replayed delivery commit: what HEAD became when the replay was
-   * committed on `frontier`. */
-  async replayed(
-    delivery: string,
-    frontier: string,
-    scope: readonly string[],
-    git: Git,
-  ): Promise<string> {
-    if (this.base !== frontier) throw new ContractError("stale");
-    // The owner made this commit itself; record it before the tip is asserted.
-    this.update(delivery);
-    await this.pinCheckpoint(delivery, "delivery", git);
-    return this.adopt(delivery, frontier, scope);
-  }
-
-  /** A replay that could not be completed was undone: the worktree is back on
-   * the sealed commit it had before, on the base it had before. */
+  /** Git refused to replay at all and the attempt was undone: the worktree is
+   * back on the sealed commit it had before, on the base it had before. */
   restored(sealed: string, base: string): void {
     if (this.view.workspace?.state !== "ready")
       throw new ContractError("stale");
@@ -435,6 +420,34 @@ export class WorkflowDelivery {
       newOid: signedOid,
       status: "confirmed",
     });
+  }
+
+  /** Nothing could be put on the target branch: the task branch takes the
+   * last accepted candidate, which stays this delivery's result. The worktree
+   * is kept, whatever state the attempt to land left it in. Caller holds the
+   * repo mutation lease. */
+  async retainOnBranch(
+    candidate: string,
+    record: AcceptanceRecord,
+    reason: string,
+    git: Git,
+  ): Promise<void> {
+    if (record.candidate !== candidate || !this.isSealedDelivery(candidate))
+      throw new ContractError("stale");
+    await this.advanceTaskBranch(candidate, git);
+    this.view.candidate = candidate;
+    this.view.acceptance = record;
+    this.view.integration = {
+      status: "branch",
+      before: this.view.integration.before,
+      after: null,
+      reason,
+    };
+    this.view.cleanup = {
+      status: "retained",
+      reason: "The delivery was not merged; its worktree is kept.",
+    };
+    this.save();
   }
 
   /** Where the assignment's own worktree lives, beside the candidate. */

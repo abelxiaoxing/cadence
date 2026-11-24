@@ -1,7 +1,7 @@
 /** Landing order per target branch: pure ordering, no Git. */
 import { randomUUID } from "node:crypto";
 import { expect, it } from "vitest";
-import { laneKey, MergeQueue } from "../src/service/merge-queue.ts";
+import { LandingLog, laneKey, MergeQueue } from "../src/service/merge-queue.ts";
 
 const MAIN = laneKey("repo", "refs/heads/main");
 const never = () => new AbortController().signal;
@@ -132,4 +132,32 @@ it("waiters are not counted", async () => {
   first.release();
   await Promise.all(all);
   expect(order).toEqual(Array.from({ length: 500 }, (_, i) => i));
+});
+
+it("the landing log answers what landed after a run took its baseline, per branch, and drops what nobody can ask for", () => {
+  const log = new LandingLog<string>();
+  const OTHER = laneKey("repo", "refs/heads/release");
+  expect(log.mark(MAIN)).toBe(0);
+  expect(log.since(MAIN, 0)).toEqual([]);
+  log.add(MAIN, "first");
+  // A run admitted now has the first landing in its baseline already.
+  const mark = log.mark(MAIN);
+  log.add(MAIN, "second");
+  log.add(OTHER, "elsewhere");
+  log.add(MAIN, "third");
+  expect(log.since(MAIN, mark)).toEqual(["second", "third"]);
+  expect(log.since(MAIN, 0)).toEqual(["first", "second", "third"]);
+  expect(log.since(OTHER, 0)).toEqual(["elsewhere"]);
+  // The oldest run still working started at `mark`: what came before goes.
+  log.retain(MAIN, mark);
+  expect(log.since(MAIN, 0)).toEqual(["second", "third"]);
+  expect(log.since(MAIN, mark)).toEqual(["second", "third"]);
+  // Marks keep counting from where they were.
+  expect(log.mark(MAIN)).toBe(3);
+  // Nobody is working on the branch any more: nothing is kept.
+  log.retain(MAIN, null);
+  expect(log.since(MAIN, 0)).toEqual([]);
+  expect(log.mark(MAIN)).toBe(0);
+  expect(log.since(OTHER, 0)).toEqual(["elsewhere"]);
+  log.retain(laneKey("repo", "refs/heads/unknown"), null);
 });

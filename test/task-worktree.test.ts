@@ -494,9 +494,17 @@ it("dev checkpoints stay pinned under private refs, the candidate is sealed on i
   f.delivery.moved(frontier);
   expect(f.view.candidate).toBeNull();
   expect(await f.delivery.assertTip()).toBe(frontier);
+  // What the replay staged is committed and sealed there like any candidate.
   f.gitAt(cwd, "cherry-pick", "--no-commit", c0);
-  f.gitAt(cwd, "commit", "-qm", "Cadence: clean single-commit delivery");
-  const c1 = await f.delivery.replayed(f.head(cwd), frontier, ["a.txt"], git);
+  f.gitAt(cwd, "commit", "-qm", "Cadence: candidate for verification");
+  f.delivery.update(f.head(cwd));
+  const c1 = await f.delivery.sealDeliveryCommit(
+    frontier,
+    ["a.txt"],
+    "Cadence: clean single-commit delivery",
+    git,
+  );
+  expect(f.delivery.isSealedDelivery(c1)).toBe(true);
   expect(f.gitAt(cwd, "show", "-s", "--format=%P", c1)).toBe(frontier);
   expect(f.gitAt(cwd, "diff", "--name-only", frontier, c1)).toBe("a.txt");
   expect(f.delivery.candidateBase()).toBe(frontier);

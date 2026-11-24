@@ -19,7 +19,7 @@ const parameters = Type.Object(
     mode: optional(
       Type.String({ enum: ["paths", "diff", "base", "candidate"] }),
     ),
-    scope: optional(Type.String({ enum: ["full", "delta"] })),
+    scope: optional(Type.String({ enum: ["full", "delta", "frontier"] })),
     path: optional(Type.String({ maxLength: 1024 })),
     cursor: optional(Type.String({ maxLength: 128 })),
     close: optional(Type.Boolean({ enum: [true] })),
@@ -69,8 +69,9 @@ export function createChangeTools(binding) {
     ![binding.base, binding.candidate].every(
       (oid) => typeof oid === "string" && OID.test(oid),
     ) ||
-    (binding.deltaBase !== undefined &&
-      (typeof binding.deltaBase !== "string" || !OID.test(binding.deltaBase)))
+    [binding.deltaBase, binding.frontierBase].some(
+      (oid) => oid !== undefined && (typeof oid !== "string" || !OID.test(oid)),
+    )
   )
     throw new Error("Invalid fixed Git evidence binding");
   const scans = new Set(),
@@ -135,15 +136,19 @@ export function createChangeTools(binding) {
         path = args.path;
       if (!["paths", "diff", "base", "candidate"].includes(mode))
         throw new Error("Invalid change mode");
-      if (!["full", "delta"].includes(scope))
+      if (!["full", "delta", "frontier"].includes(scope))
         throw new Error("Invalid change scope");
-      if (scope === "delta" && !["paths", "diff"].includes(mode))
+      if (scope !== "full" && !["paths", "diff"].includes(mode))
         throw new Error(
-          "Delta scope applies only to paths and diff modes; use scope full or omit scope for base/candidate file reads",
+          "Delta and frontier scopes apply only to paths and diff modes; use scope full or omit scope for base/candidate file reads",
         );
       if (scope === "delta" && !binding.deltaBase)
         throw new Error(
           "Delta scope is unavailable on the first review round; use scope full or omit scope",
+        );
+      if (scope === "frontier" && !binding.frontierBase)
+        throw new Error(
+          "Frontier scope is unavailable: the target branch did not move while this delivery worked; use scope full or omit scope",
         );
       if (
         path !== undefined &&
@@ -166,8 +171,15 @@ export function createChangeTools(binding) {
         throw new Error(
           "Change cursor capacity reached; close an unused cursor",
         );
-      const effectiveBase =
-        scope === "delta" ? binding.deltaBase : binding.base;
+      // The frontier is what the target branch gained while the delivery
+      // worked: from where the delivery started to the candidate's own base.
+      const [effectiveBase, revision] =
+        scope === "frontier"
+          ? [binding.frontierBase, binding.base]
+          : [
+              scope === "delta" ? binding.deltaBase : binding.base,
+              binding.candidate,
+            ];
       const command =
         mode === "paths" || mode === "diff"
           ? [
@@ -179,7 +191,7 @@ export function createChangeTools(binding) {
               "--no-ext-diff",
               "--no-textconv",
               effectiveBase,
-              binding.candidate,
+              revision,
               "--",
               ...(path ? [path] : []),
             ]
@@ -187,7 +199,7 @@ export function createChangeTools(binding) {
               "show",
               "--no-ext-diff",
               "--no-textconv",
-              `${mode === "base" ? effectiveBase : binding.candidate}:${path}`,
+              `${mode === "base" ? effectiveBase : revision}:${path}`,
             ];
       const child = spawn(
         "git",
@@ -221,6 +233,7 @@ export function createChangeTools(binding) {
         eof: false,
         bytes: 0,
         base: effectiveBase,
+        revision,
         scope,
         active: undefined,
         timer: undefined,
@@ -344,8 +357,9 @@ export function createChangeTools(binding) {
       bytes,
       scope: scan.scope,
       base: scan.base,
-      candidate: binding.candidate,
+      candidate: scan.revision,
       ...(binding.deltaBase ? { deltaBase: binding.deltaBase } : {}),
+      ...(binding.frontierBase ? { frontierBase: binding.frontierBase } : {}),
       coverage: {
         complete: state === "done",
         consistency: "fixed-git-objects",
@@ -369,7 +383,7 @@ export function createChangeTools(binding) {
         name: "changes",
         label: "changes",
         description:
-          "Readonly evidence for the owner's fixed base/candidate commits (and optional deltaBase from the prior review round). mode paths lists changed paths (Git-quoted), diff reads patches, base/candidate reads one file at that revision. scope defaults to full (candidateBase..candidate); scope delta reads deltaBase..candidate when available while full remains always readable. Optional checkout-relative path narrows a diff. Text may split across pages bounded by serialized response bytes: continue exclusively with {cursor}; {cursor,close:true} releases it. more is incomplete, including empty progress. No arbitrary refs, Git commands, shell or writes. Omit unused parameters or set them to null; never invent a cursor or mix query and cursor fields.",
+          "Readonly evidence for the owner's fixed base/candidate commits (and optional deltaBase from the prior review round). mode paths lists changed paths (Git-quoted), diff reads patches, base/candidate reads one file at that revision. scope defaults to full (candidateBase..candidate); scope delta reads deltaBase..candidate when available while full remains always readable; scope frontier, when the target branch moved while the delivery worked, reads what the branch gained (frontierBase..candidateBase). Optional checkout-relative path narrows a diff. Text may split across pages bounded by serialized response bytes: continue exclusively with {cursor}; {cursor,close:true} releases it. more is incomplete, including empty progress. No arbitrary refs, Git commands, shell or writes. Omit unused parameters or set them to null; never invent a cursor or mix query and cursor fields.",
         parameters,
         constrainedSampling: { type: "json_schema", strict: "prefer" },
         execute,

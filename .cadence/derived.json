@@ -1,0 +1,29 @@
+{
+  "build": [
+    {
+      "name": "operator bundle",
+      "command": "bun scripts/build-operator.mjs",
+      "outputs": ["src/operator-cli.mjs"]
+    },
+    {
+      "name": "service bundles",
+      "command": "bun scripts/build-service.mjs",
+      "outputs": [
+        "src/native-build.ts",
+        "src/service-cli.mjs",
+        "src/service-host.mjs",
+        "src/model-preview.mjs"
+      ]
+    },
+    {
+      "name": "web bundle",
+      "command": "node scripts/build-web.mjs",
+      "outputs": ["web/dist"]
+    },
+    {
+      "name": "provenance pins",
+      "command": "node scripts/sync-provenance.mjs",
+      "refreshes": ["provenance/webui-reuse.json"]
+    }
+  ]
+}

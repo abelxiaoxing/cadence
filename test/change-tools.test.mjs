@@ -222,3 +222,55 @@ it("delta scope shows deltaBase..candidate while full scope stays readable, and 
     noDeltaKit.tools[0].execute("id", { mode: "paths", scope: "delta" }),
   ).rejects.toThrow(/delta/i);
 });
+it("frontier scope shows what the target branch gained (frontierBase..base), apart from the candidate's own change", async () => {
+  const f = deliveryFixture();
+  // The branch moves on: this is what the delivery was replayed onto.
+  writeFileSync(join(f.root, "branch.txt"), "gained by the branch\n");
+  f.git("add", "--", "branch.txt");
+  f.git("commit", "-qm", "the branch moved");
+  const base = f.head(f.root);
+  writeFileSync(join(f.root, "a.txt"), "the delivery\n");
+  f.git("add", "--", "a.txt");
+  f.git("commit", "-qm", "the delivery");
+  const candidate = f.head(f.root);
+  const kit = createChangeTools({
+    root: f.root,
+    base,
+    candidate,
+    frontierBase: f.base,
+  });
+  owned.push(kit);
+  const read = async (args) =>
+    JSON.parse((await kit.tools[0].execute("id", args)).content[0].text);
+  const gained = await read({ mode: "paths", scope: "frontier" });
+  expect(gained.text).toContain("branch.txt");
+  expect(gained.text).not.toContain("a.txt");
+  // The page says which two commits it compared.
+  expect(gained).toMatchObject({
+    scope: "frontier",
+    base: f.base,
+    candidate: base,
+    frontierBase: f.base,
+  });
+  expect(
+    (await read({ mode: "diff", scope: "frontier", path: "branch.txt" })).text,
+  ).toContain("+gained by the branch");
+  // The candidate's own change is still the default scope.
+  const own = await read({ mode: "paths" });
+  expect(own.text).toContain("a.txt");
+  expect(own.text).not.toContain("branch.txt");
+  expect(own).toMatchObject({ scope: "full", base, candidate });
+  await expect(
+    read({ mode: "base", path: "a.txt", scope: "frontier" }),
+  ).rejects.toThrow(/frontier scopes apply only to paths and diff/u);
+
+  // A branch that did not move has no frontier to read.
+  const still = createChangeTools({ root: f.root, base, candidate });
+  owned.push(still);
+  await expect(
+    still.tools[0].execute("id", { mode: "paths", scope: "frontier" }),
+  ).rejects.toThrow("the target branch did not move");
+  expect(() =>
+    createChangeTools({ root: f.root, base, candidate, frontierBase: "main" }),
+  ).toThrow("Invalid fixed Git evidence binding");
+});

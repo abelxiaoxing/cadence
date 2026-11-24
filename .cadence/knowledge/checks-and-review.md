@@ -14,6 +14,18 @@ Anchors: `src/service/workflows.ts#sealAndCheckC0`, `src/service/workflow-review
 
 Source: internalized from engineering/checks-review.md, 2026-11-22
 
+### A merged candidate is held to what landed beside it
+
+Kind: contract
+
+Why: A run takes its lane's `LandingLog` mark with its baseline; when it absorbs the branch, `siblingChecks` adds the checks of every delivery that landed since on a source file this delivery also changes (same command once, still an ancestor of the new base), and they gate the round like its own.
+The review is told which files both changed and which a worker reconciled, and reads what the branch gained through the `changes` tool's `frontier` scope (`frontierBase..base`).
+Paths a declared build writes do not count as overlap.
+
+Anchors: `src/service/workflows.ts#siblingChecks`, `src/service/merge-queue.ts#LandingLog`, `src/service/workflows.ts#frontierBrief`, `src/change-tools.mjs#createChangeTools`, `test/merge-queue-delivery.test.ts`
+
+Source: this delivery, 2026-11-24
+
 ### Timed-out checks and nonzero workers need confirmed settlement before recovery
 
 Kind: pitfall

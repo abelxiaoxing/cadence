@@ -10,6 +10,7 @@ import type {
   WorkflowProposal,
   WorkflowRun,
 } from "../src/service/contracts/workflow.ts";
+import { readableWorkflowPlan } from "../src/service/contracts/workflow.ts";
 import { decodeRoutePlan } from "../src/service/workflow-controller.ts";
 import { deliveryObservation } from "../src/service/workflow-delivery.ts";
 import { Workflows } from "../src/service/workflows.ts";
@@ -158,6 +159,108 @@ it("3D publishProposal auto-discovers ignored node_modules when links is omitted
     expect(() =>
       propose({ ...omitLinks(), investigations: [randomUUID()] }),
     ).toThrow(/invalid-plan|invalid/i);
+  } finally {
+    f.close();
+  }
+});
+
+it("an agreement that leaves build out is bound to the repository's own declaration; [] declares none, and a declaration that cannot be used is refused by name", () => {
+  const f = v5Fixture();
+  try {
+    const omitBuild = (): WorkflowPlan => {
+      const p = plan();
+      delete p.build;
+      return p;
+    };
+    const propose = (p: WorkflowPlan) => {
+      const r = f.workflows.command(randomUUID(), f.epoch, {
+        action: "propose",
+        plan: p,
+        model: f.version,
+      });
+      if (r.kind !== "workflow" || r.response.type !== "proposal")
+        throw Error("proposal");
+      return r.response.proposal;
+    };
+    // A repository that declares nothing has no build steps.
+    expect(propose(omitBuild()).plan.build).toEqual([]);
+
+    const declare = (body: unknown) => {
+      mkdirSync(join(f.root, ".cadence"), { recursive: true });
+      writeFileSync(
+        join(f.root, ".cadence/derived.json"),
+        typeof body === "string" ? body : JSON.stringify(body),
+      );
+    };
+    const build = [
+      { name: "bundle", command: "make dist", outputs: ["dist", "gen.ts"] },
+      { name: "pins", command: "make pins", refreshes: ["pins.json"] },
+    ];
+    declare({ build });
+    const bound = propose(omitBuild());
+    expect(bound.plan.build).toEqual([
+      { name: "bundle", command: "make dist", outputs: ["dist", "gen.ts"] },
+      {
+        name: "pins",
+        command: "make pins",
+        outputs: [],
+        refreshes: ["pins.json"],
+      },
+    ]);
+    // Shown with the rest of the agreement, so it is what gets approved.
+    expect(readableWorkflowPlan(bound.plan)).toContain(
+      "bundle: make dist (no timeout) -> outputs: dist, gen.ts\npins: make pins (no timeout) -> refreshes: pins.json",
+    );
+    // An explicit list is the agreement's own; an empty one declares none.
+    const none = propose({ ...plan(), build: [] });
+    expect(none.plan.build).toEqual([]);
+    expect(none.digest).not.toBe(bound.digest);
+    const own = [{ name: "mine", command: "make mine", outputs: ["out"] }];
+    expect(propose({ ...plan(), build: own }).plan.build).toEqual(own);
+    // What was bound stays bound when the same agreement is rebound.
+    declare({ build: [] });
+    expect(
+      f.workflows.revalidate(randomUUID(), bound, f.version).plan.build,
+    ).toEqual(bound.plan.build);
+
+    for (const [body, said] of [
+      ["{ not json", ".cadence/derived.json: is not JSON"],
+      [
+        { build, checks: [] },
+        '.cadence/derived.json: is an object with one field, "build"',
+      ],
+      [
+        { build: [{ name: "x", command: "make x" }] },
+        ".cadence/derived.json: build[0].outputs: needs at least one declared repository-relative path here or in refreshes",
+      ],
+      [
+        { build: [{ name: "x", command: "make x", outputs: ["../out"] }] },
+        ".cadence/derived.json: build[0].outputs[0]:",
+      ],
+      [
+        {
+          build: [
+            {
+              name: "x",
+              command: "make x",
+              outputs: ["dist"],
+              refreshes: ["dist/pins.json"],
+            },
+          ],
+        },
+        '.cadence/derived.json: build[0].refreshes: "dist/pins.json" is also under outputs',
+      ],
+    ] as const) {
+      declare(body);
+      expect(() => propose(omitBuild()), said).toThrow(
+        expect.objectContaining({
+          code: "invalid",
+          detail: expect.stringContaining(said),
+        }),
+      );
+      // The coordinator can still say what it means.
+      expect(propose({ ...plan(), build: [] }).plan.build).toEqual([]);
+    }
   } finally {
     f.close();
   }

@@ -61,12 +61,23 @@ export interface WorkflowCheck {
    * it has no effect; saved agreements that carry it still decode. */
   target?: WorkflowCheckTarget;
 }
-/** V4: owner-synced build step whose edits must stay inside its declared outputs. */
+/** An owner-run build step. It may change only what it declares: `outputs`
+ * are derived as a whole and rebuilt from the sources, so a merge never
+ * reconciles their bytes; `refreshes` are files whose entries are source and
+ * whose values the command recomputes in place (a table of content hashes),
+ * so a merge reconciles the entries and the command supplies the values. */
 export interface WorkflowBuild {
   name: string;
   command: string;
   outputs: string[];
+  refreshes?: string[];
   timeoutMs?: number;
+}
+/** Every path the builds write: wholly derived outputs and refreshed files. */
+export function workflowBuildPaths(builds: readonly WorkflowBuild[]): string[] {
+  return [
+    ...new Set(builds.flatMap((b) => [...b.outputs, ...(b.refreshes ?? [])])),
+  ];
 }
 /** V4: narrow owner-managed dependency symlink provisioned from the original checkout. */
 export interface WorkflowSetupLink {
@@ -124,7 +135,10 @@ export interface WorkflowPlan {
   /** Version 3-4: what the independent review reads first (planned in Stage 2 for V5). */
   reviewReads?: WorkflowReading[];
   policy?: WorkflowPolicy;
-  /** Version 4+: deterministic owner-synced build commands with declared output paths. */
+  /** Version 4+: deterministic owner-synced build commands with declared
+   * paths. In V5 input, omitted (`undefined`) lets the owner bind the
+   * repository's own declaration (`.cadence/derived.json`) at proposal time;
+   * explicit `[]` declares none. */
   build?: WorkflowBuild[];
   /** Version 4+: owner-managed dependency symlinks from the original checkout.
    * In V5 input, omitted (`undefined`) enables owner proposal-time discovery of
@@ -210,7 +224,15 @@ export interface DeliveryObservation {
   candidate: string | null;
   acceptance: AcceptanceRecord | null;
   integration: {
-    status: "pending" | "blocked" | "applying" | "applied" | "unknown";
+    /** `branch`: the verified commit is on the task branch only; the target
+     * branch was not moved, and `reason` says why. */
+    status:
+      | "pending"
+      | "blocked"
+      | "applying"
+      | "applied"
+      | "branch"
+      | "unknown";
     before: string;
     after: string | null;
     reason: string;
@@ -584,27 +606,56 @@ function decodeWorkflowBuild(
   path: string,
   strict: boolean,
 ): WorkflowBuild {
-  const o = fields(path, v, ["name", "command", "outputs"], ["timeoutMs"]);
-  const { outputs: rawOutputs, ...command } = o;
-  const outputs = entries(`${path}.outputs`, rawOutputs, 64, (entry, item) =>
-    at(item, () => {
-      const p = workflowPath(entry, strict);
-      if (!workflowBoundary(p))
-        throw new Error(
-          "cannot target credentials, keys, .env, .git or paths outside the repository",
-        );
-      return p;
-    }),
+  const o = fields(
+    path,
+    v,
+    ["name", "command"],
+    ["outputs", "refreshes", "timeoutMs"],
   );
-  if (!outputs.length)
+  const { outputs: rawOutputs, refreshes: rawRefreshes, ...command } = o;
+  const paths = (name: "outputs" | "refreshes", raw: unknown) => {
+    if (raw === undefined) return [];
+    const declared = entries(`${path}.${name}`, raw, 64, (entry, item) =>
+      at(item, () => {
+        const p = workflowPath(entry, strict);
+        if (!workflowBoundary(p))
+          throw new Error(
+            "cannot target credentials, keys, .env, .git or paths outside the repository",
+          );
+        return p;
+      }),
+    );
+    if (new Set(declared).size !== declared.length)
+      issue(`${path}.${name}`, "lists a path twice");
+    return declared;
+  };
+  const outputs = paths("outputs", rawOutputs),
+    refreshes = paths("refreshes", rawRefreshes);
+  if (!outputs.length && !refreshes.length)
     issue(
       `${path}.outputs`,
-      "needs at least one declared repository-relative output path",
+      "needs at least one declared repository-relative path here or in refreshes",
     );
-  if (new Set(outputs).size !== outputs.length)
-    issue(`${path}.outputs`, "lists a path twice");
+  const both = refreshes.find(
+    (r) =>
+      workflowCovers(outputs, r) || outputs.some((o) => o.startsWith(`${r}/`)),
+  );
+  if (both)
+    issue(
+      `${path}.refreshes`,
+      `${quoted(both)} is also under outputs; a path is derived as a whole or refreshed in place, not both`,
+    );
   const base = decodeWorkflowCheck(command, path);
-  return { ...base, outputs };
+  return { ...base, outputs, ...(refreshes.length ? { refreshes } : {}) };
+}
+/** A repository's own build declaration, held to the rules of an agreement's. */
+export function decodeWorkflowBuilds(
+  v: unknown,
+  path: string,
+): WorkflowBuild[] {
+  return entries(path, v, WORKFLOW_LIMITS.builds, (entry, item) =>
+    decodeWorkflowBuild(entry, item, true),
+  );
 }
 function decodeWorkflowSetupLink(
   v: unknown,
@@ -733,7 +784,6 @@ export function decodeWorkflowPlan(
             "areas",
             "documents",
             "policy",
-            "build",
           ]
         : v3OrNewer
           ? [
@@ -753,7 +803,7 @@ export function decodeWorkflowPlan(
       "baselineChecks",
       "delivery",
     ],
-    v5 ? ["links", "tasks"] : [],
+    v5 ? ["build", "links", "tasks"] : [],
   );
   const documentation = (value: unknown, name: string) =>
     entries(name, value, 16, (entry, path) =>
@@ -869,11 +919,14 @@ export function decodeWorkflowPlan(
   );
   if (!checks.length)
     issue("checks", "needs at least one real verification command");
-  const build = v4OrNewer
-    ? entries("build", o.build, WORKFLOW_LIMITS.builds, (entry, path) =>
-        decodeWorkflowBuild(entry, path, strict),
-      )
-    : undefined;
+  // A current agreement that leaves `build` out leaves it to the repository's
+  // own declaration, bound when the proposal is published.
+  const build =
+    v4OrNewer && (!v5 || o.build !== undefined)
+      ? entries("build", o.build, WORKFLOW_LIMITS.builds, (entry, path) =>
+          decodeWorkflowBuild(entry, path, strict),
+        )
+      : undefined;
   const links =
     v4OrNewer && o.links !== undefined
       ? entries("links", o.links, WORKFLOW_LIMITS.links, (entry, path) =>
@@ -944,7 +997,7 @@ export function decodeWorkflowPlan(
               }
             }),
           },
-          build: build ?? [],
+          ...(build !== undefined ? { build } : {}),
           ...(links !== undefined ? { links } : {}),
         }
       : v3OrNewer
@@ -1101,12 +1154,11 @@ export function workflowPlanInput(v: unknown): WorkflowPlan {
     areas: [],
     documents: [],
     policy: {},
-    build: [],
     setup: [],
     baselineChecks: [],
   });
-  // Preserve omitted `links` as undefined so publishProposal can run 3D
-  // auto-discovery, while explicit `links: []` disables auto-discovery.
+  // Omitted `links` and `build` stay undefined so publishProposal can bind
+  // what the repository itself declares; an explicit `[]` declares none.
   if (Object.hasOwn(v, "tasks")) {
     const rawTasks = (v as { tasks?: unknown }).tasks;
     if (
@@ -1216,7 +1268,7 @@ export function workflowWrites(p: WorkflowPlan): string[] {
   return [
     ...new Set([
       ...p.tasks.flatMap((t) => t.writes),
-      ...(p.build ?? []).flatMap((b) => b.outputs),
+      ...workflowBuildPaths(p.build ?? []),
       ...workflowDocuments(p),
     ]),
   ];
@@ -1475,6 +1527,7 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
         "blocked",
         "applying",
         "applied",
+        "branch",
         "unknown",
       ]),
       before: gitOid(i.before),
@@ -1515,7 +1568,7 @@ export function readableDelivery(
   if (!binding) return "";
   const t = binding.target;
   if (binding.policy === "task-branch-v3")
-    return `Target: ${t.branch}${t.head ? ` @ ${t.head}` : " (its head when the run is admitted is the baseline)"}\nTarget checkout: ${t.checkoutRoot}\nExecution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Any number of conversations may deliver at once, each in its own candidate; nothing they do waits on your checkout.\nAcceptance: seal a single-parent delivery commit, run declared checks and independent Agent review on that exact OID, in the worktree only. When the target branch has moved, through another delivery or your own commits, the sealed commit is replayed onto its current head and checked and reviewed again; changed AGENTS.md rules are part of that review. A replay that Git cannot merge retains the candidate.\nDelivery: deliveries to one branch land one at a time in the order they became ready. The branch is moved to the exact verified OID: by reference alone when no worktree has it checked out, otherwise by fast-forward in that worktree, which keeps your uncommitted changes to other files; uncommitted changes to the same files retain the candidate. A branch that is being rebased is waited for. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
+    return `Target: ${t.branch}${t.head ? ` @ ${t.head}` : " (its head when the run is admitted is the baseline)"}\nTarget checkout: ${t.checkoutRoot}\nExecution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Any number of conversations may deliver at once, each in its own candidate; nothing they do waits on your checkout.\nAcceptance: seal a single-parent delivery commit, run declared checks and independent Agent review on that exact OID, in the worktree only. When the target branch has moved, through another delivery or your own commits, the sealed commit is replayed onto its current head: declared build outputs are rebuilt, never merged; lines Git cannot merge are resolved by a worker that has to keep what both sides do; and the result is checked and reviewed again, together with the checks of deliveries that changed the same files in the meantime. That review also covers changed AGENTS.md rules and whether the branch's own changes to those files survive.\nDelivery: deliveries to one branch land one at a time in the order they became ready. The branch is moved to the exact verified OID: by reference alone when no worktree has it checked out, otherwise by fast-forward in that worktree, which keeps your uncommitted changes to other files; uncommitted changes to the same files retain the candidate. A branch that is being rebased is waited for. When no verified commit can be put on the branch (it was deleted, or nothing that merges with what it gained passes verification), the last verified commit is delivered on the task branch instead and the result says first that it was not merged. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
   if (binding.policy === "task-branch-v2")
     return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.\nAcceptance: seal a single-parent delivery commit on top of the verified target frontier, run declared checks and independent Agent review on that exact OID. A verified, non-overlapping sibling delivery may be incorporated before sealing, followed by fresh checks and review.\nDelivery: advance the task branch and fast-forward only into the bound target with that exact signed-off OID. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
   return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: new cadence/<goal>-<run-id> branch and one stable isolated worktree after approval. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.\nAcceptance: checks and automatic Agent review of the exact candidate. A verified, non-overlapping sibling delivery may be merged into the isolated candidate, followed by fresh checks and review.\nDelivery: serialized fast-forward only into the bound target at its approved, verified-sibling or own last confirmed baseline. Keep the task branch; remove only owned worktrees without any residue, including ignored files. No source/profile/dependency copying, push or deployment.`;
@@ -1542,7 +1595,10 @@ export function deliveryLabels(
         ? "Not recorded"
         : pending(d.preparation),
     missingCandidate: beforeWorkspace ? "Not executed" : "Not recorded",
-    integration: pending(d.integration.status),
+    integration:
+      d.integration.status === "branch"
+        ? "Not merged; delivered on the task branch"
+        : pending(d.integration.status),
     cleanup: pending(d.cleanup.status),
   } as const;
 }
@@ -1873,7 +1929,7 @@ export function decodeWorkflowResponse(v: unknown): WorkflowResponse {
 const readableCheck = (c: WorkflowCheck, version?: 4 | 5) =>
   `${c.name}${version === 4 ? ` [${c.tier ?? "fast"}, target:${c.target ?? "run"}]` : version === 5 ? ` [${c.tier ?? "fast"}]` : ""}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`;
 const readableBuild = (b: WorkflowBuild) =>
-  `${b.name}: ${b.command} (${b.timeoutMs === undefined ? "no timeout" : `${b.timeoutMs}ms`}) -> outputs: ${b.outputs.join(", ")}`;
+  `${b.name}: ${b.command} (${b.timeoutMs === undefined ? "no timeout" : `${b.timeoutMs}ms`})${b.outputs.length ? ` -> outputs: ${b.outputs.join(", ")}` : ""}${b.refreshes?.length ? ` -> refreshes: ${b.refreshes.join(", ")}` : ""}`;
 const readableLink = (l: WorkflowSetupLink) =>
   `[${l.placement ?? "worktree"}] ${l.path} -> ${l.source ?? l.path}`;
 const readableReading = (r: WorkflowReading) =>

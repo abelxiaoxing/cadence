@@ -988,11 +988,13 @@ export function decodeWorkerPublicRequest(v) {
     invalid();
   if (o.changes !== undefined) {
     const hasDelta = Object.hasOwn(o.changes ?? {}, "deltaBase");
+    const hasFrontier = Object.hasOwn(o.changes ?? {}, "frontierBase");
     const c = closed(o.changes, [
       "root",
       "base",
       "candidate",
       ...(hasDelta ? ["deltaBase"] : []),
+      ...(hasFrontier ? ["frontierBase"] : []),
     ]);
     const root = text(c.root, 4096, true);
     if (
@@ -1012,6 +1014,7 @@ export function decodeWorkerPublicRequest(v) {
       base: oid(c.base),
       candidate: oid(c.candidate),
       ...(hasDelta ? { deltaBase: oid(c.deltaBase) } : {}),
+      ...(hasFrontier ? { frontierBase: oid(c.frontierBase) } : {}),
     };
   }
   if (
