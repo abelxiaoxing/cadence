@@ -129,6 +129,7 @@ export function App({
   entryObservation,
   projectAccess,
   homeFolder,
+  entryCsrf,
   projectEntries,
   notices,
   discovery: observedDiscovery,
@@ -158,6 +159,7 @@ export function App({
   ): Promise<string>;
   onOpenProject?(path: string): Promise<void>;
   homeFolder?: string;
+  entryCsrf?: string;
   projectEntries?: { path: string; current: boolean }[];
   /** Result of an explicit workbench action. */
   notices?: ReactNode;
@@ -1757,23 +1759,19 @@ export function App({
           ) : filesTab ? (
             <FilesPanel
               key={fileLocation?.cwd ?? workingFolder ?? "owner"}
+              cwd={fileLocation?.cwd ?? workingFolder}
               location={fileLocation}
-              switching={
-                conversationAvailable &&
-                !!chatId &&
-                !currentChatLocation &&
-                !chatIssues?.context &&
-                (!activity || !!activity.reading)
-              }
-              client={api.client}
-              enabled={conversationAvailable && !!fileLocation}
+              home={homeFolder}
+              csrf={entryCsrf}
               observed={`${execution.readiness}:${execution.value?.epoch ?? ""}`}
               onReference={(path) => {
                 if (!chatId) selectChat(filesConversationId);
+                const isAbs =
+                  path.startsWith("/") || /^[A-Za-z]:(?:[\\/]|$)/.test(path);
                 // A reference opened from a legacy view may enter a conversation
                 // in another subdirectory. Keep that reference's original base.
                 const reference =
-                  !chatId && fileLocation
+                  !chatId && fileLocation && !isAbs
                     ? `${fileLocation.cwd.replace(/[\\/]+$/, "")}${fileLocation.cwd.startsWith("/") ? "/" : "\\"}${path}`
                     : path;
                 setReference(reference);

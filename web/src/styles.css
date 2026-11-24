@@ -4380,6 +4380,335 @@ button.file-item:hover:not(:disabled),
   color: var(--text-faint);
   font-size: 11px;
 }
+.files-toolbar {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+.files-toolbar-spacer {
+  flex: 1;
+  min-width: 4px;
+}
+.files-pathrow {
+  flex-wrap: nowrap;
+  min-height: 30px;
+  padding: 4px 8px;
+}
+.files-breadcrumbs {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.files-breadcrumbs::-webkit-scrollbar {
+  display: none;
+}
+.file-filter.inline {
+  flex: 1;
+  padding: 0 2px;
+  border-bottom: 0;
+}
+.file-item.cut {
+  opacity: 0.45;
+}
+.file-item.hidden-entry .file-name {
+  opacity: 0.72;
+}
+.file-symlink-tag {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.file-name.muted {
+  opacity: 0.65;
+}
+.file-tree-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+}
+.file-tree-toggle:hover:not(:disabled) {
+  background: var(--bg-elev3);
+  color: var(--text);
+}
+.file-list.drop-root {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -4px;
+  background: var(--accent-soft);
+}
+.file-item.drop-target {
+  outline: 1.5px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.file-inline-form {
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  background: var(--bg-elev2);
+}
+.file-target-prefix {
+  flex: none;
+  max-width: 96px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-elev3);
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-inline-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 22px;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--inputbox-bg);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.file-inline-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+}
+.file-inline-btn:hover:not(:disabled) {
+  background: var(--bg-elev3);
+  color: var(--text);
+}
+.file-inline-btn.confirm {
+  color: var(--green);
+}
+.file-uploads {
+  flex: none;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-elev);
+  font-size: 11.5px;
+}
+.file-upload-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+.file-upload-row progress {
+  width: 100%;
+  height: 4px;
+  display: block;
+}
+.file-upload-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.file-upload-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-upload-state {
+  flex: none;
+  color: var(--text-faint);
+}
+.file-download-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+.file-unsaved-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-elev2);
+  font-size: 12px;
+}
+.file-unsaved-bar > span {
+  flex: 1;
+  min-width: 0;
+}
+.file-unsaved-bar .crumb.danger {
+  color: var(--red-text);
+}
+.file-editor {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  resize: none;
+  background: var(--code-bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+.file-preview-image-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  background: var(--code-bg);
+}
+.file-preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+.file-preview-binary {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.file-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev2);
+  color: var(--text);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+.file-download-btn:hover {
+  background: var(--bg-elev3);
+}
+.file-delete-path {
+  display: block;
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-elev2);
+  color: var(--text);
+  font-size: 12px;
+  word-break: break-all;
+}
+/* Floating right-click context menu (adapted from pi-web-ui .ctx-menu). */
+.ctx-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 184px;
+  max-width: 280px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--menu-bg);
+  box-shadow: 0 12px 32px var(--shadow-3);
+  color: var(--text);
+  font-size: 12.5px;
+  user-select: none;
+}
+.ctx-menu:focus {
+  outline: none;
+}
+.ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ctx-menu-item.active,
+.ctx-menu-item:hover:not(.disabled) {
+  background: var(--bg-elev2);
+}
+.ctx-menu-item.danger {
+  color: var(--red-text);
+}
+.ctx-menu-item.danger.active,
+.ctx-menu-item.danger:hover:not(.disabled) {
+  background: var(--red-soft);
+}
+.ctx-menu-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ctx-menu-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--text-faint);
+}
+.ctx-menu-item.danger .ctx-menu-icon {
+  color: var(--red-text);
+}
+.ctx-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctx-menu-shortcut {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.ctx-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  border: 0;
+  background: var(--border-soft);
+}
 @media (hover: none) {
   .file-attach {
     opacity: 1;

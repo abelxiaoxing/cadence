@@ -296,64 +296,74 @@ it.each([false, true])(
   },
 );
 
-function renderFiles(enabled: boolean, location?: { id: string; cwd: string }) {
+function renderFiles(
+  cwd?: string,
+  opts?: {
+    initialListing?: {
+      path: string;
+      absPath: string;
+      parent: string | null;
+      entries: { name: string; path: string; directory: boolean }[];
+      limited: boolean;
+    };
+    initialError?: string;
+  },
+) {
   return renderToStaticMarkup(
     <FilesPanel
-      client={new ServiceClient(transport())}
-      enabled={enabled}
-      location={location}
+      cwd={cwd}
+      initialListing={opts?.initialListing}
+      initialError={opts?.initialError}
       onReference={() => {}}
     />,
   );
 }
-it("files name the conversation directory rather than claiming the host root, and unavailable is not empty", () => {
-  const absent = renderFiles(false);
-  expect(absent).toContain("The conversation folder has not been observed.");
+it("files stay operable directly on disk whenever a folder is selected, and empty state is distinct from errors", () => {
+  const absent = renderFiles(undefined);
+  expect(absent).toContain("No folder selected.");
   expect(absent).toMatch(/aria-label="Refresh files" disabled=""/);
-  expect(absent).not.toMatch(/>\/<|No visible files|Reading|file-preview/);
-  const stopped = renderFiles(false, { id: "chat", cwd: "/project/subdir" });
-  expect(stopped).toContain("Conversation folder:");
-  expect(stopped).toContain("/project/subdir");
-  // Execution state is not the reason: a stopped owner's folder is readable.
-  expect(stopped).toContain("Files appear once this folder has been observed.");
-  expect(stopped).not.toContain("execution state");
-  expect(stopped).not.toContain("No visible files");
-  expect(renderFiles(true)).toContain("Reading files…");
+  expect(absent).not.toMatch(/No visible files|Reading files|file-preview/);
+  const selected = renderFiles("/project/subdir");
+  expect(selected).toContain("Project folder:");
+  expect(selected).toContain("/project/subdir");
+  expect(selected).toContain("Reading files…");
+  expect(selected).not.toContain('aria-label="New file" disabled=""');
 });
 it("only a successful empty file observation says there are no visible files", () => {
-  files.value = {
-    kind: "files",
-    path: "",
-    entries: [],
-    parent: null,
-    limited: false,
-  };
-  expect(renderFiles(true)).toContain("No visible files");
-  files.error = "stale";
-  const html = renderFiles(true);
+  expect(
+    renderFiles("/project", {
+      initialListing: {
+        path: "",
+        absPath: "/project",
+        parent: "/",
+        entries: [],
+        limited: false,
+      },
+    }),
+  ).toContain("No visible files");
+  const html = renderFiles("/project", {
+    initialError: "Directory not readable",
+  });
   expect(html).not.toContain("No visible files");
-  expect(html).toContain("The context changed (stale)");
-  expect(html).not.toContain("has been read again");
+  expect(html).toContain("Directory not readable");
 });
 it.each(["en", "zh"] as const)(
-  "%s: a file row offers download, path-only reference, copy name and copy path; a folder row has no download",
+  "%s: each row offers quick chat reference and a more-actions menu trigger",
   (locale) => {
-    files.value = {
-      kind: "files",
-      path: "",
-      entries: [
-        { name: "src", path: "src", directory: true },
-        { name: "notes.md", path: "notes.md", directory: false },
-      ],
-      parent: null,
-      limited: false,
-    };
     const html = renderToStaticMarkup(
       <LocaleProvider initial={locale}>
         <FilesPanel
-          client={new ServiceClient(transport())}
-          enabled
-          location={{ id: "chat", cwd: "/project" }}
+          cwd="/project"
+          initialListing={{
+            path: "",
+            absPath: "/project",
+            parent: "/",
+            entries: [
+              { name: "src", path: "src", directory: true },
+              { name: "notes.md", path: "notes.md", directory: false },
+            ],
+            limited: false,
+          }}
           onReference={() => {}}
         />
       </LocaleProvider>,
@@ -364,41 +374,33 @@ it.each(["en", "zh"] as const)(
         .filter((label) => label.includes(name));
     expect(actions("notes.md")).toEqual(
       locale === "zh"
-        ? [
-            "下载文件 notes.md",
-            "仅引用路径 notes.md（AI 按需读取）",
-            "复制名称 notes.md",
-            "复制路径 notes.md",
-          ]
+        ? ["仅引用路径 notes.md（AI 按需读取）", "notes.md 的更多操作"]
         : [
-            "Download file notes.md",
             "Reference path only: notes.md (the agent reads it on demand)",
-            "Copy name notes.md",
-            "Copy path notes.md",
+            "More actions for notes.md",
           ],
     );
     expect(actions("src")).toEqual(
       locale === "zh"
-        ? ["链接文件夹路径 src 到对话", "复制名称 src", "复制路径 src"]
-        : [
-            "Link folder path src to the chat",
-            "Copy name src",
-            "Copy path src",
-          ],
+        ? ["链接文件夹路径 src 到对话", "src 的更多操作"]
+        : ["Link folder path src to the chat", "More actions for src"],
     );
   },
 );
 
-// The browser fixture exercises pending responses through the real row click.
 it.each(["en", "zh"] as const)(
-  "%s: preview reports an actual read, including refresh with retained text",
+  "%s: preview reports an actual read, supports refresh with retained text, edit, image and binary states",
   (locale) => {
     const path = "notes.txt";
     const file = {
-      kind: "file" as const,
+      kind: "text" as const,
       path,
+      absPath: "/project/notes.txt",
+      name: "notes.txt",
       text: "retained specimen",
+      size: 17,
       limited: true,
+      editable: false,
     };
     const render = (
       loading: boolean,
@@ -410,7 +412,9 @@ it.each(["en", "zh"] as const)(
         <LocaleProvider initial={locale}>
           <FilePreview
             path={selected}
-            preview={{ loading, value, error }}
+            loading={loading}
+            file={value}
+            error={error}
             onClose={() => {}}
           />
         </LocaleProvider>,
@@ -430,7 +434,13 @@ it.each(["en", "zh"] as const)(
     expect(done).toContain(file.text);
     expect(done).toContain('class="inspector-note"');
     expect(done).not.toContain(reading);
-    const empty = render(false, { ...file, text: "", limited: false });
+    const empty = render(false, {
+      ...file,
+      text: "",
+      size: 0,
+      limited: false,
+      editable: true,
+    });
     expect(empty).toContain('class="codeblock"');
     expect(empty).not.toMatch(/role="status"|role="alert"|inspector-note/);
     const failed = render(false, undefined, "stale");

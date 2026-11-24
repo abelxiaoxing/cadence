@@ -79,6 +79,7 @@ import type {
   ModelChoicePort,
   ProjectionPort,
 } from "./ports.ts";
+import { handleUserFilesHttp, USER_FILES_PREFIX } from "./user-files-http.ts";
 import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
 
 /** Real composition must provide committed projections. subscribe registers
@@ -600,6 +601,24 @@ export class ServiceHttpServer {
         return;
       }
       if (!this.accepting) unavailable();
+      if (url.pathname.startsWith(USER_FILES_PREFIX)) {
+        const caller = this.options.auth.authenticate(
+          boundary,
+          randomUUID(),
+          req.method === "POST",
+        );
+        this.requests.add(abort);
+        await handleUserFilesHttp(req, res, url, {
+          csrf: this.options.auth.csrf,
+          assertCurrent: () => {
+            this.options.auth.current(caller);
+            if (abort.signal.aborted || !this.accepting) unavailable();
+          },
+          resetIdle,
+          signal: abort.signal,
+        });
+        return;
+      }
       const route = readRoute(target, req.method ?? "");
       const attachmentId =
         boundary.headers.get("x-cadence-attachment") ?? randomUUID();

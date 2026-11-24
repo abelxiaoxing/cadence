@@ -471,6 +471,7 @@ export function Workbench() {
           }}
           onOpenProject={open}
           homeFolder={entry.home}
+          entryCsrf={entry.csrf}
           projectEntries={entry.projects.map((p) => ({
             path: p.cwd,
             current: p.id === selected,

@@ -112,6 +112,7 @@ import { type LiveLedger, ProcessLedger } from "./process-ledger.ts";
 import { RecoveryLog } from "./recovery-log.ts";
 import { healWorkbench, RegistryHealer } from "./self-heal.ts";
 import { readServerConfig } from "./server-config.ts";
+import { handleUserFilesHttp, USER_FILES_PREFIX } from "./user-files-http.ts";
 import { WorkbenchFiles } from "./workbench-files.ts";
 
 declare const __CADENCE_SERVICE_CONTRACT__: string;
@@ -1526,6 +1527,26 @@ export async function createGateway(
           recoveries: new RecoveryLog(store.files).notices(),
           build,
         });
+        return;
+      }
+      if (url.pathname.startsWith(USER_FILES_PREFIX)) {
+        const abort = new AbortController();
+        const onClose = () => {
+          if (!res.writableEnded) abort.abort();
+        };
+        res.once("close", onClose);
+        try {
+          await handleUserFilesHttp(req, res, url, {
+            csrf: auth.csrf,
+            assertCurrent: () => {
+              auth.current(caller);
+              assert();
+            },
+            signal: abort.signal,
+          });
+        } finally {
+          res.off("close", onClose);
+        }
         return;
       }
       if (
