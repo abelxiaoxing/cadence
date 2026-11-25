@@ -7,7 +7,7 @@
 V5 two-stage planning, auto-discovered `node_modules` links, worktree isolation, parallel execution, evidence-led recovery, acceptance deviations and Stage 5 Agent review ledgers are owned by the workflow test suites.
 Run directly affected files while iterating before `bun run verify`.
 
-Anchors: `test/workflow-v5-planning.test.ts`, `test/workflow-links.test.ts`, `test/workflow-delivery-runtime.test.ts`, `test/workflow-review-ledger.test.ts`, `test/workflow-recovery-regressions.test.ts`, `test/task-worktree.test.ts`, `test/workflow-landing.test.ts`, `test/merge-queue-delivery.test.ts`, `test/workflow-contract.test.ts`, `test/workflow-controller.test.ts`
+Anchors: `test/workflow-v5-planning.test.ts`, `test/workflow-links.test.ts`, `test/workflow-delivery-runtime.test.ts`, `test/workflow-review-ledger.test.ts`, `test/workflow-recovery-regressions.test.ts`, `test/task-worktree.test.ts`, `test/workflow-landing.test.ts`, `test/workflow-derived.test.ts`, `test/merge-queue.test.ts`, `test/merge-queue-delivery.test.ts`, `test/workflow-backup-expiry.test.ts`, `test/workflow-contract.test.ts`, `test/workflow-controller.test.ts`
 
 ### Gateway, owner lifetimes, self-heal and maintenance
 

@@ -35,16 +35,17 @@ flowchart LR
 
 ## Warum Cadence
 
-|                                         |                                                                                                                        |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **Arbeit überlebt das Fenster**         | Clients verbinden und trennen sich nur; der Owner läuft weiter.                                                        |
-| **Vor der Freigabe ändert sich nichts** | Erst lesende Untersuchung, dann eine lesbare Vereinbarung, die du bestätigst.                                          |
-| **Verlässliche Ergebnisse**             | Echte Prüfungen und unabhängiges Review; Modelltext zählt nie als bestanden.                                           |
-| **Schließt selbst ab**                  | Nach der Freigabe repariert, plant neu oder erfasst Abweichungen; Stopp nur bei Bedingungen außerhalb des Repositorys. |
-| **Schneller durch Aufbau**              | Unabhängige Aufgaben laufen nebeneinander in eigenen Worktrees.                                                        |
-| **Wissen wächst mit**                   | Routentabelle und festes Budget: Worker lesen nur Passendes, neue Erkenntnisse ersetzen veraltete.                     |
-| **WebUI zum Sehen und Steuern**         | Aufgaben-Board, Revisionen, Abweichungen, Branches, Denken; mitten in der Antwort eingreifen oder einreihen.           |
-| **Ein Verlauf**                         | Browser-Gespräche sind die Pi-Sitzungen des Projekts; an beiden Orten fortsetzbar.                                     |
+|                                         |                                                                                                                                                                                   |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Arbeit überlebt das Fenster**         | Clients verbinden und trennen sich nur; der Owner läuft weiter.                                                                                                                   |
+| **Vor der Freigabe ändert sich nichts** | Erst lesende Untersuchung, dann eine lesbare Vereinbarung, die du bestätigst.                                                                                                     |
+| **Verlässliche Ergebnisse**             | Echte Prüfungen und unabhängiges Review; Modelltext zählt nie als bestanden.                                                                                                      |
+| **Schließt selbst ab**                  | Nach der Freigabe repariert, plant neu oder erfasst Abweichungen; Stopp nur bei Bedingungen außerhalb des Repositorys.                                                            |
+| **Schneller durch Aufbau**              | Unabhängige Aufgaben laufen nebeneinander in eigenen Worktrees.                                                                                                                   |
+| **Viele Aufgaben, ein Ordner**          | Starte beliebig viele Aufgaben im selben Checkout; jede landet von selbst auf dem Branch, von dem sie ausging, zusammengeführt mit den anderen und mit deinen eigenen Änderungen. |
+| **Wissen wächst mit**                   | Routentabelle und festes Budget: Worker lesen nur Passendes, neue Erkenntnisse ersetzen veraltete.                                                                                |
+| **WebUI zum Sehen und Steuern**         | Aufgaben-Board, Revisionen, Abweichungen, Branches, Denken; mitten in der Antwort eingreifen oder einreihen.                                                                      |
+| **Ein Verlauf**                         | Browser-Gespräche sind die Pi-Sitzungen des Projekts; an beiden Orten fortsetzbar.                                                                                                |
 
 > Cadence ist ein vertrauenswürdiger Assistent, **keine Sandbox**: Die Agenten nutzen Host-Werkzeuge im freigegebenen Checkout oder Worktree.
 > Nur für Code verwenden, den du prüfen und wiederherstellen kannst.

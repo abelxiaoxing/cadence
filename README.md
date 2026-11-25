@@ -35,16 +35,17 @@ flowchart LR
 
 ## Why Cadence
 
-|                                     |                                                                                                                   |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Work outlives the window**        | Clients only attach and detach; the owner keeps running.                                                          |
-| **Nothing changes before approval** | Readonly investigation, then one readable agreement you confirm.                                                  |
-| **Results you can trust**           | Real checks and independent review; model prose never counts as a pass.                                           |
-| **Finishes on its own**             | After approval it repairs, re-plans or records a deviation, and stops only for conditions outside the repository. |
-| **Faster by design**                | Independent assignments run side by side in their own worktrees.                                                  |
-| **Knowledge compounds**             | A route table and a fixed budget: workers read what matches their code, new lessons replace stale ones.           |
-| **WebUI that shows and steers**     | Assignment board, revisions, deviations, branches, thinking, and steer or queue a message mid-reply.              |
-| **One history**                     | Browser conversations are the project's Pi sessions; continue in either place.                                    |
+|                                     |                                                                                                                                                             |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Work outlives the window**        | Clients only attach and detach; the owner keeps running.                                                                                                    |
+| **Nothing changes before approval** | Readonly investigation, then one readable agreement you confirm.                                                                                            |
+| **Results you can trust**           | Real checks and independent review; model prose never counts as a pass.                                                                                     |
+| **Finishes on its own**             | After approval it repairs, re-plans or records a deviation, and stops only for conditions outside the repository.                                           |
+| **Faster by design**                | Independent assignments run side by side in their own worktrees.                                                                                            |
+| **Many tasks, one folder**          | Start as many tasks as you like in the same checkout; each lands by itself on the branch it started from, merged with the others and with your own changes. |
+| **Knowledge compounds**             | A route table and a fixed budget: workers read what matches their code, new lessons replace stale ones.                                                     |
+| **WebUI that shows and steers**     | Assignment board, revisions, deviations, branches, thinking, and steer or queue a message mid-reply.                                                        |
+| **One history**                     | Browser conversations are the project's Pi sessions; continue in either place.                                                                              |
 
 > Cadence is a trusted assistant, **not a sandbox**: its agents use host tools in the approved checkout or worktree.
 > Use it on code you can review and recover.

@@ -17,7 +17,7 @@ import { repository } from "./helpers/delivery-engine.ts";
 
 const lines = (text: string) => text.trimEnd().split("\n");
 
-it("two deliveries to one branch land in arrival order: the second replays onto what the first left and is verified again", async () => {
+it("two deliveries to one branch, one after the other: the second replays onto what the first left and is verified again", async () => {
   const r = repository();
   const x = r.delivery("change two"),
     y = r.delivery("change b");
@@ -31,7 +31,8 @@ it("two deliveries to one branch land in arrival order: the second replays onto 
   expect(y.reviewed).toHaveLength(1);
   expect(r.git("rev-parse", "HEAD")).toBe(x.base);
 
-  await Promise.all([x.land(), y.land()]);
+  await x.land();
+  await y.land();
   const [second, first, base] = lines(r.git("log", "--format=%H", "-3"));
   expect(base).toBe(x.base);
   expect(first).toBe(x.live.run.mergedCommit);
@@ -517,7 +518,7 @@ it("what a sibling's own agreement checks is checked again on the delivery that 
       0,
     ),
   ).toHaveLength(3);
-});
+}, 15_000);
 
 it("a merged commit that breaks what a sibling established is repaired before it lands", async () => {
   const r = repository();
@@ -832,3 +833,269 @@ it("files that are written while the landing looks at them are waited for, not o
   expect(read("a.txt")).toBe("one\nTWO\nthree\nfour\nFIVE, mine, and more\n");
   expect(r.git("rev-parse", "HEAD")).toBe(x.live.run.mergedCommit);
 });
+
+/** Three deliveries on the repository with a bundle and pins, each verified
+ * alone on the same baseline and now ready to land. */
+const three = async () => {
+  const { r, build, scope } = derived();
+  const make = (goal: string, name: string, command: string) =>
+    r.delivery(goal, { build, scope, checks: [{ name, command }] });
+  const x = make("change two", "two", "grep -q TWO a.txt"),
+    y = make("change five", "five", "grep -q FIVE a.txt"),
+    z = make("change b", "b", "grep -q B b.txt");
+  await Promise.all([x.create(), y.create(), z.create()]);
+  writeFileSync(join(x.cwd, "a.txt"), "one\nTWO\nthree\nfour\nfive\n");
+  writeFileSync(join(y.cwd, "a.txt"), "one\ntwo\nthree\nfour\nFIVE\n");
+  writeFileSync(join(z.cwd, "b.txt"), "B\n");
+  return { r, x, y, z };
+};
+/** What a run did from here on: its shell commands and what it asked workers. */
+const from = (d: Awaited<ReturnType<typeof three>>["x"]) => {
+  const commands = d.commands.length,
+    asked = d.asked.length;
+  return {
+    commands: () => d.commands.slice(commands).map((c) => c.command),
+    asked: () => d.asked.slice(asked),
+  };
+};
+
+it("deliveries that are ready at the same time land together: each its own commit, rebuilt on the one before, and the last is checked and reviewed once for all", async () => {
+  const { r, x, y, z } = await three();
+  await Promise.all([x.accept(), y.accept(), z.accept()]);
+  const did = { x: from(x), y: from(y), z: from(z) };
+  await Promise.all([x.land(), y.land(), z.land()]);
+  const [third, second, first, base] = lines(r.git("log", "--format=%H", "-4"));
+  expect(base).toBe(x.base);
+  expect(lines(r.git("log", "--format=%s", "-3"))).toEqual([
+    "Cadence: change b",
+    "Cadence: change five",
+    "Cadence: change two",
+  ]);
+  // Every delivery is its own commit, with one parent.
+  expect([x, y, z].map((d) => d.live.run.mergedCommit)).toEqual([
+    first,
+    second,
+    third,
+  ]);
+  expect(r.git("diff", "--name-only", first, second)).toBe(
+    "a.txt\ndist/app.js\npins.txt",
+  );
+  // Every commit of the chain is what its own sources build: none of them
+  // carries another's bundle or pins.
+  for (const commit of [first, second, third]) {
+    const at = (path: string) => r.git("show", `${commit}:${path}`);
+    expect(at("dist/app.js")).toBe(`${at("a.txt")}\n${at("b.txt")}`);
+    const pin = (path: string) =>
+      `${path}=${r.git("rev-parse", `${commit}:${path}`).slice(0, 8)}`;
+    expect(at("pins.txt")).toBe(
+      [pin("a.txt"), pin("b.txt"), pin("dist/app.js")].join("\n"),
+    );
+  }
+  expect(readFileSync(join(r.root, "dist/app.js"), "utf8")).toBe(
+    "one\nTWO\nthree\nfour\nFIVE\nB\n",
+  );
+  expect(r.git("status", "--porcelain")).toBe("");
+  // The first in line did all of it: one rebuild per delivery it took along
+  // (the pins both sides had changed were recomputed first, on every side),
+  // every member's check once at the last commit, and one review.
+  const ran = did.x.commands();
+  expect(ran.filter((command) => command === "./build.sh")).toHaveLength(2);
+  expect(ran.filter((command) => command.startsWith("grep"))).toEqual([
+    "grep -q TWO a.txt",
+    "grep -q FIVE a.txt",
+    "grep -q B b.txt",
+  ]);
+  expect(ran.slice(-3).every((command) => command.startsWith("grep"))).toBe(
+    true,
+  );
+  expect(did.y.commands()).toEqual([]);
+  expect(did.z.commands()).toEqual([]);
+  const reviews = did.x.asked();
+  expect(reviews.map((a) => a.kind)).toEqual(["review"]);
+  expect(reviews[0].prompt).toContain(
+    "This candidate is 3 deliveries landing together, one commit each, in this order.",
+  );
+  for (const goal of ["change two", "change five", "change b"])
+    expect(reviews[0].prompt).toContain(`goal: ${goal}`);
+  expect(x.reviewed.at(-1)).toBe(third);
+  expect(did.y.asked()).toEqual([]);
+  expect(did.z.asked()).toEqual([]);
+  // Each delivery's record: its own commit, accepted as part of that group.
+  for (const [d, commit, parent] of [
+    [x, first, base],
+    [y, second, first],
+    [z, third, second],
+  ] as const) {
+    expect(d.view.candidate).toBe(commit);
+    expect(d.view.acceptance).toMatchObject({
+      candidate: commit,
+      group: { run: x.id, tip: third },
+    });
+    expect(d.view.integration).toMatchObject({
+      status: "applied",
+      after: commit,
+      sync: { mode: "fast-forward", worktree: r.root },
+    });
+    expect(r.git("rev-parse", d.view.taskBranch)).toBe(commit);
+    // Its own worktree stands on its own commit, with nothing left over.
+    expect(d.head()).toBe(commit);
+    expect(r.gitAt(d.cwd, "status", "--porcelain")).toBe("");
+    expect(r.gitAt(d.cwd, "show", "-s", "--format=%P", commit)).toBe(parent);
+    expect(d.live.notes.join("\n")).toContain("Landed together with 2 other");
+  }
+  // A later run verifies against each of them separately.
+  expect(
+    r.landings.since(
+      `${x.view.binding.target.repositoryIdentity}\0${r.BRANCH}`,
+      0,
+    ),
+  ).toMatchObject([
+    { commit: first, paths: ["a.txt"] },
+    { commit: second, paths: ["a.txt"] },
+    { commit: third, paths: ["b.txt"] },
+  ]);
+  expect(r.queue.busy).toBe(false);
+}, 20_000);
+
+it("when the last commit of a group does not pass, half of it is tried; whoever stays behind lands by itself, repaired", async () => {
+  const { r, build, scope, commit } = derived();
+  // A file long enough for three changes that do not touch one another.
+  const text = (change: Record<number, string> = {}) =>
+    `${Array.from({ length: 12 }, (_, at) => change[at + 1] ?? `l${at + 1}`).join("\n")}\n`;
+  writeFileSync(join(r.root, "a.txt"), text());
+  commit("a longer file");
+  const make = (goal: string, name: string, command: string) =>
+    r.delivery(goal, { build, scope, checks: [{ name, command }] });
+  // x's agreement relies on line eight staying as it is; z rewrites it.
+  const x = make("change two", "eight stays", "grep -q '^l8$' a.txt"),
+    y = make("change five", "five", "grep -q FIVE a.txt"),
+    z = make("change eight", "eight", "grep -q EIGHT a.txt");
+  await Promise.all([x.create(), y.create(), z.create()]);
+  writeFileSync(join(x.cwd, "a.txt"), text({ 2: "TWO" }));
+  writeFileSync(join(y.cwd, "a.txt"), text({ 5: "FIVE" }));
+  writeFileSync(join(z.cwd, "a.txt"), text({ 8: "EIGHT" }));
+  await Promise.all([x.accept(), y.accept(), z.accept()]);
+  const did = { x: from(x), z: from(z) };
+  // Alone, z finds a way to keep what x relies on.
+  z.hooks.repair = ({ cwd }) =>
+    writeFileSync(
+      join(cwd, "a.txt"),
+      `${text({ 2: "TWO", 5: "FIVE" })}EIGHT\n`,
+    );
+  await Promise.all([x.land(), y.land(), z.land()]);
+  // All three were built into one chain. Its last commit failed x's check,
+  // so the first two were verified as they stood, with no new build.
+  const ran = did.x.commands();
+  expect(ran.filter((command) => command === "./build.sh")).toHaveLength(2);
+  expect(ran.filter((command) => command.startsWith("grep"))).toEqual([
+    "grep -q '^l8$' a.txt",
+    "grep -q '^l8$' a.txt",
+    "grep -q FIVE a.txt",
+  ]);
+  expect(did.x.asked().map((a) => a.kind)).toEqual(["review"]);
+  expect(did.x.asked()[0].prompt).toContain("2 deliveries landing together");
+  expect(lines(r.git("log", "--format=%s", "-3"))).toEqual([
+    "Cadence: change eight",
+    "Cadence: change five",
+    "Cadence: change two",
+  ]);
+  expect(x.view.acceptance?.group?.tip).toBe(y.live.run.mergedCommit);
+  expect(y.view.acceptance?.group?.run).toBe(x.id);
+  // z took what landed in, was held to x's check as well, and was repaired.
+  expect(z.view.acceptance?.group).toBeUndefined();
+  expect(did.z.commands()).toContain("grep -q '^l8$' a.txt");
+  expect(did.z.asked().map((a) => a.kind)).toEqual(["repair", "review"]);
+  expect(readFileSync(join(r.root, "a.txt"), "utf8")).toBe(
+    `${text({ 2: "TWO", 5: "FIVE" })}EIGHT\n`,
+  );
+  expect(r.git("rev-parse", "HEAD")).toBe(z.live.run.mergedCommit);
+  expect(r.queue.busy).toBe(false);
+}, 30_000);
+
+it("a delivery Git cannot place on the one before it stays in line, with everyone behind it; one that is built differently is not taken along", async () => {
+  const { r, x, y, z } = await three();
+  // y changes the very line x changes.
+  writeFileSync(join(y.cwd, "a.txt"), "one\ntwo, my way\nthree\nfour\nfive\n");
+  y.proposal.plan.checks = [{ name: "way", command: "grep -q 'my way' a.txt" }];
+  await Promise.all([x.accept(), y.accept(), z.accept()]);
+  const did = { x: from(x), y: from(y) };
+  y.hooks.repair = ({ cwd }) =>
+    writeFileSync(join(cwd, "a.txt"), "one\nTWO, my way\nthree\nfour\nfive\n");
+  await Promise.all([x.land(), y.land(), z.land()]);
+  // x was accepted alone and landed as that, with nothing run again.
+  expect(did.x.commands()).toEqual([]);
+  expect(did.x.asked()).toEqual([]);
+  expect(x.view.acceptance?.group).toBeUndefined();
+  // While y was being reconciled nobody waited for it: z landed first.
+  expect(lines(r.git("log", "--format=%s", "-3"))).toEqual([
+    "Cadence: change five",
+    "Cadence: change b",
+    "Cadence: change two",
+  ]);
+  // Reconciled and verified off the queue; back in it, what z had landed
+  // meanwhile was taken in and verified once more.
+  expect(did.y.asked().map((a) => a.kind)).toEqual([
+    "repair",
+    "review",
+    "review",
+  ]);
+  expect(readFileSync(join(r.root, "a.txt"), "utf8")).toBe(
+    "one\nTWO, my way\nthree\nfour\nfive\n",
+  );
+
+  // Built differently: each lands on its own.
+  const s = repository();
+  const plain = s.delivery("change two"),
+    built = s.delivery("change b", {
+      build: [{ name: "stamp", command: "true", outputs: ["stamp.txt"] }],
+    });
+  await Promise.all([plain.create(), built.create()]);
+  writeFileSync(join(plain.cwd, "a.txt"), "one\nTWO\nthree\nfour\nfive\n");
+  writeFileSync(join(built.cwd, "b.txt"), "B\n");
+  await Promise.all([plain.accept(), built.accept()]);
+  await Promise.all([plain.land(), built.land()]);
+  expect(plain.view.acceptance?.group).toBeUndefined();
+  expect(built.view.acceptance?.group).toBeUndefined();
+  expect(built.reviewed).toHaveLength(2);
+}, 30_000);
+
+it("a delivery canceled while it is being landed with others is not landed: the rest is verified again without it", async () => {
+  const { r, x, y, z } = await three();
+  await Promise.all([x.accept(), y.accept(), z.accept()]);
+  // z is canceled while the group of three is under review.
+  let reviews = 0;
+  x.hooks.review = () => {
+    if (++reviews === 1) z.live.abort.abort();
+    return true;
+  };
+  const landed = await Promise.allSettled([x.land(), y.land(), z.land()]);
+  expect(landed.map((l) => l.status)).toEqual([
+    "fulfilled",
+    "fulfilled",
+    "rejected",
+  ]);
+  // What was verified had z in it, so none of it was landed. The two that
+  // are left landed together afterwards, verified as just the two of them.
+  const subjects = lines(r.git("log", "--format=%s", "-3"));
+  expect(subjects.at(-1)).toBe("build");
+  expect(subjects.slice(0, 2).sort()).toEqual([
+    "Cadence: change five",
+    "Cadence: change two",
+  ]);
+  expect(readFileSync(join(r.root, "a.txt"), "utf8")).toBe(
+    "one\nTWO\nthree\nfour\nFIVE\n",
+  );
+  expect(readFileSync(join(r.root, "b.txt"), "utf8")).toBe("b\n");
+  // One review of the three, by the first in line; then one of the two, by
+  // whichever of them had the turn next.
+  expect(reviews).toBe(1);
+  expect(y.reviewed).toHaveLength(2);
+  const tip = r.git("rev-parse", "HEAD");
+  expect(x.view.acceptance?.group?.tip).toBe(tip);
+  expect(y.view.acceptance?.group?.tip).toBe(tip);
+  expect(z.live.run.mergedCommit).toBeNull();
+  expect(z.view.integration.status).toBe("pending");
+  // Its task branch was never moved to a commit that did not land.
+  expect(r.git("rev-parse", z.view.taskBranch)).toBe(z.base);
+  expect(r.queue.busy).toBe(false);
+}, 20_000);

@@ -110,6 +110,8 @@ export function acceptanceRecord(
   expectedChecks: number,
   /** Check steps a recorded deviation set aside: they ran and settled as failed. */
   waived: ReadonlySet<string> = new Set(),
+  /** The run and commit a group of deliveries was verified in, for a member. */
+  group?: AcceptanceRecord["group"],
 ): AcceptanceRecord {
   if (
     checks.length !== expectedChecks ||
@@ -137,6 +139,7 @@ export function acceptanceRecord(
     ...(waived.size
       ? { waived: checks.filter((s) => waived.has(s.id)).map((s) => s.id) }
       : {}),
+    ...(group ? { group } : {}),
   };
 }
 
@@ -377,6 +380,27 @@ export class WorkflowDelivery {
     this.base = frontier;
     this.view.candidate = null;
     this.view.acceptance = null;
+    this.save();
+  }
+
+  /** Another run landed this candidate as one of several: `commit` is what
+   * it became on the branch, on `parent`, with the evidence that group was
+   * accepted on. `moved` says the worktree was put onto that commit. */
+  carried(
+    commit: string,
+    parent: string,
+    acceptance: AcceptanceRecord,
+    moved: boolean,
+  ): void {
+    if (
+      this.view.workspace?.state !== "ready" ||
+      acceptance.candidate !== commit
+    )
+      throw new ContractError("stale");
+    if (moved) this.view.workspace.head = commit;
+    this.base = parent;
+    this.view.candidate = commit;
+    this.view.acceptance = acceptance;
     this.save();
   }
 

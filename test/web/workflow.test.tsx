@@ -1170,6 +1170,32 @@ it("delivery UI distinguishes an accepted candidate from an applied merge and na
   expect(retained).toContain(
     "<dt>Post-merge checks</dt><dd><code>passed</code></dd>",
   );
+  // Accepted as one of several deliveries landed together: where it was
+  // verified is part of the evidence.
+  const grouped = {
+    ...d,
+    acceptance: d.acceptance && {
+      ...d.acceptance,
+      group: { run: randomUUID(), tip: "e".repeat(40) },
+    },
+  };
+  expect(decodeDeliveryObservation(grouped)).toEqual(grouped);
+  expect(
+    renderToStaticMarkup(
+      <LocaleProvider initial="en">
+        <DeliveryDetails delivery={grouped} status="completed" />
+      </LocaleProvider>,
+    ),
+  ).toContain(
+    `Checks and automatic Agent review passed · ${d.candidate} · together with other deliveries, as ${"e".repeat(40)}`,
+  );
+  expect(
+    renderToStaticMarkup(
+      <LocaleProvider initial="zh">
+        <DeliveryDetails delivery={grouped} status="completed" />
+      </LocaleProvider>,
+    ),
+  ).toContain(`与其他交付一起验证，链尾提交 ${"e".repeat(40)}`);
   // A verified result that stayed on its task branch, with the reason.
   d.integration = {
     status: "branch",

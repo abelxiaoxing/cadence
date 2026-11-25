@@ -161,3 +161,76 @@ it("the landing log answers what landed after a run took its baseline, per branc
   expect(log.since(OTHER, 0)).toEqual(["elsewhere"]);
   log.retain(laneKey("repo", "refs/heads/unknown"), null);
 });
+
+it("a waiter that offered it may be landed by the holder: held against cancellation, then told what was done for it", async () => {
+  const queue = new MergeQueue<string, string>();
+  const head = await queue.enter(MAIN, "head", queue.ticket(), never());
+  const stops = [new AbortController(), new AbortController()];
+  const ends: string[] = [];
+  const follow = (id: string, signal: AbortSignal, offer?: string) =>
+    (offer === undefined
+      ? queue.enter(MAIN, id, queue.ticket(), signal).then(() => "turn")
+      : queue
+          .join(MAIN, id, queue.ticket(), signal, offer)
+          .then((entered) =>
+            "carried" in entered ? `carried:${entered.carried}` : "turn",
+          )
+    ).then(
+      (how) => ends.push(`${id} ${how}`),
+      () => ends.push(`${id} left`),
+    );
+  const a = follow("a", stops[0].signal, "offer a");
+  // Waiting without an offer: never anybody's to land.
+  const plain = follow("plain", never());
+  const b = follow("b", stops[1].signal, "offer b");
+  const c = follow("c", never(), "offer c");
+  expect(head.offers()).toEqual([
+    { id: "a", offer: "offer a" },
+    { id: "b", offer: "offer b" },
+    { id: "c", offer: "offer c" },
+  ]);
+  // Nobody is held unless everybody named can be.
+  expect(head.hold(["a", "plain"])).toBe(false);
+  expect(head.hold(["a", "gone"])).toBe(false);
+  expect(head.hold(["a", "b"])).toBe(true);
+  expect(head.offers()).toEqual([{ id: "c", offer: "offer c" }]);
+  // Held twice is held by nobody new.
+  expect(head.hold(["a"])).toBe(false);
+  // A cancellation cannot take a held entry out from under the holder.
+  stops[0].abort();
+  stops[1].abort();
+  await settle();
+  expect(ends).toEqual([]);
+  // One is landed after all; the other was not, and leaves only now.
+  head.settle(new Map([["a", "landed as 1"]]));
+  await settle();
+  expect(ends).toEqual(["a carried:landed as 1"]);
+  head.letGo();
+  await settle();
+  expect(ends).toEqual(["a carried:landed as 1", "b left"]);
+  // Whoever was not landed gets its own turn, in arrival order.
+  expect(head.waiting()).toBe(2);
+  head.release();
+  await plain;
+  expect(ends.at(-1)).toBe("plain turn");
+  expect(() => head.hold(["c"])).toThrow();
+  await Promise.all([a, b]);
+  void c;
+});
+
+it("releasing a turn lets go of whoever it still held", async () => {
+  const queue = new MergeQueue<null, string>();
+  const head = await queue.enter(MAIN, "head", queue.ticket(), never());
+  const stop = new AbortController();
+  const gone = queue.join(MAIN, "gone", queue.ticket(), stop.signal, null);
+  const next = queue.join(MAIN, "next", queue.ticket(), never(), null);
+  expect(head.hold(["gone", "next"])).toBe(true);
+  stop.abort();
+  head.release();
+  await expect(gone).rejects.toThrow("stale");
+  // Not landed, so it is simply next.
+  const entered = await next;
+  expect("turn" in entered).toBe(true);
+  if ("turn" in entered) entered.turn.release();
+  expect(queue.busy).toBe(false);
+});

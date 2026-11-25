@@ -211,7 +211,11 @@ A single conversation still permits only one approved implementation at a time; 
 A local-merge workflow holds a checkout only for a `target` setup command and for the fast-forward of the worktree that has its target branch checked out; everything else it does holds nothing.
 When no worktree has that branch checked out, for example because you switched your checkout to another branch, the branch reference alone is moved and no working file is touched.
 Nothing is checked in your checkout: every declared check runs on the exact commit, in the delivery's own worktree.
-Deliveries to the same target branch land one at a time, in the order they became ready; deliveries to different branches never wait on one another.
+Deliveries to the same target branch land in the order they became ready; deliveries to different branches never wait on one another.
+Those that are ready at the same time, and are set up and built the same way, land together: the first in line replays each of the others onto the one before it in its own worktree, rebuilds what the builds derive and commits it as that delivery's own commit, then runs every member's checks once on the last commit and has it reviewed once, with each member's goal and acceptance before the reviewer.
+The branch is then moved once, and every delivery keeps its own commit, task branch and record, which says which run verified it and at which commit.
+If that last commit does not pass, half as many are tried, on commits that are already there, down to the first delivery alone, which then goes its ordinary way with repairs; a delivery that cannot be placed on the one before it without a decision, or that does not build there, stays in line with everyone behind it.
+The commits in between are built but not verified by themselves; only the last one of a group is.
 A branch you are rebasing, a checkout with an unfinished merge, and files you are saving at that very moment are waited for without a deadline; the delivery lands once they are free.
 Ordinary browser conversations do not wait for this access.
 Like separate Pi terminals, they can edit the same files as each other or as a workflow.

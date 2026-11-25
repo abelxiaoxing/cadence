@@ -291,6 +291,8 @@ export const zh = {
   "route revision {revision}": "第 {revision} 次路线修订",
   "Local integration": "本地合回",
   "Post-merge checks": "合回后检查",
+  "together with other deliveries, as {tip}":
+    "与其他交付一起验证，链尾提交 {tip}",
   "Target branch update": "目标分支更新",
   "Fast-forward in {worktree}; uncommitted changes to {count} files carried over, as they were in {backup}":
     "在 {worktree} 中快进；{count} 个文件的未提交改动已带到新提交上，原样保存在 {backup}",

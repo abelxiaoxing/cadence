@@ -35,16 +35,17 @@ flowchart LR
 
 ## Por qué Cadence
 
-|                                       |                                                                                                                           |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **El trabajo sobrevive a la ventana** | Los clientes solo se conectan y desconectan; el owner sigue.                                                              |
-| **Nada cambia antes de aprobar**      | Investigación de solo lectura y un acuerdo legible que confirmas.                                                         |
-| **Resultados fiables**                | Comprobaciones reales y revisión independiente; el texto del modelo nunca cuenta como aprobado.                           |
-| **Termina solo**                      | Tras aprobar, repara, replanifica o registra una desviación, y solo para por condiciones fuera del repositorio.           |
-| **Más rápido por diseño**             | Las tareas independientes corren en paralelo en sus propios worktrees.                                                    |
-| **El conocimiento se acumula**        | Tabla de rutas y presupuesto fijo: los workers leen lo que corresponde y las lecciones nuevas sustituyen a las obsoletas. |
-| **WebUI que muestra y dirige**        | Tablero de tareas, revisiones, desviaciones, ramas, razonamiento; intervenir o encolar un mensaje en plena respuesta.     |
-| **Un solo historial**                 | Las conversaciones del navegador son las sesiones de Pi del proyecto; continúa en cualquiera.                             |
+|                                       |                                                                                                                                                                   |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **El trabajo sobrevive a la ventana** | Los clientes solo se conectan y desconectan; el owner sigue.                                                                                                      |
+| **Nada cambia antes de aprobar**      | Investigación de solo lectura y un acuerdo legible que confirmas.                                                                                                 |
+| **Resultados fiables**                | Comprobaciones reales y revisión independiente; el texto del modelo nunca cuenta como aprobado.                                                                   |
+| **Termina solo**                      | Tras aprobar, repara, replanifica o registra una desviación, y solo para por condiciones fuera del repositorio.                                                   |
+| **Más rápido por diseño**             | Las tareas independientes corren en paralelo en sus propios worktrees.                                                                                            |
+| **Muchas tareas, una carpeta**        | Inicia tantas tareas como quieras en el mismo checkout; cada una llega por sí sola a la rama de la que partió, fusionada con las demás y con tus propios cambios. |
+| **El conocimiento se acumula**        | Tabla de rutas y presupuesto fijo: los workers leen lo que corresponde y las lecciones nuevas sustituyen a las obsoletas.                                         |
+| **WebUI que muestra y dirige**        | Tablero de tareas, revisiones, desviaciones, ramas, razonamiento; intervenir o encolar un mensaje en plena respuesta.                                             |
+| **Un solo historial**                 | Las conversaciones del navegador son las sesiones de Pi del proyecto; continúa en cualquiera.                                                                     |
 
 > Cadence es un asistente de confianza, **no un sandbox**: sus agentes usan herramientas del host en el checkout o worktree aprobado.
 > Úsalo con código que puedas revisar y recuperar.

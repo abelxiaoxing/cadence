@@ -27,6 +27,18 @@ Anchors: `src/service/workflows.ts#land`, `src/service/workflow-landing.ts#planL
 
 Source: this delivery, 2026-11-24
 
+### Deliveries ready together land as one chain, verified once at its last commit
+
+Kind: contract
+
+Why: A waiter offers itself with `MergeQueue.join`; the holder's `landTogether` takes the unbroken run of offers that are accepted and built and set up like it, and `takeAlong` replays each one's twin onto the commit before it, rebuilds and commits it under its own goal (recomputed values are no obstacle; any other clash ends the chain there).
+`landGroup` runs the members' checks once and one review at the last commit, halving on failure; `move` holds the followers against cancellation, writes each record, and ends their wait with their own commit.
+Every member keeps its own commit, task branch and `acceptance.group`.
+
+Anchors: `src/service/workflows.ts#landTogether`, `src/service/workflows.ts#takeAlong`, `src/service/workflows.ts#landGroup`, `src/service/merge-queue.ts#MergeQueue`, `test/merge-queue-delivery.test.ts`
+
+Source: this delivery, 2026-11-24
+
 ## What Git cannot merge
 
 ### What a build derives is rebuilt or recomputed, never reconciled

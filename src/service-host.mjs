@@ -5413,6 +5413,7 @@ function workflowBuildPaths(builds) {
     ...new Set(builds.flatMap((b) => [...b.outputs, ...b.refreshes ?? []]))
   ];
 }
+var ACCEPTANCE_CHECKS = 256;
 var WORKFLOW_DEVIATIONS = 16;
 var WORKFLOW_TASK_STATES = [
   "queued",
@@ -6070,9 +6071,10 @@ function decodeDeliveryObservation(value) {
       "contextDigest",
       "checks",
       "review",
-      ...Object.hasOwn(v ?? {}, "waived") ? ["waived"] : []
+      ...Object.hasOwn(v ?? {}, "waived") ? ["waived"] : [],
+      ...Object.hasOwn(v ?? {}, "group") ? ["group"] : []
     ]);
-    const checks = list(a.checks, WORKFLOW_LIMITS.checks, step);
+    const checks = list(a.checks, ACCEPTANCE_CHECKS, step);
     if (!checks.length || new Set(checks).size !== checks.length)
       throw new Error("Invalid acceptance checks");
     return {
@@ -6083,7 +6085,13 @@ function decodeDeliveryObservation(value) {
       checks,
       review: step(a.review),
       ...a.waived === undefined ? {} : {
-        waived: list(a.waived, WORKFLOW_LIMITS.checks, step).filter((id) => checks.includes(id))
+        waived: list(a.waived, ACCEPTANCE_CHECKS, step).filter((id) => checks.includes(id))
+      },
+      ...a.group === undefined ? {} : {
+        group: (() => {
+          const g = closed(a.group, ["run", "tip"]);
+          return { run: decodeId(g.run), tip: gitOid(g.tip) };
+        })()
       }
     };
   });
@@ -6210,7 +6218,7 @@ function readableDelivery(binding) {
 Target checkout: ${t.checkoutRoot}
 Execution: reserve cadence/<goal>-<run-id> and create one stable detached worktree after approval, pinning intermediate development checkpoints under private run refs. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Any number of conversations may deliver at once, each in its own candidate; nothing they do waits on your checkout.
 Acceptance: seal a single-parent delivery commit, run declared checks and independent Agent review on that exact OID, in the worktree only. When the target branch has moved, through another delivery or your own commits, the sealed commit is replayed onto its current head: declared build outputs are rebuilt, never merged; lines Git cannot merge are resolved by a worker that has to keep what both sides do; and the result is checked and reviewed again, together with the checks of deliveries that changed the same files in the meantime. That review also covers changed AGENTS.md rules and whether the branch's own changes to those files survive.
-Delivery: deliveries to one branch land one at a time in the order they became ready. The branch is moved to the exact verified OID: by reference alone when no worktree has it checked out, otherwise by fast-forward in that worktree, which keeps your uncommitted changes to other files. Uncommitted changes to the same files are first saved under a private reference (refs/cadence/wip-backup/<run-id>, restorable with git stash apply), then carried over onto the new commit: merged where Git can, reconciled by a worker in an isolated copy where it cannot, and replaced where a build derives the file. A branch that is being rebased, or files that are being edited at that moment, are waited for. When no verified commit can be put on the branch (it was deleted, or nothing that merges with what it gained passes verification), the last verified commit is delivered on the task branch instead and the result says first that it was not merged. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
+Delivery: deliveries to one branch land in the order they became ready. Those that are ready at the same time may land together: each stays one commit of its own, rebuilt on the one before it, and the last of them is checked (every member's checks) and reviewed once for all; if that fails, fewer are tried, down to this delivery alone. The branch is moved to the exact verified OID: by reference alone when no worktree has it checked out, otherwise by fast-forward in that worktree, which keeps your uncommitted changes to other files. Uncommitted changes to the same files are first saved under a private reference (refs/cadence/wip-backup/<run-id>, restorable with git stash apply), then carried over onto the new commit: merged where Git can, reconciled by a worker in an isolated copy where it cannot, and replaced where a build derives the file. A branch that is being rebased, or files that are being edited at that moment, are waited for. When no verified commit can be put on the branch (it was deleted, or nothing that merges with what it gained passes verification), the last verified commit is delivered on the task branch instead and the result says first that it was not merged. Keep the task branch; unlink only owner-created managed dependency links after identity verification, remove owned worktrees only when completely free of any remaining residue (including ignored files), then remove private checkpoint refs. No source/profile/dependency copying, push or deployment.`;
   if (binding.policy === "task-branch-v2")
     return `Target: ${t.branch} @ ${t.head}
 Target checkout: ${t.checkoutRoot}
@@ -6480,7 +6488,7 @@ var readableLink = (l) => `[${l.placement ?? "worktree"}] ${l.path} -> ${l.sourc
 var readableReading = (r) => ("research" in r) ? `investigation ${r.research} — ${r.reason}` : `${r.path}${r.section ? ` § ${r.section}` : ""} — ${r.reason}`;
 function readableAutomation(p) {
   if (p.version === 5)
-    return `After approval the service works to completion without further confirmation. First, a readonly route planner inspects the isolated candidate and splits this agreement into parallelizable assignments, write scopes and review reads (validated against repository boundaries, Git-ignore rules and managed links before any edit). It then advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. A target branch that moves while it works is followed, not a reason to stop. It stops for cancellation, uncertain settlement, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
+    return `After approval the service works to completion without further confirmation. First, a readonly route planner inspects the isolated candidate and splits this agreement into parallelizable assignments, write scopes and review reads (validated against repository boundaries, Git-ignore rules and managed links before any edit). It then advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, the work stays where it is: a result that was already checked and reviewed is delivered on the named task branch, and its report says first that it was not merged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. A target branch that moves while it works is followed, not a reason to stop. It stops for cancellation, uncertain settlement, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 4)
     return `After approval the service works to completion without further confirmation. It advances by remaining obligations, syncs declared builds after edits, runs fast checks fail-fast before heavy checks, and converges review by behavior family (escalating repeated counterexamples to architectural replan). It may on its own: continue or repair an incomplete assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report; otherwise, if no safe route succeeds, it retains the candidate unmerged. Declared checks always run on the exact final candidate; a check is set aside only through such a deviation, never silently. After behavior stabilizes it maintains the project's knowledge store under .cadence/ within its fixed budget (using no shell tools), reusing exact-OID evidence only when zero edits occur and re-verifying a new final commit when knowledge changes. Process logs, review ledgers and final workflow reports stay in private service records rather than repository commits. It stops for cancellation, uncertain settlement, external target drift, or a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
   if (p.version === 3)
@@ -20269,7 +20277,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "5d2b13e81fd59b759aa1171190dc8aef878827b63dddbe807b936e72d4e0f878",
+    contractHash: "8073eb17cb754b420f987393d0b6924dde0cb8c4eba3e83a2a596fae90c10620",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -37315,6 +37323,16 @@ class MergeQueue {
     return this.lanes.size > 0;
   }
   enter(key3, id, ticket, signal) {
+    return this.wait(key3, id, ticket, signal, null).then((entered) => {
+      if (!("turn" in entered))
+        throw new ContractError("invalid");
+      return entered.turn;
+    });
+  }
+  join(key3, id, ticket, signal, offer) {
+    return this.wait(key3, id, ticket, signal, { value: offer });
+  }
+  wait(key3, id, ticket, signal, offer) {
     if (signal.aborted)
       throw new ContractError("stale");
     if (!Number.isSafeInteger(ticket) || ticket < 1 || ticket > this.issued)
@@ -37327,21 +37345,31 @@ class MergeQueue {
     const active2 = lane;
     if ([active2.holder, ...active2.waiting].some((entry) => entry?.id === id || entry?.ticket === ticket))
       throw new ContractError("conflict");
-    const turn = new Promise((resolve16, reject) => {
+    const entered = new Promise((resolve16, reject) => {
       const abort = () => {
-        const at3 = active2.waiting.indexOf(entry);
-        if (at3 < 0)
-          return;
-        active2.waiting.splice(at3, 1);
-        reject(new ContractError("stale"));
-        this.pump(key3, active2);
+        if (entry.held)
+          entry.aborted = true;
+        else
+          entry.leave();
       };
       const entry = {
         id,
         ticket,
-        grant: (granted) => {
+        offer,
+        held: false,
+        aborted: false,
+        end: (result) => {
           signal.removeEventListener("abort", abort);
-          resolve16(granted);
+          resolve16(result);
+        },
+        leave: () => {
+          const at3 = active2.waiting.indexOf(entry);
+          if (at3 < 0)
+            return;
+          active2.waiting.splice(at3, 1);
+          signal.removeEventListener("abort", abort);
+          reject(new ContractError("stale"));
+          this.pump(key3, active2);
         }
       };
       const at2 = active2.waiting.findIndex((other) => other.ticket > ticket);
@@ -37349,19 +37377,57 @@ class MergeQueue {
       signal.addEventListener("abort", abort, { once: true });
     });
     this.pump(key3, active2);
-    return turn;
+    return entered;
   }
   pump(key3, lane) {
     if (!lane.holder && lane.waiting.length) {
       const entry = lane.waiting.shift();
       lane.holder = entry;
-      entry.grant({
-        waiting: () => lane.waiting.length,
-        release: () => {
-          if (lane.holder !== entry)
-            throw new ContractError("stale");
-          lane.holder = null;
-          this.pump(key3, lane);
+      const mine = () => {
+        if (lane.holder !== entry)
+          throw new ContractError("stale");
+      };
+      const held = () => lane.waiting.filter((other) => other.held);
+      const letGo = () => {
+        for (const other of held()) {
+          other.held = false;
+          if (other.aborted)
+            other.leave();
+        }
+      };
+      entry.end({
+        turn: {
+          waiting: () => lane.waiting.length,
+          offers: () => lane.waiting.flatMap((other) => other.offer && !other.held ? [{ id: other.id, offer: other.offer.value }] : []),
+          hold: (ids) => {
+            mine();
+            const named = ids.map((id) => lane.waiting.find((other) => other.id === id && other.offer && !other.held));
+            if (named.some((other) => !other))
+              return false;
+            for (const other of named)
+              if (other)
+                other.held = true;
+            return true;
+          },
+          settle: (results) => {
+            mine();
+            for (const other of held()) {
+              if (!results.has(other.id))
+                continue;
+              lane.waiting.splice(lane.waiting.indexOf(other), 1);
+              other.end({ carried: results.get(other.id) });
+            }
+          },
+          letGo: () => {
+            mine();
+            letGo();
+          },
+          release: () => {
+            mine();
+            letGo();
+            lane.holder = null;
+            this.pump(key3, lane);
+          }
         }
       });
     }
@@ -38777,7 +38843,7 @@ function deliveryObservation(binding2, root, id, goal) {
     cleanup: { status: "pending", reason: "" }
   };
 }
-function acceptanceRecord(candidate, tree, digest2, execution, checks, review, expectedChecks, waived = new Set) {
+function acceptanceRecord(candidate, tree, digest2, execution, checks, review, expectedChecks, waived = new Set, group) {
   if (checks.length !== expectedChecks || !checks.length || new Set(checks.map((s) => s.id)).size !== checks.length || checks.some((s) => s.kind !== "check" || waived.has(s.id) ? s.kind !== "check" || s.status !== "failed" : s.status !== "completed" || s.exitCode !== 0) || checks.every((s) => waived.has(s.id)) || review.kind !== "review" || review.status !== "completed" || review.exitCode !== 0)
     throw new ContractError("stale");
   return {
@@ -38787,7 +38853,8 @@ function acceptanceRecord(candidate, tree, digest2, execution, checks, review, e
     contextDigest: hash(canonicalJson(execution)),
     checks: checks.map((s) => s.id),
     review: review.id,
-    ...waived.size ? { waived: checks.filter((s) => waived.has(s.id)).map((s) => s.id) } : {}
+    ...waived.size ? { waived: checks.filter((s) => waived.has(s.id)).map((s) => s.id) } : {},
+    ...group ? { group } : {}
   };
 }
 var zeroOid = (oid) => "0".repeat(oid.length);
@@ -38944,6 +39011,16 @@ class WorkflowDelivery {
     this.base = frontier;
     this.view.candidate = null;
     this.view.acceptance = null;
+    this.save();
+  }
+  carried(commit, parent, acceptance, moved) {
+    if (this.view.workspace?.state !== "ready" || acceptance.candidate !== commit)
+      throw new ContractError("stale");
+    if (moved)
+      this.view.workspace.head = commit;
+    this.base = parent;
+    this.view.candidate = commit;
+    this.view.acceptance = acceptance;
     this.save();
   }
   restored(sealed, base) {
@@ -40231,7 +40308,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.7",
-  build: "67ae4d94df8825cdccc29fa75862b233f5eb18c2ce7d9562a5c92e829eb11780",
+  build: "c1b69bdc9459c825d64a2673f82a8347e6afb4c8675061e717e9ccd9f789e129",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -42132,7 +42209,7 @@ ${branch} moved while this delivery worked; this candidate is the delivery repla
 This is Stage 4 code pre-review after fast checks passed; heavy browser/integration checks will run next. Mark behaviors that genuinely require real browser execution to confirm in "pendingBrowser" rather than guessing.` : live2.pendingBrowser?.length ? `
 Items previously marked pending real browser verification (now verify against the current full check results): ${live2.pendingBrowser.join("; ")}` : "";
     const ledgerBrief = ledger.briefForReview(this.o.secrets(), 3584);
-    const rules = `${await this.rulesBrief(live2, cwd)}${await this.frontierBrief(live2, cwd, p)}`;
+    const rules = `${await this.rulesBrief(live2, cwd)}${await this.frontierBrief(live2, cwd, p)}${this.togetherBrief(live2)}`;
     const prefix = `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. ${deltaGuidance}${preReviewNote}
 Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":[{"id":"stable-short-slug","source":"AC-1 or invariant","family":"F01 or new","familySummary":"short behavior description when new","evidence":"which agreed requirement fails, under what condition, and where","verify":"observable closing condition","writes":["checkout/relative/path"]}],"closedFamilies":["F01"]${options.preReview ? ',"pendingBrowser":["item awaiting browser check"]' : ""}}.
 Recheck open families and affected regressions first. Only violations of the agreement block (even if located in an untouched file); style preferences without an agreement violation belong in summary. Use empty writes if the repair is unclear. Review evidence is not permission to expand scope. Automatic review is not human review.
@@ -42812,37 +42889,33 @@ ${changed.length ? markdownLiteral(changed.join(`
       throw new ContractError("stale");
     const { branch } = delivery.view.binding.target;
     for (let wait = LANDING_WAIT.first;; ) {
-      await this.landingTurn(live2);
+      const carried = await this.landingTurn(live2, p);
+      if (carried)
+        return this.adoptLanding(live2, integration, carried);
       let waiting;
       try {
         live2.run.phase = "integrating";
         this.save(live2);
-        const head = await this.branchHead(live2);
-        if (!delivery.view.acceptance || head !== null && head !== delivery.candidateBase())
-          try {
+        let head = await this.branchHead(live2);
+        let landing;
+        try {
+          if (head !== null)
+            landing = await this.settleAttempt(live2, "target absorption", () => this.landTogether(live2, integration, p));
+          head = landing ? head : await this.branchHead(live2);
+          if (!landing && (!delivery.view.acceptance || head !== null && head !== delivery.candidateBase()))
             await this.settleAttempt(live2, "target absorption", () => this.verificationRound(live2, integration, p, true, [], {}, {
               previous: ""
             }));
-          } catch (error) {
-            if (!(error instanceof AttemptFailure))
-              throw error;
-            this.leaveTurn(live2);
-            await this.verifyAndRepair(live2, integration, p, true, [], {}, error);
-            continue;
-          }
+        } catch (error) {
+          if (!(error instanceof AttemptFailure))
+            throw error;
+          this.leaveTurn(live2);
+          await this.verifyAndRepair(live2, integration, p, true, [], {}, error);
+          continue;
+        }
         if (head === null)
           throw new Unlandable(gone(branch));
-        const scope = this.scope(live2, p);
-        let landing = await this.integrate(live2, p, scope);
-        if (landing.kind === "reconcile") {
-          const reconciled = await this.reconcileUncommitted(live2, p, landing.request);
-          landing = await this.integrate(live2, p, scope, reconciled);
-          if (landing.kind === "reconcile")
-            landing = {
-              kind: "wait",
-              reason: `files with uncommitted changes in ${landing.request.worktree} are still being edited`
-            };
-        }
+        landing ??= await this.landAccepted(live2, p, this.scope(live2, p));
         if (landing.kind === "landed")
           return;
         if (landing.kind === "wait")
@@ -42859,6 +42932,251 @@ ${changed.length ? markdownLiteral(changed.join(`
       await this.pause(live2, wait);
       wait = Math.min(wait * 2, LANDING_WAIT.most);
     }
+  }
+  async landAccepted(live2, p, scope) {
+    const landing = await this.integrate(live2, p, scope);
+    if (landing.kind !== "reconcile")
+      return landing;
+    const reconciled = await this.reconcileUncommitted(live2, p, landing.request);
+    const again = await this.integrate(live2, p, scope, reconciled);
+    return again.kind === "reconcile" ? {
+      kind: "wait",
+      reason: `files with uncommitted changes in ${again.request.worktree} are still being edited`
+    } : again;
+  }
+  async adoptLanding(live2, cwd, carried) {
+    const delivery = live2.delivery;
+    if (!delivery)
+      throw new ContractError("stale");
+    let moved = true;
+    try {
+      await this.gitStep(live2, cwd, "follow-landing", async (git) => {
+        await git(["checkout", "--detach", carried.commit]);
+      });
+    } catch (error) {
+      if (!(error instanceof WorkflowFailure))
+        throw error;
+      moved = false;
+    }
+    delivery.carried(carried.commit, carried.parent, carried.acceptance, moved);
+    live2.run.mergedCommit = carried.commit;
+    live2.accepted = { candidate: carried.commit, record: carried.acceptance };
+    const group = carried.acceptance.group;
+    live2.notes.push(`Landed together with ${carried.size - 1} other deliver${carried.size === 2 ? "y" : "ies"} that became ready at the same time: this one is commit ${carried.commit}; the group was checked and reviewed once, as ${group?.tip ?? carried.commit}${group ? ` in run ${group.run}` : ""}.`);
+    this.save(live2);
+  }
+  followers(live2, p) {
+    const environment2 = (plan) => canonicalJson([plan.setup, plan.links ?? [], plan.build ?? []]);
+    const waives = (run) => (run.deviations ?? []).some((d) => d.waives.length);
+    if (!live2.turn || waives(live2.run))
+      return [];
+    const ready2 = [];
+    for (const { offer } of live2.turn.offers()) {
+      const view = offer.live.delivery?.view;
+      if (!view?.acceptance || view.acceptance.candidate !== view.candidate || offer.live.merging || offer.live.abort.signal.aborted || waives(offer.live.run) || environment2(offer.proposal.plan) !== environment2(p.plan))
+        break;
+      ready2.push(offer);
+    }
+    return ready2;
+  }
+  async landTogether(live2, cwd, p) {
+    const delivery = live2.delivery;
+    if (!delivery)
+      throw new ContractError("stale");
+    const offers = this.followers(live2, p);
+    if (!offers.length)
+      return;
+    const scope = this.scope(live2, p);
+    const alone = delivery.view.acceptance && delivery.view.acceptance.candidate === delivery.view.candidate && delivery.candidateBase() === await this.branchHead(live2) ? delivery.view.acceptance : null;
+    const own3 = alone?.candidate ?? await this.candidate(live2, cwd, p, scope);
+    if (!own3)
+      throw new ContractError("stale");
+    const members = [
+      {
+        live: live2,
+        proposal: p,
+        commit: own3,
+        parent: delivery.candidateBase(),
+        scope
+      }
+    ];
+    const leave = async () => {
+      if (await gitHead(cwd) !== own3)
+        await this.gitStep(live2, cwd, "own-commit", async (git) => {
+          await git(["checkout", "--force", "--detach", own3]);
+        });
+      delivery.update(own3);
+      delivery.view.candidate = own3;
+      delivery.view.acceptance = alone;
+      this.save(live2);
+    };
+    try {
+      for (const offer of offers) {
+        const parent = members[members.length - 1].commit;
+        const commit = await this.takeAlong(live2, cwd, p, offer, parent);
+        if (!commit)
+          break;
+        members.push({
+          ...offer,
+          commit,
+          parent,
+          scope: this.scope(offer.live, offer.proposal)
+        });
+      }
+      for (let size3 = members.length;size3 > 1; size3 = Math.ceil(size3 / 2)) {
+        const outcome = await this.landGroup(live2, cwd, p, members.slice(0, size3));
+        if (!outcome)
+          continue;
+        if (outcome.kind !== "landed")
+          await leave();
+        return outcome;
+      }
+    } catch (error) {
+      await leave().catch(() => {});
+      throw error;
+    }
+    await leave();
+  }
+  async takeAlong(live2, cwd, p, offer, tip) {
+    const delivery = live2.delivery, theirs = offer.live.delivery;
+    const sealed = theirs?.view.candidate;
+    if (!delivery || !theirs || !sealed)
+      return null;
+    const parent = theirs.candidateBase();
+    try {
+      const twin = await this.gitStep(live2, cwd, "take-along", (git) => this.twin(live2, cwd, p, sealed, parent, git));
+      const builds = p.plan.build ?? [];
+      const obstacle = (unmerged2) => {
+        const sorted = classifyConflicts(unmerged2, builds);
+        return sorted.text.length + sorted.other.length + sorted.derived.length > 0;
+      };
+      const fits3 = await gitRun(cwd, [
+        "merge-tree",
+        "--write-tree",
+        "-z",
+        "--merge-base",
+        parent,
+        tip,
+        twin
+      ]);
+      if (fits3.code !== 0 && fits3.code !== 1 || obstacle(parseMergeTree(fits3.stdout).conflicts))
+        return null;
+      await this.gitStep(live2, cwd, "take-along", async (_, attempt2) => {
+        const picked = await attempt2(["cherry-pick", "--no-commit", twin]);
+        if (picked.exitCode !== 0 && picked.exitCode !== 1)
+          this.success(picked);
+      });
+      const unmerged = parseUnmerged(await gitText(cwd, ["ls-files", "--unmerged", "-z"]));
+      if (obstacle(unmerged) || (await this.mergeRefreshed(live2, cwd, p, unmerged)).size)
+        throw new AttemptFailure("This delivery does not go onto the one before it without a decision.", []);
+      await this.syncBuild(live2, cwd, p);
+      const changes = await assertWorkflowScope(cwd, this.scope(offer.live, offer.proposal), this.confirmedLinks(live2, cwd));
+      if (!changes.length)
+        return null;
+      return await this.gitStep(live2, cwd, "take-along", async (git) => {
+        await git(["add", "--", ...changes.map(literal2)]);
+        await git([
+          "commit",
+          "--no-verify",
+          "-m",
+          `Cadence: ${offer.proposal.plan.goal}`
+        ]);
+        const commit = await gitHead(cwd);
+        delivery.update(commit);
+        await delivery.pinCheckpoint(commit, "delivery", git, cwd);
+        return commit;
+      });
+    } catch (error) {
+      this.assertRunning(live2);
+      if (!(error instanceof AttemptFailure || error instanceof WorkflowFailure || error instanceof WorkflowRefusal))
+        throw error;
+      await this.gitStep(live2, cwd, "leave-behind", async (git) => {
+        await git(["checkout", "--force", "--detach", tip]);
+      });
+      delivery.update(tip);
+      return null;
+    }
+  }
+  async landGroup(live2, cwd, p, members) {
+    const delivery = live2.delivery;
+    if (!delivery)
+      throw new ContractError("stale");
+    const tip = members[members.length - 1].commit;
+    if (await gitHead(cwd) !== tip)
+      await this.gitStep(live2, cwd, "group-tip", async (git) => {
+        await git(["checkout", "--detach", tip]);
+      });
+    delivery.update(tip);
+    delivery.view.candidate = tip;
+    live2.together = { members, records: new Map };
+    live2.run.notice = this.notice(`Verifying ${members.length} deliveries that are ready for ${delivery.view.binding.target.branch} together, once, as commit ${tip.slice(0, 12)}.`);
+    this.save(live2);
+    try {
+      const commands = new Set;
+      const checks = members.flatMap((member) => member.proposal.plan.checks).filter((check) => !commands.has(check.command) && commands.add(check.command));
+      const plan = { ...p.plan, checks };
+      const observed = [], waived = new Set;
+      let review;
+      try {
+        const siblings = await this.siblingChecks(live2, cwd, { ...p, plan }, tip, members);
+        if (!await this.checks(live2, cwd, plan, false, observed, waived, {
+          extra: siblings
+        }))
+          return;
+        live2.lastReviewedCandidate = undefined;
+        const reviewed = await this.review(live2, cwd, p, observed);
+        if (reviewed.verdict !== "approved")
+          return;
+        review = reviewed.step;
+      } catch (error) {
+        this.assertRunning(live2);
+        if (!(error instanceof AttemptFailure || error instanceof WorkflowFailure))
+          throw error;
+        return;
+      }
+      const record3 = async (member, commit) => acceptanceRecord(commit, (await gitText(cwd, ["rev-parse", `${commit}^{tree}`])).trim(), member.proposal.digest, member.live.execution, observed, review, observed.length, waived, { run: live2.run.id, tip });
+      for (const member of members)
+        live2.together.records.set(member.live.run.id, await record3(member, member.commit));
+      delivery.view.acceptance = await record3({ live: live2, proposal: p }, tip);
+      const landed = await this.landAccepted(live2, p, [
+        ...new Set(members.flatMap((member) => member.scope))
+      ]);
+      if (landed.kind === "landed") {
+        const own3 = members[0].commit;
+        if (own3 !== tip)
+          await this.gitStep(live2, cwd, "own-commit", async (git) => {
+            await git(["checkout", "--detach", own3]);
+          });
+        delivery.update(own3);
+        delivery.view.candidate = own3;
+        delivery.view.acceptance = live2.together.records.get(live2.run.id) ?? null;
+        delivery.view.integration.after = own3;
+        live2.accepted = delivery.view.acceptance ? { candidate: own3, record: delivery.view.acceptance } : live2.accepted;
+        live2.notes.push(`Landed together with ${members.length - 1} other deliver${members.length === 2 ? "y" : "ies"} that became ready at the same time; the group was checked and reviewed once, as commit ${tip}.`);
+        this.save(live2);
+      }
+      return landed;
+    } finally {
+      live2.together = undefined;
+    }
+  }
+  togetherBrief(live2) {
+    const members = live2.together?.members;
+    if (!members)
+      return "";
+    return `
+${diagnosticText(`This candidate is ${members.length} deliveries landing together, one commit each, in this order. Each has an approved agreement of its own, and each has to hold in the last commit:
+${members.map((member, at2) => `${at2 + 1}. commit ${member.commit} — goal: ${clipUnits(member.proposal.plan.goal, 400)}
+   acceptance: ${clipUnits(member.proposal.plan.acceptance, 900)}
+   files: ${pathList(member.scope)}`).join(`
+`)}
+Judge every one of them against its own agreement; the full diff covers all of them. A blocking issue says which delivery it is about.`, 8192, this.o.secrets())}`;
+  }
+  advanceOwn(live2, candidate, git) {
+    const delivery = live2.delivery;
+    if (!delivery)
+      throw new ContractError("stale");
+    return delivery.advanceTaskBranch(live2.together?.members[0].commit ?? candidate, git);
   }
   async deliverOnBranch(live2, integration, error) {
     const { delivery, accepted: accepted2 } = live2;
@@ -42907,7 +43225,7 @@ ${changed.length ? markdownLiteral(changed.join(`
           throw new Unlandable(gone(target2.branch));
         if (landing.kind === "overlap")
           return this.carryOver(live2, p, candidate, landing, changed, hidden, reconciled);
-        await delivery.advanceTaskBranch(candidate, async (args) => {
+        await this.advanceOwn(live2, candidate, async (args) => {
           const r = await this.run(live2, this.cwd, { git: args });
           this.success(r);
           return r;
@@ -43047,7 +43365,7 @@ ${changed.length ? markdownLiteral(changed.join(`
           reason: `files with uncommitted changes in ${worktree} are still being edited`
         };
       const ref = wipBackupRef(live2.run.id);
-      await delivery.advanceTaskBranch(candidate, (args) => git(this.cwd, args));
+      await this.advanceOwn(live2, candidate, (args) => git(this.cwd, args));
       this.persist(this.path(live2.run.id, "landing.json"), {
         branch: target2.branch,
         before,
@@ -43309,6 +43627,23 @@ Write only: ${request3.paths.join(", ")}`;
       throw new ContractError("stale");
     const target2 = delivery.view.binding.target;
     const worktree = landing.kind === "ref" ? null : landing.worktree;
+    const members = live2.together?.members ?? [];
+    const followers = members.slice(1);
+    if (followers.length && !live2.turn?.hold(followers.map((member) => member.live.run.id))) {
+      delivery.view.integration.status = "pending";
+      this.persist(this.path(live2.run.id, "landing.json"), {
+        branch: target2.branch,
+        before,
+        after: candidate,
+        worktree,
+        status: "abandoned"
+      });
+      return "moved";
+    }
+    const sync = {
+      mode: worktree ? "fast-forward" : "ref",
+      worktree
+    };
     const step = this.step(live2, "land", "git");
     const command = worktree ? "git merge --ff-only" : "git update-ref (compare-and-swap)";
     let result;
@@ -43324,12 +43659,12 @@ Write only: ${request3.paths.join(", ")}`;
       }
       const integration = delivery.view.integration;
       if (actual === candidate) {
-        live2.run.mergedCommit = candidate;
+        live2.run.mergedCommit = members[0]?.commit ?? candidate;
         Object.assign(integration, {
           status: "applied",
           after: candidate,
           reason: "",
-          sync: { mode: worktree ? "fast-forward" : "ref", worktree }
+          sync
         });
         this.persist(this.path(live2.run.id, "landing.json"), {
           branch: target2.branch,
@@ -43338,6 +43673,20 @@ Write only: ${request3.paths.join(", ")}`;
           worktree,
           status: "confirmed"
         });
+        for (const member of followers) {
+          member.live.run.mergedCommit = member.commit;
+          if (member.live.delivery)
+            member.live.delivery.view.integration = {
+              status: "applied",
+              before: member.parent,
+              after: member.commit,
+              reason: "",
+              sync
+            };
+          try {
+            this.save(member.live);
+          } catch {}
+        }
       } else if (actual === undefined) {
         integration.status = "unknown";
         integration.reason = "Target identity or outcome could not be confirmed; do not replay.";
@@ -43354,16 +43703,51 @@ ${result.output}`}`);
       throw new WorkflowFailure("unknown", `${target2.branch} could not be read back after it was moved; whether that completed is unknown. Inspect the branch before acting; nothing will be retried.`);
     if (actual === candidate) {
       const lane = this.lane(delivery.view);
-      this.landings.add(lane, {
-        commit: candidate,
-        paths: sources(changed, live2.proposal?.plan.build ?? []),
-        checks: live2.proposal?.plan.checks ?? []
-      });
+      if (members.length)
+        for (const member of members)
+          this.landings.add(lane, {
+            commit: member.commit,
+            paths: sources(await committedPaths(delivery.view.worktreeRoot, member.parent, member.commit).catch(() => changed), member.proposal.plan.build ?? []),
+            checks: member.proposal.plan.checks
+          });
+      else
+        this.landings.add(lane, {
+          commit: candidate,
+          paths: sources(changed, live2.proposal?.plan.build ?? []),
+          checks: live2.proposal?.plan.checks ?? []
+        });
       this.retainLandings(lane);
+      for (const member of followers)
+        try {
+          await member.live.delivery?.advanceTaskBranch(member.commit, async (args) => {
+            const r = await this.run(live2, this.cwd, { git: args }, { uninterruptible: true });
+            this.success(r);
+            return r;
+          });
+        } catch {
+          member.live.notes.push(`The task branch ${member.live.delivery?.view.taskBranch ?? ""} could not be moved to ${member.commit}; the commit is on ${target2.branch}.`);
+        }
+      const records = live2.together?.records;
+      live2.turn?.settle(new Map(followers.flatMap((member) => {
+        const acceptance = records?.get(member.live.run.id);
+        return acceptance ? [
+          [
+            member.live.run.id,
+            {
+              commit: member.commit,
+              parent: member.parent,
+              acceptance,
+              size: members.length
+            }
+          ]
+        ] : [];
+      })));
       if (!worktree)
         await this.followCheckout(live2, before, candidate);
       return "landed";
     }
+    if (followers.length)
+      live2.turn?.letGo();
     if (actual !== before)
       return "moved";
     if (result)
@@ -43684,7 +44068,7 @@ ${objection}` : "", "", PROMPT_BYTES);
     live2.barrier = permit;
     permit.assertHeld();
   }
-  async landingTurn(live2) {
+  async landingTurn(live2, proposal) {
     const target2 = live2.run.delivery?.binding.target;
     if (!target2 || live2.turn)
       throw new ContractError("invalid");
@@ -43695,7 +44079,10 @@ ${objection}` : "", "", PROMPT_BYTES);
       live2.run.notice = this.notice(`Waiting to land on ${target2.branch}: ${ahead} deliver${ahead === 1 ? "y" : "ies"} ahead.`);
       this.save(live2);
     }
-    live2.turn = await this.queue.enter(lane, live2.run.id, live2.ticket, live2.abort.signal);
+    const entered = await this.queue.join(lane, live2.run.id, live2.ticket, live2.abort.signal, { live: live2, proposal });
+    if ("carried" in entered)
+      return entered.carried;
+    live2.turn = entered.turn;
   }
   lane(delivery) {
     const { repositoryIdentity: repositoryIdentity2, branch } = delivery.binding.target;
@@ -43705,34 +44092,47 @@ ${objection}` : "", "", PROMPT_BYTES);
     const marks = [...this.active.values()].flatMap((live2) => live2.run.delivery && live2.landed !== undefined && this.lane(live2.run.delivery) === lane ? [live2.landed] : []);
     this.landings.retain(lane, marks.length ? Math.min(...marks) : null);
   }
-  async siblingChecks(live2, cwd, p, candidate) {
+  async siblingChecks(live2, cwd, p, candidate, members) {
     const delivery = live2.delivery;
-    if (!delivery || live2.landed === undefined)
+    if (!delivery)
       return [];
     const base = delivery.candidateBase();
-    const landed = this.landings.since(this.lane(delivery.view), live2.landed);
-    if (!landed.length || base === delivery.view.binding.target.head)
+    const lane = this.lane(delivery.view);
+    const builds = p.plan.build ?? [];
+    if (!members && base === delivery.view.binding.target.head)
       return [];
-    const mine = sources(await committedPaths(cwd, base, candidate), p.plan.build ?? []);
+    const sides = members ? members.map((member) => ({
+      mark: member.live.landed,
+      from: member.parent,
+      to: member.commit
+    })) : [{ mark: live2.landed, from: base, to: candidate }];
     const commands = new Set(p.plan.checks.map((c) => c.command));
+    const within2 = new Map;
     const extra = [];
-    for (const sibling of landed) {
-      if (!overlapping(sibling.paths, mine).length)
+    for (const side of sides) {
+      const landed = side.mark === undefined ? [] : this.landings.since(lane, side.mark);
+      if (!landed.length)
         continue;
-      const within2 = await gitRun(cwd, [
-        "merge-base",
-        "--is-ancestor",
-        sibling.commit,
-        base
-      ]);
-      if (within2.code !== 0)
-        continue;
-      for (const c of sibling.checks) {
-        if (commands.has(c.command))
+      const mine = sources(await committedPaths(cwd, side.from, side.to), builds);
+      for (const sibling of landed) {
+        if (!overlapping(sibling.paths, mine).length)
           continue;
-        commands.add(c.command);
-        const { target: _target, ...check } = c;
-        extra.push({ ...check, name: `landed meanwhile: ${c.name}` });
+        if (!within2.has(sibling.commit))
+          within2.set(sibling.commit, (await gitRun(cwd, [
+            "merge-base",
+            "--is-ancestor",
+            sibling.commit,
+            base
+          ])).code === 0);
+        if (!within2.get(sibling.commit))
+          continue;
+        for (const c of sibling.checks) {
+          if (commands.has(c.command))
+            continue;
+          commands.add(c.command);
+          const { target: _target, ...check } = c;
+          extra.push({ ...check, name: `landed meanwhile: ${c.name}` });
+        }
       }
     }
     return extra;
@@ -43812,6 +44212,7 @@ ${objection}` : "", "", PROMPT_BYTES);
         "rm",
         "-r",
         "-q",
+        "--force",
         "--cached",
         "--ignore-unmatch",
         "--",
@@ -44878,7 +45279,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "5d2b13e81fd59b759aa1171190dc8aef878827b63dddbe807b936e72d4e0f878";
+  const embedded = "8073eb17cb754b420f987393d0b6924dde0cb8c4eba3e83a2a596fae90c10620";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

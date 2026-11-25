@@ -1126,7 +1126,14 @@ export function DeliveryDetails({
                   },
                 )
               : t("Checks and automatic Agent review passed")
-          } · ${d.acceptance.candidate}`
+          } · ${d.acceptance.candidate}${
+            // Verified once, as part of several deliveries landed together.
+            d.acceptance.group
+              ? ` · ${t("together with other deliveries, as {tip}", {
+                  tip: d.acceptance.group.tip,
+                })}`
+              : ""
+          }`
         : t(labels.missingCandidate),
     ],
     [

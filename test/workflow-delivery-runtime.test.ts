@@ -16,6 +16,7 @@ import {
 import { HostCapacity } from "../src/service/host-capacity.ts";
 import {
   LandingLog,
+  laneKey,
   MergeQueue,
   type QueueTurn,
 } from "../src/service/merge-queue.ts";
@@ -111,6 +112,9 @@ vi.mock("../src/service/workflow-git.ts", async (original) => ({
     }
     if (args[0] === "diff")
       return { code: seam.trees.get(cwd)!.dirty.size ? 1 : 0, stdout: "" };
+    // Asked of the objects: this one goes onto the other without a conflict.
+    if (args[0] === "merge-tree")
+      return { code: 0, stdout: `${"a".repeat(40)}\0` };
     return { code: 0, stdout: "" };
   },
   sourceIdentityAsync: async (cwd: string, scope: string[]) =>
@@ -1047,6 +1051,64 @@ it("uncommitted changes to other files do not stop a fast-forward; changes to th
   expect(same.events.filter((e) => e === "land:ff")).toHaveLength(1);
   expect(same.d.integration.status).toBe("applied");
   expect(seam.refs.get(BRANCH)).toBe(same.run.mergedCommit);
+});
+
+it("a delivery waiting behind another that is ready too is landed with it: one commit each, one verification, and each run's own record", async () => {
+  const first = fixture("zero-edit-learn"),
+    second = fixture("zero-edit-learn");
+  // One owner: one landing order and one record of what landed.
+  second.engine.queue = first.engine.queue;
+  second.engine.landings = first.engine.landings;
+  const queue = first.engine.queue;
+  // Both arrive while somebody else has the turn.
+  const ahead = await queue.enter(
+    laneKey("a".repeat(64), BRANCH),
+    randomUUID(),
+    queue.ticket(),
+    new AbortController().signal,
+  );
+  const a = first.execute();
+  await vi.waitFor(() => expect(ahead.waiting()).toBe(1));
+  const b = second.execute();
+  await vi.waitFor(() => expect(ahead.waiting()).toBe(2));
+  const before = { first: first.counts(), second: second.counts() };
+  ahead.release();
+  await Promise.all([a, b]);
+  const own = first.run.mergedCommit,
+    tip = second.run.mergedCommit;
+  expect(own).not.toBe(tip);
+  expect(seam.refs.get(BRANCH)).toBe(tip);
+  // The first in line replayed the other onto its own commit, verified the
+  // last of the two once, and moved the branch once.
+  expect(first.events.filter((e) => e === "replay")).toHaveLength(1);
+  expect(first.events.filter((e) => e.startsWith("land"))).toEqual(["land:ff"]);
+  expect(first.counts().reviews - before.first.reviews).toBe(1);
+  expect(first.counts().candidateChecks - before.first.candidateChecks).toBe(1);
+  // The one that was taken along verified nothing again and moved nothing.
+  expect(second.counts()).toEqual(before.second);
+  expect(second.events.filter((e) => e.startsWith("land"))).toEqual([]);
+  const review = first.prompts.filter((p) =>
+    p.startsWith("Independently inspect"),
+  );
+  expect(review.at(-1)).toContain(
+    "This candidate is 2 deliveries landing together, one commit each, in this order.",
+  );
+  // Each run's record is about its own commit, accepted as part of the group.
+  for (const [f, commit] of [
+    [first, own],
+    [second, tip],
+  ] as const) {
+    expect(f.d.candidate).toBe(commit);
+    expect(f.d.acceptance).toMatchObject({
+      candidate: commit,
+      group: { run: first.run.id, tip },
+    });
+    expect(f.d.integration).toMatchObject({ status: "applied", after: commit });
+    expect(seam.refs.get(f.d.taskBranch)).toBe(commit);
+    expect(seam.trees.get(f.d.worktreeRoot)!.head).toBe(commit);
+    expect(f.d.cleanup.status).toBe("removed");
+  }
+  expect(queue.busy).toBe(false);
 });
 
 it("a branch that cannot take a landing just now is waited for, without holding its turn, and then landed", async () => {

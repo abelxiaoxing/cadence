@@ -35,16 +35,17 @@ flowchart LR
 
 ## Pourquoi Cadence
 
-|                                        |                                                                                                                      |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| **Le travail survit à la fenêtre**     | Les clients se connectent et se déconnectent seulement ; l'owner continue.                                           |
-| **Rien ne change avant l'approbation** | Enquête en lecture seule, puis un accord lisible que vous confirmez.                                                 |
-| **Résultats fiables**                  | Vérifications réelles et revue indépendante ; un texte du modèle ne vaut jamais réussite.                            |
-| **Termine seul**                       | Après approbation, il répare, replanifie ou enregistre un écart, et ne s'arrête que pour des conditions hors dépôt.  |
-| **Plus rapide par conception**         | Les tâches indépendantes s'exécutent côte à côte dans leurs worktrees.                                               |
-| **Les connaissances s'accumulent**     | Table de routes et budget fixe : les workers lisent ce qui correspond, les nouvelles leçons remplacent les périmées. |
-| **Une WebUI qui montre et pilote**     | Tableau des tâches, révisions, écarts, branches, réflexion ; intervenir ou mettre en file en pleine réponse.         |
-| **Un seul historique**                 | Les conversations du navigateur sont les sessions Pi du projet ; reprise des deux côtés.                             |
+|                                        |                                                                                                                                                                                              |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Le travail survit à la fenêtre**     | Les clients se connectent et se déconnectent seulement ; l'owner continue.                                                                                                                   |
+| **Rien ne change avant l'approbation** | Enquête en lecture seule, puis un accord lisible que vous confirmez.                                                                                                                         |
+| **Résultats fiables**                  | Vérifications réelles et revue indépendante ; un texte du modèle ne vaut jamais réussite.                                                                                                    |
+| **Termine seul**                       | Après approbation, il répare, replanifie ou enregistre un écart, et ne s'arrête que pour des conditions hors dépôt.                                                                          |
+| **Plus rapide par conception**         | Les tâches indépendantes s'exécutent côte à côte dans leurs worktrees.                                                                                                                       |
+| **Plusieurs tâches, un seul dossier**  | Lancez autant de tâches que vous voulez dans le même checkout ; chacune arrive d'elle-même sur la branche d'où elle est partie, fusionnée avec les autres et avec vos propres modifications. |
+| **Les connaissances s'accumulent**     | Table de routes et budget fixe : les workers lisent ce qui correspond, les nouvelles leçons remplacent les périmées.                                                                         |
+| **Une WebUI qui montre et pilote**     | Tableau des tâches, révisions, écarts, branches, réflexion ; intervenir ou mettre en file en pleine réponse.                                                                                 |
+| **Un seul historique**                 | Les conversations du navigateur sont les sessions Pi du projet ; reprise des deux côtés.                                                                                                     |
 
 > Cadence est un assistant de confiance, **pas un bac à sable** : ses agents utilisent les outils de l'hôte dans le checkout ou worktree approuvé.
 > À utiliser sur du code que vous pouvez relire et restaurer.

@@ -35,16 +35,17 @@ flowchart LR
 
 ## Por que o Cadence
 
-|                                   |                                                                                                                 |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **O trabalho sobrevive à janela** | Os clientes só conectam e desconectam; o owner continua.                                                        |
-| **Nada muda antes da aprovação**  | Investigação somente leitura e um acordo legível que você confirma.                                             |
-| **Resultados confiáveis**         | Verificações reais e revisão independente; texto do modelo nunca conta como aprovado.                           |
-| **Termina sozinho**               | Após aprovar, repara, replaneja ou registra um desvio, e só para por condições fora do repositório.             |
-| **Mais rápido por desenho**       | Tarefas independentes rodam lado a lado em worktrees próprios.                                                  |
-| **O conhecimento se acumula**     | Tabela de rotas e orçamento fixo: workers leem o que corresponde e lições novas substituem as obsoletas.        |
-| **WebUI que mostra e conduz**     | Quadro de tarefas, revisões, desvios, branches, raciocínio; intervir ou enfileirar mensagem durante a resposta. |
-| **Um só histórico**               | As conversas do navegador são as sessões do Pi do projeto; continue em qualquer lugar.                          |
+|                                   |                                                                                                                                                             |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **O trabalho sobrevive à janela** | Os clientes só conectam e desconectam; o owner continua.                                                                                                    |
+| **Nada muda antes da aprovação**  | Investigação somente leitura e um acordo legível que você confirma.                                                                                         |
+| **Resultados confiáveis**         | Verificações reais e revisão independente; texto do modelo nunca conta como aprovado.                                                                       |
+| **Termina sozinho**               | Após aprovar, repara, replaneja ou registra um desvio, e só para por condições fora do repositório.                                                         |
+| **Mais rápido por desenho**       | Tarefas independentes rodam lado a lado em worktrees próprios.                                                                                              |
+| **Muitas tarefas, uma pasta**     | Inicie quantas tarefas quiser no mesmo checkout; cada uma chega sozinha ao branch de onde partiu, mesclada com as outras e com as suas próprias alterações. |
+| **O conhecimento se acumula**     | Tabela de rotas e orçamento fixo: workers leem o que corresponde e lições novas substituem as obsoletas.                                                    |
+| **WebUI que mostra e conduz**     | Quadro de tarefas, revisões, desvios, branches, raciocínio; intervir ou enfileirar mensagem durante a resposta.                                             |
+| **Um só histórico**               | As conversas do navegador são as sessões do Pi do projeto; continue em qualquer lugar.                                                                      |
 
 > O Cadence é um assistente confiável, **não um sandbox**: seus agentes usam ferramentas do host no checkout ou worktree aprovado.
 > Use em código que você possa revisar e recuperar.

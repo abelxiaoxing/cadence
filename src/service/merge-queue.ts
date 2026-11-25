@@ -4,23 +4,49 @@
  * same ticket, so it is first again and nothing that arrived later can starve
  * it. One entry per lane holds the turn; lanes never wait on one another. A
  * waiter leaves only through its own abort signal, which the owner raises for
- * every run it stops. It runs no Git, no worker and no timer. */
+ * every run it stops.
+ *
+ * A waiter may offer to be landed by whoever holds the turn. The holder sees
+ * those offers in arrival order, holds the ones it is about to land (from
+ * then on a cancellation cannot take them out from under it) and ends their
+ * wait with what it did for them. Whom it does not land waits on as before.
+ * The queue runs no Git, no worker and no timer. */
 import { ContractError } from "./contracts/core.ts";
 
-export interface QueueTurn {
+export interface QueueTurn<O = unknown, R = unknown> {
   /** Entries waiting behind this one on the same lane. */
   waiting(): number;
-  /** Ends this turn; the lowest waiting ticket is next. */
+  /** Ends this turn; the lowest waiting ticket is next. Whoever is still
+   * held is let go first. */
   release(): void;
+  /** Those waiting behind this turn that offered to be landed with it, in
+   * arrival order. */
+  offers(): { id: string; offer: O }[];
+  /** Holds the named waiters: none of them leaves the queue through its
+   * abort signal until it is settled or let go. False, with nobody held,
+   * when one of them is no longer waiting with an offer. */
+  hold(ids: readonly string[]): boolean;
+  /** Ends the wait of every held entry that has a result here, with it. */
+  settle(results: ReadonlyMap<string, R>): void;
+  /** Held entries wait for their own turn again; one whose signal fired
+   * meanwhile leaves now. */
+  letGo(): void;
 }
-interface Entry {
+/** How a wait ended: with the turn, or landed by the holder of one. */
+export type Entered<O, R> = { turn: QueueTurn<O, R> } | { carried: R };
+interface Entry<O, R> {
   id: string;
   ticket: number;
-  grant(turn: QueueTurn): void;
+  offer: { value: O } | null;
+  held: boolean;
+  /** Its signal fired while it was held. */
+  aborted: boolean;
+  end(entered: Entered<O, R>): void;
+  leave(): void;
 }
-interface Lane {
-  holder: Entry | null;
-  waiting: Entry[];
+interface Lane<O, R> {
+  holder: Entry<O, R> | null;
+  waiting: Entry<O, R>[];
 }
 
 /** One lane per repository and target branch. */
@@ -67,9 +93,9 @@ export class LandingLog<T> {
   }
 }
 
-export class MergeQueue {
+export class MergeQueue<O = never, R = never> {
   private issued = 0;
-  private readonly lanes = new Map<string, Lane>();
+  private readonly lanes = new Map<string, Lane<O, R>>();
 
   /** A run's place in arrival order, kept across every re-entry. */
   ticket(): number {
@@ -89,12 +115,36 @@ export class MergeQueue {
     return this.lanes.size > 0;
   }
 
+  /** Waits for the turn. An entry that cannot be made is refused at once. */
   enter(
     key: string,
     id: string,
     ticket: number,
     signal: AbortSignal,
-  ): Promise<QueueTurn> {
+  ): Promise<QueueTurn<O, R>> {
+    return this.wait(key, id, ticket, signal, null).then((entered) => {
+      // Nobody is landed by another without having offered it.
+      if (!("turn" in entered)) throw new ContractError("invalid");
+      return entered.turn;
+    });
+  }
+  /** Waits for the turn, offering to be landed by an earlier holder instead. */
+  join(
+    key: string,
+    id: string,
+    ticket: number,
+    signal: AbortSignal,
+    offer: O,
+  ): Promise<Entered<O, R>> {
+    return this.wait(key, id, ticket, signal, { value: offer });
+  }
+  private wait(
+    key: string,
+    id: string,
+    ticket: number,
+    signal: AbortSignal,
+    offer: { value: O } | null,
+  ): Promise<Entered<O, R>> {
     if (signal.aborted) throw new ContractError("stale");
     if (!Number.isSafeInteger(ticket) || ticket < 1 || ticket > this.issued)
       throw new ContractError("invalid");
@@ -110,20 +160,29 @@ export class MergeQueue {
       )
     )
       throw new ContractError("conflict");
-    const turn = new Promise<QueueTurn>((resolve, reject) => {
+    const entered = new Promise<Entered<O, R>>((resolve, reject) => {
       const abort = () => {
-        const at = active.waiting.indexOf(entry);
-        if (at < 0) return;
-        active.waiting.splice(at, 1);
-        reject(new ContractError("stale"));
-        this.pump(key, active);
+        // Held: whoever holds it decides what becomes of it.
+        if (entry.held) entry.aborted = true;
+        else entry.leave();
       };
-      const entry: Entry = {
+      const entry: Entry<O, R> = {
         id,
         ticket,
-        grant: (granted) => {
+        offer,
+        held: false,
+        aborted: false,
+        end: (result) => {
           signal.removeEventListener("abort", abort);
-          resolve(granted);
+          resolve(result);
+        },
+        leave: () => {
+          const at = active.waiting.indexOf(entry);
+          if (at < 0) return;
+          active.waiting.splice(at, 1);
+          signal.removeEventListener("abort", abort);
+          reject(new ContractError("stale"));
+          this.pump(key, active);
         },
       };
       const at = active.waiting.findIndex((other) => other.ticket > ticket);
@@ -131,20 +190,62 @@ export class MergeQueue {
       signal.addEventListener("abort", abort, { once: true });
     });
     this.pump(key, active);
-    return turn;
+    return entered;
   }
 
-  private pump(key: string, lane: Lane): void {
+  private pump(key: string, lane: Lane<O, R>): void {
     if (!lane.holder && lane.waiting.length) {
-      const entry = lane.waiting.shift() as Entry;
+      const entry = lane.waiting.shift() as Entry<O, R>;
       lane.holder = entry;
-      entry.grant({
-        waiting: () => lane.waiting.length,
-        release: () => {
-          // Object identity: an old turn cannot release a later one.
-          if (lane.holder !== entry) throw new ContractError("stale");
-          lane.holder = null;
-          this.pump(key, lane);
+      // Object identity: an old turn cannot act for a later one.
+      const mine = () => {
+        if (lane.holder !== entry) throw new ContractError("stale");
+      };
+      const held = () => lane.waiting.filter((other) => other.held);
+      const letGo = () => {
+        for (const other of held()) {
+          other.held = false;
+          if (other.aborted) other.leave();
+        }
+      };
+      entry.end({
+        turn: {
+          waiting: () => lane.waiting.length,
+          offers: () =>
+            lane.waiting.flatMap((other) =>
+              other.offer && !other.held
+                ? [{ id: other.id, offer: other.offer.value }]
+                : [],
+            ),
+          hold: (ids) => {
+            mine();
+            const named = ids.map((id) =>
+              lane.waiting.find(
+                (other) => other.id === id && other.offer && !other.held,
+              ),
+            );
+            if (named.some((other) => !other)) return false;
+            for (const other of named) if (other) other.held = true;
+            return true;
+          },
+          settle: (results) => {
+            mine();
+            for (const other of held()) {
+              if (!results.has(other.id)) continue;
+              lane.waiting.splice(lane.waiting.indexOf(other), 1);
+              other.end({ carried: results.get(other.id) as R });
+            }
+          },
+          letGo: () => {
+            mine();
+            letGo();
+          },
+          release: () => {
+            mine();
+            letGo();
+            lane.holder = null;
+            this.pump(key, lane);
+          },
         },
       });
     }
