@@ -1151,20 +1151,33 @@ it("a deleted branch is never recreated: the verified result is delivered on the
   expect(f.cleanup).not.toHaveBeenCalled();
 });
 
-it("a fast-forward Git refuses leaves the branch where it was; the result stays on the task branch with Git's own words", async () => {
+it("a fast-forward Git refuses is waited on with Git's own words, and tried again once the checkout lets it through", async () => {
   const f = fixture("zero-edit-learn");
-  // Something a path comparison did not catch (Git still refuses it).
+  // Something saved after the checkout was looked at: Git refuses over it.
   seam.trees.get(f.root)!.dirty.add("blocked.txt");
+  const waits: string[] = [];
+  f.engine.pause = async () => {
+    waits.push(f.run.notice);
+    // Nothing moved, and nothing is reported as merged meanwhile.
+    expect(seam.refs.get(BRANCH)).toBe(f.base);
+    expect(f.run.mergedCommit).toBeNull();
+    expect(f.d.integration.status).toBe("pending");
+    expect(
+      f.records.get(
+        resolve("/controlled-records", "runs", f.run.id, "landing.json"),
+      ),
+    ).toMatchObject({ status: "abandoned" });
+    seam.trees.get(f.root)!.dirty.delete("blocked.txt");
+  };
   await f.execute();
-  expect(seam.refs.get(BRANCH)).toBe(f.base);
-  expect(f.run.mergedCommit).toBeNull();
-  expect(f.d.integration).toMatchObject({
-    status: "branch",
-    after: null,
-    reason: expect.stringContaining("would be overwritten"),
-  });
-  expect(seam.refs.get(f.d.taskBranch)).toBe(f.d.candidate);
-  expect(f.cleanup).not.toHaveBeenCalled();
+  expect(waits).toHaveLength(1);
+  expect(waits[0]).toContain(
+    `Waiting to land on ${BRANCH}: Git did not fast-forward ${f.root} (would be overwritten)`,
+  );
+  expect(f.events.filter((e) => e === "land:ff")).toHaveLength(2);
+  expect(seam.refs.get(BRANCH)).toBe(f.run.mergedCommit);
+  expect(f.d.integration.status).toBe("applied");
+  expect(f.d.cleanup.status).toBe("removed");
 });
 
 it("a cancellation or an unknown outcome is reported as what it is, never as a delivery on the task branch", async () => {
@@ -1335,6 +1348,26 @@ it("crash recovery settleInterrupted marks unknown, distinguishes confirmed chec
   g.engine.settleInterrupted(g.run.id);
   expect((g.records.get(of("state.json")) as WorkflowRun).notice).toContain(
     `A landing had started: ${BRANCH} may already be at 444444444444 (it was at 111111111111).`,
+  );
+
+  // The branch had moved and uncommitted changes were being carried over:
+  // where they are as they were is the first thing the user has to know.
+  const c = fixture();
+  const in_ = (name: string) =>
+    resolve("/controlled-records", "runs", c.run.id, name);
+  const backup = `refs/cadence/wip-backup/${c.run.id}`;
+  c.records.set(in_("state.json"), c.run);
+  c.records.set(in_("landing.json"), {
+    branch: BRANCH,
+    before: "1".repeat(40),
+    after: "4".repeat(40),
+    worktree: c.root,
+    backup: { ref: backup, oid: "5".repeat(40) },
+    status: "carrying",
+  });
+  c.engine.settleInterrupted(c.run.id);
+  expect((c.records.get(in_("state.json")) as WorkflowRun).notice).toContain(
+    `${BRANCH} was moved to 444444444444, and the uncommitted changes in ${c.root} to files that landing changed were being carried over when Cadence stopped: a file that was not written back yet shows the delivered version. As they were before: ${backup}`,
   );
 
   // A journal that cannot be read says so instead of implying nothing moved.

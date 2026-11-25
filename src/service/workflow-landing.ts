@@ -101,6 +101,12 @@ export async function observeTarget(
       );
       if (unfinished)
         busy = `${tree.path} has an unfinished Git operation (${unfinished})`;
+      // Left by a stash or a pick that stopped at a conflict: no marker file,
+      // but nothing can be saved from that index or fast-forwarded over it.
+      else if (
+        (await gitText(tree.path, ["ls-files", "--unmerged", "-z"])).length
+      )
+        busy = `${tree.path} has unresolved conflicts in its index`;
     }
     for (const rebase of ["rebase-merge", "rebase-apply"])
       if (firstLine(join(gitDir, rebase, "head-name")) === branch)

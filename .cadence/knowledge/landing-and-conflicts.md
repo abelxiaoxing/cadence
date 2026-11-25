@@ -82,8 +82,8 @@ Source: this delivery, 2026-11-24
 Kind: contract
 
 Why: `carryOver` saves exactly the overlapping files as a stash-format commit under `refs/cadence/wip-backup/<run-id>` (untracked ones as its third parent), previews both the worktree and the index state with `git merge-tree`, and `planFusion` decides per file: merged, delivered version (a build derives it), kept as the user's, or text for a worker.
-Only those paths are rewritten: restored to HEAD, fast-forwarded, then written from the fused tree through a private index, with staged content restored separately; a refused fast-forward is undone with `git stash apply --index`.
-Index flags that hide bytes are lifted for the duration and put back.
+Only those paths are rewritten: restored to HEAD, fast-forwarded, then written from the fused tree through a private index, staged content separately; a fast-forward Git refuses is undone with `git stash apply --index` and waited on, and `landing.json` says `carrying` until the write-back is done.
+Hidden-byte index flags are lifted meanwhile.
 
 Anchors: `src/service/workflows.ts#carryOver`, `src/service/workflows.ts#snapshotUncommitted`, `src/service/workflow-landing.ts#planFusion`, `test/merge-queue-delivery.test.ts`
 

@@ -834,6 +834,35 @@ it("files that are written while the landing looks at them are waited for, not o
   expect(r.git("rev-parse", "HEAD")).toBe(x.live.run.mergedCommit);
 });
 
+it("a file saved in the checkout after it was looked at makes Git refuse the fast-forward: nothing is touched, and the next look carries it over", async () => {
+  const { r, x, put, read, status } = await ready();
+  // Saved between the look at the checkout and the fast-forward.
+  const move = x.engine.move.bind(x.engine);
+  let moves = 0;
+  x.engine.move = async (...args: unknown[]) => {
+    if (++moves === 1)
+      put("a.txt", "one\ntwo\nthree\nfour\nFIVE, just saved\n");
+    return move(...args);
+  };
+  const waits: string[] = [];
+  x.engine.pause = async () => {
+    waits.push(x.live.run.notice);
+    // Git refused: the branch and the file are exactly as they were.
+    expect(r.git("rev-parse", "HEAD")).toBe(x.base);
+    expect(read("a.txt")).toBe("one\ntwo\nthree\nfour\nFIVE, just saved\n");
+    expect(x.live.run.mergedCommit).toBeNull();
+  };
+  await x.land();
+  expect(waits).toHaveLength(1);
+  expect(waits[0]).toContain(`Git did not fast-forward ${r.root}`);
+  expect(moves).toBe(2);
+  // Seen on the second look, and carried over like any other change.
+  expect(r.git("rev-parse", "HEAD")).toBe(x.live.run.mergedCommit);
+  expect(read("a.txt")).toBe("one\nTWO\nthree\nfour\nFIVE, just saved\n");
+  expect(status()).toEqual([" M a.txt"]);
+  expect(x.view.integration.sync?.mode).toBe("wip");
+});
+
 /** Three deliveries on the repository with a bundle and pins, each verified
  * alone on the same baseline and now ready to land. */
 const three = async () => {

@@ -39511,6 +39511,8 @@ async function observeTarget(cwd, branch) {
       const unfinished = UNFINISHED.find((name) => existsSync4(join45(gitDir, name)));
       if (unfinished)
         busy = `${tree.path} has an unfinished Git operation (${unfinished})`;
+      else if ((await gitText(tree.path, ["ls-files", "--unmerged", "-z"])).length)
+        busy = `${tree.path} has unresolved conflicts in its index`;
     }
     for (const rebase of ["rebase-merge", "rebase-apply"])
       if (firstLine2(join45(gitDir, rebase, "head-name")) === branch)
@@ -40308,7 +40310,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.7",
-  build: "c1b69bdc9459c825d64a2673f82a8347e6afb4c8675061e717e9ccd9f789e129",
+  build: "56bcbc6ced60e08dd2a2e41dbb1429990b02b25faaf3227619b91756231184fd",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -40641,7 +40643,10 @@ class Workflows {
       } catch {}
       if (typeof landing?.branch !== "string" || typeof landing.before !== "string" || typeof landing.after !== "string")
         landingNote = `The record of this run's landing could not be read: ${run.delivery?.binding.target.branch ?? "its target branch"} may or may not have been moved. Read the branch before acting; nothing is replayed.`;
-      else if (landing.status === "intent") {
+      else if (landing.status === "carrying") {
+        const backup = landing.backup?.ref;
+        landingNote = `${landing.branch} was moved to ${landing.after.slice(0, 12)}, and the uncommitted changes in ${String(landing.worktree)} to files that landing changed were being carried over when Cadence stopped: a file that was not written back yet shows the delivered version. As they were before: ${String(backup)} (git show ${String(backup)}:<file> prints one; git stash apply --index ${String(backup)} puts them back once those files have no uncommitted changes).`;
+      } else if (landing.status === "intent") {
         const backup = landing.backup?.ref;
         landingNote = `A landing had started: ${landing.branch} may already be at ${landing.after.slice(0, 12)} (it was at ${landing.before.slice(0, 12)}). Read the branch before acting; nothing is replayed.${typeof backup === "string" && typeof landing.worktree === "string" ? ` Uncommitted changes in ${landing.worktree} to files that landing changes were saved first and may have been set aside: they are in ${backup} (git stash apply --index ${backup}).` : ""}`;
       }
@@ -43245,9 +43250,8 @@ Judge every one of them against its own agreement; the full diff covers all of t
           reason: ""
         };
         this.save(live2);
-        return {
-          kind: await this.move(live2, candidate, before, landing, changed)
-        };
+        const moved = await this.move(live2, candidate, before, landing, changed);
+        return moved === "landed" ? { kind: "landed" } : this.notLanded(landing.kind === "ref" ? null : landing.worktree, moved);
       }, () => this.o.owner.state === "idle");
     } catch (error) {
       const integration = delivery.view.integration;
@@ -43386,20 +43390,20 @@ Judge every one of them against its own agreement; the full diff covers all of t
         if (restored.exitCode !== 0)
           live2.notes.push(`${worktree}: the uncommitted changes to ${pathList(overlap)} were set aside for a landing that did not happen and could not be put back automatically. They are in ${ref}: git stash apply --index ${ref}`);
       };
-      if (snapshot.tracked.length)
-        await git(worktree, [
-          "restore",
-          "--source=HEAD",
-          "--staged",
-          "--worktree",
-          "--",
-          ...snapshot.tracked.map(literal2)
-        ]);
-      for (const path of snapshot.untracked)
-        rmSync6(join47(worktree, path), { force: true });
       let moved;
       try {
-        moved = await this.move(live2, candidate, before, { kind: "fast-forward", worktree }, changed);
+        if (snapshot.tracked.length)
+          await git(worktree, [
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+            "--",
+            ...snapshot.tracked.map(literal2)
+          ]);
+        for (const path of snapshot.untracked)
+          rmSync6(join47(worktree, path), { force: true });
+        moved = await this.move(live2, candidate, before, { kind: "fast-forward", worktree }, changed, { backup: { ref, oid: snapshot.backup }, status: "carrying" });
       } catch (error) {
         if (delivery.view.integration.status !== "applied")
           await undo();
@@ -43407,7 +43411,7 @@ Judge every one of them against its own agreement; the full diff covers all of t
       }
       if (moved !== "landed") {
         await undo();
-        return { kind: "moved" };
+        return this.notLanded(worktree, moved);
       }
       const present = [], absent3 = [];
       for (const path of overlap)
@@ -43621,7 +43625,7 @@ Write only: ${request3.paths.join(", ")}`;
     }
     return { key: request3.key, files };
   }
-  async move(live2, candidate, before, landing, changed) {
+  async move(live2, candidate, before, landing, changed, record3 = { status: "confirmed" }) {
     const delivery = live2.delivery;
     if (!delivery)
       throw new ContractError("stale");
@@ -43671,7 +43675,7 @@ Write only: ${request3.paths.join(", ")}`;
           before,
           after: candidate,
           worktree,
-          status: "confirmed"
+          ...record3
         });
         for (const member of followers) {
           member.live.run.mergedCommit = member.commit;
@@ -43693,6 +43697,13 @@ Write only: ${request3.paths.join(", ")}`;
       } else {
         integration.status = "pending";
         integration.after = null;
+        this.persist(this.path(live2.run.id, "landing.json"), {
+          branch: target2.branch,
+          before,
+          after: candidate,
+          worktree,
+          status: "abandoned"
+        });
       }
       if (result)
         this.finishStep(live2, step, actual === undefined ? { ...result, outcome: "unknown" } : result, `${command}: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}; ${target2.branch} at ${actual ? actual.slice(0, 12) : actual === null ? "(deleted)" : "(unreadable)"}${result.exitCode === 0 ? "" : `
@@ -43750,9 +43761,20 @@ ${result.output}`}`);
       live2.turn?.letGo();
     if (actual !== before)
       return "moved";
+    if (worktree && result?.outcome === "completed" && result.exitCode !== 0)
+      return {
+        refused: diagnosticText(result.output.split(`
+`).find((line) => line.trim()) ?? "", 256, this.o.secrets())
+      };
     if (result)
       this.success(result);
     throw new WorkflowRefusal("stale", `${command} did not leave ${target2.branch} at the candidate commit; nothing is reported as merged.`);
+  }
+  notLanded(worktree, moved) {
+    return moved === "moved" ? { kind: "moved" } : {
+      kind: "wait",
+      reason: `Git did not fast-forward ${worktree ?? "the checkout"} (${moved.refused})`
+    };
   }
   async followCheckout(live2, before, candidate) {
     const delivery = live2.delivery;

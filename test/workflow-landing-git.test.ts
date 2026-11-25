@@ -72,6 +72,23 @@ it("a merge left unfinished in the checkout, or a rebase of the branch anywhere,
   });
 });
 
+it("an index left with unresolved conflicts, by a stash that did not apply cleanly, means not just now either", async () => {
+  const r = repository();
+  writeFileSync(join(r.root, "a.txt"), "one\nmine\nthree\nfour\nfive\n");
+  r.git("stash");
+  writeFileSync(join(r.root, "a.txt"), "one\ncommitted\nthree\nfour\nfive\n");
+  r.git("commit", "-qam", "committed");
+  expect(() => r.git("stash", "pop")).toThrow();
+  // No merge or pick is in progress as far as marker files say.
+  expect(await observeTarget(r.root, r.BRANCH)).toMatchObject({
+    holder: r.root,
+    busy: `${r.root} has unresolved conflicts in its index`,
+  });
+  r.git("checkout", "--theirs", "a.txt");
+  r.git("add", "a.txt");
+  expect((await observeTarget(r.root, r.BRANCH)).busy).toBeNull();
+});
+
 it("uncommitted paths include staged, unstaged and untracked ones, never ignored ones", async () => {
   const r = repository();
   writeFileSync(join(r.root, "a.txt"), "changed\n");

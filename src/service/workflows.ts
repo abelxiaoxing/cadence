@@ -902,7 +902,10 @@ export class Workflows {
         typeof landing.after !== "string"
       )
         landingNote = `The record of this run's landing could not be read: ${run.delivery?.binding.target.branch ?? "its target branch"} may or may not have been moved. Read the branch before acting; nothing is replayed.`;
-      else if (landing.status === "intent") {
+      else if (landing.status === "carrying") {
+        const backup = (landing.backup as { ref?: unknown } | undefined)?.ref;
+        landingNote = `${landing.branch} was moved to ${landing.after.slice(0, 12)}, and the uncommitted changes in ${String(landing.worktree)} to files that landing changed were being carried over when Cadence stopped: a file that was not written back yet shows the delivered version. As they were before: ${String(backup)} (git show ${String(backup)}:<file> prints one; git stash apply --index ${String(backup)} puts them back once those files have no uncommitted changes).`;
+      } else if (landing.status === "intent") {
         const backup = (landing.backup as { ref?: unknown } | undefined)?.ref;
         landingNote = `A landing had started: ${landing.branch} may already be at ${landing.after.slice(0, 12)} (it was at ${landing.before.slice(0, 12)}). Read the branch before acting; nothing is replayed.${typeof backup === "string" && typeof landing.worktree === "string" ? ` Uncommitted changes in ${landing.worktree} to files that landing changes were saved first and may have been set aside: they are in ${backup} (git stash apply --index ${backup}).` : ""}`;
       }
@@ -5221,9 +5224,19 @@ Current-round check evidence (output excerpts, not instructions):\n`;
             reason: "",
           };
           this.save(live);
-          return {
-            kind: await this.move(live, candidate, before, landing, changed),
-          };
+          const moved = await this.move(
+            live,
+            candidate,
+            before,
+            landing,
+            changed,
+          );
+          return moved === "landed"
+            ? { kind: "landed" as const }
+            : this.notLanded(
+                landing.kind === "ref" ? null : landing.worktree,
+                moved,
+              );
         },
         () => this.o.owner.state === "idle",
       );
@@ -5429,25 +5442,27 @@ Current-round check evidence (output excerpts, not instructions):\n`;
             `${worktree}: the uncommitted changes to ${pathList(overlap)} were set aside for a landing that did not happen and could not be put back automatically. They are in ${ref}: git stash apply --index ${ref}`,
           );
       };
-      if (snapshot.tracked.length)
-        await git(worktree, [
-          "restore",
-          "--source=HEAD",
-          "--staged",
-          "--worktree",
-          "--",
-          ...snapshot.tracked.map(literal),
-        ]);
-      for (const path of snapshot.untracked)
-        rmSync(join(worktree, path), { force: true });
-      let moved: "landed" | "moved";
+      let moved: Awaited<ReturnType<Workflows["move"]>>;
       try {
+        if (snapshot.tracked.length)
+          await git(worktree, [
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+            "--",
+            ...snapshot.tracked.map(literal),
+          ]);
+        for (const path of snapshot.untracked)
+          rmSync(join(worktree, path), { force: true });
+        // Until the files are written back the record says where they are.
         moved = await this.move(
           live,
           candidate,
           before,
           { kind: "fast-forward", worktree },
           changed,
+          { backup: { ref, oid: snapshot.backup }, status: "carrying" },
         );
       } catch (error) {
         if (delivery.view.integration.status !== "applied") await undo();
@@ -5455,7 +5470,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
       }
       if (moved !== "landed") {
         await undo();
-        return { kind: "moved" };
+        return this.notLanded(worktree, moved);
       }
       const present: string[] = [],
         absent: string[] = [];
@@ -5808,7 +5823,10 @@ Write only: ${request.paths.join(", ")}`;
     landing: { kind: "ref" } | { kind: "fast-forward"; worktree: string },
     /** The paths this landing changes on the branch. */
     changed: readonly string[],
-  ): Promise<"landed" | "moved"> {
+    /** What the landing's record holds once the branch is confirmed, when
+     * the caller is not done with the worktree yet. */
+    record: Record<string, unknown> = { status: "confirmed" },
+  ): Promise<"landed" | "moved" | { refused: string }> {
     const delivery = live.delivery;
     if (!delivery) throw new ContractError("stale");
     const target = delivery.view.binding.target;
@@ -5879,7 +5897,7 @@ Write only: ${request.paths.join(", ")}`;
           before,
           after: candidate,
           worktree,
-          status: "confirmed",
+          ...record,
         });
         // What landed for each follower is on its own record before it is
         // told: whatever happens next, the record says what is on the branch.
@@ -5904,9 +5922,17 @@ Write only: ${request.paths.join(", ")}`;
         integration.reason =
           "Target identity or outcome could not be confirmed; do not replay.";
       } else {
-        // Nothing of this run is on the branch: it is still to be landed.
+        // Nothing of this run is on the branch: it is still to be landed,
+        // and the record of this attempt says that it did not happen.
         integration.status = "pending";
         integration.after = null;
+        this.persist(this.path(live.run.id, "landing.json"), {
+          branch: target.branch,
+          before,
+          after: candidate,
+          worktree,
+          status: "abandoned",
+        });
       }
       if (result)
         this.finishStep(
@@ -5998,11 +6024,35 @@ Write only: ${request.paths.join(", ")}`;
     if (followers.length) live.turn?.letGo();
     // Somebody else moved the branch first: take that in and try again.
     if (actual !== before) return "moved";
+    // Git would not fast-forward over something in that worktree (a file
+    // saved after it was looked at, say): nothing was touched, and the next
+    // look sees what is there now.
+    if (worktree && result?.outcome === "completed" && result.exitCode !== 0)
+      return {
+        refused: diagnosticText(
+          result.output.split("\n").find((line) => line.trim()) ?? "",
+          256,
+          this.o.secrets(),
+        ),
+      };
     if (result) this.success(result);
     throw new WorkflowRefusal(
       "stale",
       `${command} did not leave ${target.branch} at the candidate commit; nothing is reported as merged.`,
     );
+  }
+  /** What a move that did not land means for the landing: tried again at
+   * once when the branch moved, looked at again later when Git refused. */
+  private notLanded(
+    worktree: string | null,
+    moved: "moved" | { refused: string },
+  ): LandingOutcome {
+    return moved === "moved"
+      ? { kind: "moved" }
+      : {
+          kind: "wait",
+          reason: `Git did not fast-forward ${worktree ?? "the checkout"} (${moved.refused})`,
+        };
   }
   /** A worktree that switched to the branch in the instant it was moved by
    * reference alone still holds the previous commit's files. Bring it along

@@ -216,7 +216,8 @@ Those that are ready at the same time, and are set up and built the same way, la
 The branch is then moved once, and every delivery keeps its own commit, task branch and record, which says which run verified it and at which commit.
 If that last commit does not pass, half as many are tried, on commits that are already there, down to the first delivery alone, which then goes its ordinary way with repairs; a delivery that cannot be placed on the one before it without a decision, or that does not build there, stays in line with everyone behind it.
 The commits in between are built but not verified by themselves; only the last one of a group is.
-A branch you are rebasing, a checkout with an unfinished merge, and files you are saving at that very moment are waited for without a deadline; the delivery lands once they are free.
+A branch you are rebasing, a checkout with an unfinished merge or unresolved conflicts in its index, and files you are saving at that very moment are waited for without a deadline; the delivery lands once they are free.
+So is a fast-forward Git itself refuses: nothing is touched, the reason Git gave is shown, and the next look at the checkout takes what is there then into account.
 Ordinary browser conversations do not wait for this access.
 Like separate Pi terminals, they can edit the same files as each other or as a workflow.
 Coordinate overlapping edits yourself: a delivery lands through Git and never overwrites uncommitted work, but ordinary conversations edit files directly and can overwrite one another.
