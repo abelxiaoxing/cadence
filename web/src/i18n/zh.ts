@@ -342,6 +342,7 @@ export const zh = {
   "Selecting folder…": "正在选择目录…",
   "Choose a folder…": "选择目录…",
   "Choose a working folder": "选择工作文件夹",
+  "Choose a working folder first": "先选择工作文件夹",
   "Choose a working folder to start. You can write a draft below.":
     "选择工作文件夹即可开始，也可以先在下方写草稿。",
   "Write a message. Choose a folder before sending…":

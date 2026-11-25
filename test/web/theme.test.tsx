@@ -511,6 +511,35 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       );
     }
   });
+  it("gives the no-project welcome a soft brand glow and a glass card", () => {
+    const glow = color("--welcome-glow", scheme);
+    expect(glow[3]).toBeLessThan(0.2);
+    expect(declaration(".folder-setup .chat-messages", "background")).toBe(
+      "radial-gradient( ellipse 620px 420px at 50% 40%, var(--welcome-glow), transparent 72% )",
+    );
+    const card = ".folder-setup .chat-welcome";
+    expect(declaration(card, "background-color")).toBe("var(--glass-surface)");
+    expect(declaration(card, "backdrop-filter")).toBe("var(--glass-filter)");
+    expect(declaration(card, "border")).toBe("1px solid var(--glass-border)");
+    expect(declaration(card, "border-top-color")).toBe(
+      "var(--glass-border-top)",
+    );
+    expect(
+      declaration(
+        `@supports not (backdrop-filter: blur(1px)) / ${card}`,
+        "background-color",
+      ),
+    ).toBe("var(--bg-elev)");
+    // The card is the translucent glass over the page canvas; its hint text
+    // must stay readable on that composite.
+    const surface = over(
+      color("--glass-surface", scheme),
+      color("--bg", scheme),
+    );
+    expect(
+      contrast(color("--text-dim", scheme), surface),
+    ).toBeGreaterThanOrEqual(AA);
+  });
   it.each([
     ".receipt",
     ".run-summary",

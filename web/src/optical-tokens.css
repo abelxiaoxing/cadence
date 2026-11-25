@@ -54,6 +54,9 @@
     rgba(253, 254, 255, 0.98),
     rgba(22, 28, 39, 0.98)
   );
+  /* No-project welcome glow: a low-alpha brand accent, one step above the
+     sunken tint, behind the glass welcome card. */
+  --welcome-glow: light-dark(rgba(48, 91, 185, 0.09), rgba(100, 141, 255, 0.1));
   --accent-soft: light-dark(rgba(48, 91, 185, 0.07), rgba(100, 141, 255, 0.1));
   --green-soft: light-dark(rgba(75, 104, 83, 0.1), rgba(137, 177, 147, 0.1));
   --word-add-bg: light-dark(rgba(75, 104, 83, 0.14), rgba(137, 177, 147, 0.16));

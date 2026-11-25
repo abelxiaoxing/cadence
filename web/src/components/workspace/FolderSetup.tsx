@@ -11,6 +11,7 @@ import { AppShell } from "../../layout/AppShell";
 import { usePanelLayout } from "../../layout/use-panel-layout";
 import { ModelPicker } from "../actions/ModelPicker";
 import { ActivityList, type ActivityListProps } from "./ActivityList";
+import { CadenceModeButton } from "./CadenceModeButton";
 import {
   composerHeightCap,
   composerMinHeight,
@@ -116,7 +117,7 @@ export function FolderSetup({
       }
       content={
         <section
-          className="chat-workspace"
+          className="chat-workspace folder-setup"
           aria-label={t("Ordinary conversation")}
         >
           <div className="chat-messages">
@@ -176,6 +177,14 @@ export function FolderSetup({
                 <span className="composer-hint">
                   {t("Choose a folder before sending.")}
                 </span>
+                <CadenceModeButton
+                  known={false}
+                  active={false}
+                  armed={false}
+                  disabled
+                  disabledReason={t("Choose a working folder first")}
+                  onClick={() => {}}
+                />
                 <span className="composer-mobile-sep" aria-hidden="true" />
                 <div className="composer-toolbar composer-delivery">
                   <button

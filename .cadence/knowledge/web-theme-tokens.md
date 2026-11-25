@@ -31,3 +31,13 @@ Why: The capsule readability test reads the base `.mode-toggle` `background: tra
 Anchors: `test/web/theme.test.tsx#keeps the disabled mode label, model and placeholder readable on the input capsule`, `web/src/styles.css#.mode-toggle:disabled`
 
 Source: this delivery, 2026-11-20
+
+### An exact .toBe() on a multi-line declaration keeps the space after the opening paren
+
+Kind: pitfall
+
+Why: `declaration()` stores each value with its whitespace runs collapsed to one space, so a rule written across lines — the folder-setup `radial-gradient(` — reads back as `radial-gradient( ellipse …` with a space after `(` and before `)`; verify the normalized string with postcss before asserting an exact match.
+
+Anchors: `test/web/theme.test.tsx#declaration`, `test/web/theme.test.tsx#gives the no-project welcome a soft brand glow and a glass card`, `web/src/styles.css#.folder-setup .chat-messages`
+
+Source: this delivery, 2026-11-24

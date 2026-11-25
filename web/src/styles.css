@@ -3233,6 +3233,29 @@ summary:focus-visible,
 .chat-messages > .empty-state {
   min-height: 40vh;
 }
+/* No-project welcome: a static brand glow behind the glass card. The
+   element background stays put inside the scroll container; project mode
+   never carries .folder-setup, so its canvas and empty conversation stay
+   plain. */
+.folder-setup .chat-messages {
+  background: radial-gradient(
+    ellipse 620px 420px at 50% 40%,
+    var(--welcome-glow),
+    transparent 72%
+  );
+}
+.folder-setup .chat-welcome {
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+  border-radius: 16px;
+  background-color: var(--glass-surface);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  backdrop-filter: var(--glass-filter);
+  box-shadow:
+    0 8px 22px var(--shadow-1),
+    inset 0 1px var(--glass-border-top);
+}
 .chat-earlier,
 .chat-reading {
   min-height: 24px;
@@ -7146,6 +7169,7 @@ button.link:hover:not(:disabled) {
   }
   .composer-dock::before,
   .panel-drawer,
+  .folder-setup .chat-welcome,
   .scm-file {
     background-color: var(--bg-elev);
   }
