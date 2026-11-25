@@ -1186,6 +1186,7 @@ it("a cancellation or an unknown outcome is reported as what it is, never as a d
   expect(unknown.d.integration.status).toBe("unknown");
   expect(seam.refs.get(unknown.d.taskBranch)).not.toBe(unknown.base);
 
+  seam.missing = false;
   const canceled = fixture("zero-edit-learn");
   seam.trees.get(canceled.root)!.dirty.add("a.txt");
   const integrate = canceled.engine.integrate.bind(canceled.engine);
@@ -1615,4 +1616,156 @@ it("learn() recovery repairs preserve kind 'knowledge' (shell-free isolation)", 
   const repairEntries = kinds.filter((k) => k.startsWith("repair-"));
   expect(repairEntries.length).toBeGreaterThan(0);
   expect(repairEntries.every((k) => k.endsWith(":knowledge"))).toBe(true);
+});
+
+it("a held follower canceled during the leader's landing still records its carried commit and group acceptance consistently", async () => {
+  const f = fixture("zero-edit-learn");
+  const commit = "c".repeat(40);
+  const parent = f.base;
+  const acceptance = {
+    candidate: commit,
+    tree: "b".repeat(40),
+    planDigest: f.live.proposal.digest,
+    contextDigest: "a".repeat(64),
+    checks: ["c1"],
+    review: "r1",
+    group: { run: randomUUID(), tip: commit },
+  };
+  await f.engine.gitStep(
+    f.live,
+    f.root,
+    "worktree-integration",
+    (run: (args: string[]) => Promise<unknown>) => f.live.delivery.create(run),
+  );
+  f.live.abort.abort({ source: "user", reason: "late-cancel" });
+  await f.engine.adoptLanding(f.live, f.d.worktreeRoot, {
+    commit,
+    parent,
+    acceptance,
+    size: 2,
+  });
+  expect(f.run.mergedCommit).toBe(commit);
+  expect(f.d.candidate).toBe(commit);
+  expect(f.d.acceptance).toEqual(acceptance);
+  expect(f.live.notes.join("\n")).toContain("Landed together with 1 other");
+});
+
+it("Workflows.run honors uninterruptible:true even when live.abort already fired, while normal runs still refuse", async () => {
+  const f = fixture("zero-edit-learn");
+  let currentChecks = 0;
+  let runningChecks = 0;
+  f.engine.current = () => {
+    currentChecks++;
+  };
+  f.engine.assertRunning = () => {
+    runningChecks++;
+    throw new Error("aborted");
+  };
+  const runMethod = (
+    Workflows.prototype as unknown as {
+      run: (...args: unknown[]) => Promise<unknown>;
+    }
+  ).run;
+  f.live.abort.abort();
+  await expect(
+    runMethod.call(f.engine, f.live, f.root, { git: ["--version"] }),
+  ).rejects.toThrow("aborted");
+  expect(runningChecks).toBe(1);
+  expect(currentChecks).toBe(0);
+  // With uninterruptible:true, run() calls current() instead of assertRunning();
+  // verify it passes the guard (fails later only because the mock lacks owner.trackCheck).
+  await expect(
+    runMethod.call(
+      f.engine,
+      f.live,
+      f.root,
+      { git: ["--version"] },
+      { uninterruptible: true },
+    ),
+  ).rejects.not.toThrow("aborted");
+  expect(currentChecks).toBe(1);
+  expect(runningChecks).toBe(1);
+});
+
+it("recordGitStep attempt() and move() accept real runProcess nonzero exit (outcome:'failed', closed:true, exitCode:N) as settled answers while rejecting timeout/unknown", async () => {
+  const f = fixture("zero-edit-learn");
+  await f.engine.gitStep(
+    f.live,
+    f.root,
+    "worktree-integration",
+    (run: (args: string[]) => Promise<unknown>) => f.live.delivery.create(run),
+  );
+  // 1. recordGitStep attempt() must accept outcome:"failed", closed:true, exitCode:1 (e.g. git cherry-pick conflict)
+  f.engine.run = async () => ({
+    outcome: "failed",
+    closed: true,
+    exitCode: 1,
+    signal: null,
+    durationMs: 1,
+    text: "conflict",
+    output: "CONFLICT (content): Merge conflict in a.txt",
+    truncated: false,
+  });
+  const got = await f.engine.gitStep(
+    f.live,
+    f.d.worktreeRoot,
+    "conflict-attempt",
+    async (
+      _git: unknown,
+      attempt: (args: string[]) => Promise<{ exitCode: number | null }>,
+    ) => {
+      const picked = await attempt(["cherry-pick", "--no-commit", "HEAD"]);
+      return picked.exitCode;
+    },
+  );
+  expect(got).toBe(1);
+  expect(f.run.steps.at(-1)?.status).toBe("completed");
+
+  // 2. recordGitStep attempt() must still reject non-settled outcomes like timeout
+  f.engine.run = async () => ({
+    outcome: "timeout",
+    closed: true,
+    exitCode: null,
+    signal: "SIGTERM",
+    durationMs: 1,
+    text: "timed out",
+    output: "",
+    truncated: false,
+  });
+  await expect(
+    f.engine.gitStep(
+      f.live,
+      f.d.worktreeRoot,
+      "timeout-attempt",
+      async (_git: unknown, attempt: (args: string[]) => Promise<unknown>) =>
+        attempt(["cherry-pick", "--no-commit", "HEAD"]),
+    ),
+  ).rejects.toThrow(/timeout/i);
+
+  // 3. move() must return { refused } when git merge --ff-only exits nonzero with outcome:"failed"
+  const head = f.base;
+  const candidate = "c".repeat(40);
+  f.engine.branchHead = async () => head;
+  f.engine.run = async () => ({
+    outcome: "failed",
+    closed: true,
+    exitCode: 128,
+    signal: null,
+    durationMs: 1,
+    text: "failed",
+    output:
+      "error: Your local changes to the following files would be overwritten by merge",
+    truncated: false,
+  });
+  const moved = await f.engine.move(
+    f.live,
+    candidate,
+    head,
+    { kind: "fast-forward", worktree: f.root },
+    ["a.txt"],
+  );
+  expect(moved).toEqual({
+    refused:
+      "error: Your local changes to the following files would be overwritten by merge",
+  });
 });

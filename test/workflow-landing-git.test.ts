@@ -1,7 +1,7 @@
 // @module-tag slow
 /** What a landing sees of a real repository: where the branch is, which
  * worktree has it checked out and whether it can take a landing just now. */
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { observeTarget, uncommitted } from "../src/service/workflow-landing.ts";
@@ -107,4 +107,28 @@ it("uncommitted paths include staged, unstaged and untracked ones, never ignored
     "new.txt",
     "only-staged.txt",
   ]);
+});
+
+it("observeTarget tolerates a sibling detached worktree vanishing or half-removed concurrently", async () => {
+  const r = repository();
+  const head = r.git("rev-parse", "HEAD");
+  const sibling = join(r.home, "vanishing-sibling");
+  r.git("worktree", "add", "-q", "--detach", sibling, head);
+  // Case 1: `.git` pointer removed while directory still exists (mid-add/remove)
+  rmSync(join(sibling, ".git"), { force: true });
+  expect(await observeTarget(r.root, r.BRANCH)).toEqual({
+    head,
+    holder: r.root,
+    busy: null,
+  });
+  // Case 2: `.git` pointer exists, but its target gitdir HEAD vanished mid-remove
+  const sibling2 = join(r.home, "vanishing-sibling-2");
+  r.git("worktree", "add", "-q", "--detach", sibling2, head);
+  const gitDir2 = r.gitAt(sibling2, "rev-parse", "--absolute-git-dir");
+  rmSync(join(gitDir2, "HEAD"), { force: true });
+  expect(await observeTarget(r.root, r.BRANCH)).toEqual({
+    head,
+    holder: r.root,
+    busy: null,
+  });
 });

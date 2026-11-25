@@ -5,6 +5,7 @@ import {
   copyFileSync,
   opendirSync,
   realpathSync,
+  rmdirSync,
   rmSync,
   statfsSync,
 } from "node:fs";
@@ -197,6 +198,7 @@ import {
   WorkflowRefusal,
   workflowObservation,
   workingSnapshot,
+  worktreeResidue,
 } from "./workflow-git.ts";
 import { WorkflowHistoryScanner } from "./workflow-history.ts";
 import {
@@ -268,6 +270,9 @@ const STEP_UNITS = 80;
  * before looking again: doubling from the first to the most. There is no
  * deadline; only the branch becoming free or a cancellation ends the wait. */
 const LANDING_WAIT = { first: 2000, most: 30_000 } as const;
+/** Brief settle wait before discarding a freshly verified group when the user
+ * happened to save an overlapping file during the landing snapshot. */
+const SETTLE_DEBOUNCE_MS = 500;
 /** How long after its run settled a backup of uncommitted changes is kept. */
 const WIP_BACKUP_MS = 30 * 24 * 60 * 60 * 1000;
 /** A file larger than this is not read for the lines Git marked in it. */
@@ -492,12 +497,21 @@ interface Reconciled {
   key: string;
   files: Map<string, { oid: string; settled: boolean }>;
 }
+/** Check paired with the checkout-relative directory its command runs in. */
+type ExecutableCheck = WorkflowCheck & {
+  cwdRelative?: string;
+};
+type LandingSync = NonNullable<
+  NonNullable<WorkflowRun["delivery"]>["integration"]["sync"]
+>;
 /** What a sibling delivery landed on a branch, and how its own agreement
  * checks that. */
 interface Landed {
   commit: string;
   paths: string[];
   checks: WorkflowCheck[];
+  /** Directory relative to the checkout root where `checks` were approved to run. */
+  cwdRelative: string;
 }
 interface VerificationOptions {
   tiers?: readonly ("fast" | "heavy")[];
@@ -556,6 +570,12 @@ function clipBytes(value: string, maximum: number): string {
     .toString("utf8")
     .replace(/�+$/u, "");
 }
+/** True when a host command ran to a real process exit code (0 or nonzero),
+ * rather than timing out, being canceled, failing to spawn, or closing unknown. */
+const settledExit = (result: RunResult): boolean =>
+  result.closed &&
+  result.exitCode !== null &&
+  (result.outcome === "completed" || result.outcome === "failed");
 /** Proposed lessons one delivery keeps for its curator. */
 const LESSONS = 32;
 const IMPLEMENTATION_REPORT = `After the assigned work, call cadence_report with status completed, partial (useful outputs with remaining work), or blocked (a concrete unmet prerequisite) and a concrete summary of actual work and remaining gaps. Its optional lessons are for what this work taught that the code does not show and a later worker here would have to rediscover; usually there is none. Then give a short final answer. The report is not passing check evidence; the owner verifies and reviews independently. Never claim completion just because a tool exited zero.`;
@@ -940,12 +960,20 @@ export class Workflows {
     if (!execution.model) throw new ContractError("stale");
     return execution.model;
   }
-  private executionCwd(live: Live, tree: string): string {
+  private cwdRelative(live: Live): string {
+    return relative(this.cwd, live.execution.cwd);
+  }
+  private executionCwd(live: Live, tree: string, cwdRelative?: string): string {
     if (live.execution.checkoutRoot !== this.cwd)
       throw new ContractError("stale");
     let cwd: string;
     try {
-      cwd = executionDirectory(live.execution, tree);
+      cwd =
+        cwdRelative !== undefined
+          ? cwdRelative
+            ? resolve(tree, cwdRelative)
+            : tree
+          : executionDirectory(live.execution, tree);
     } catch {
       throw new ContractError("stale");
     }
@@ -2365,16 +2393,24 @@ export class Workflows {
       landing?: boolean;
       /** A private index file for this command instead of the worktree's. */
       index?: string;
+      /** Checkout-relative execution directory for a sibling/group check. */
+      cwdRelative?: string;
     } = {},
   ): Promise<RunResult> {
-    this.assertRunning(live);
+    // Once inside an uninterruptible landing/write-back critical section,
+    // cancellation or transient disk dips must not strand the user's checkout
+    // or leave a started ref move half-finished; only owner health gates it.
+    if (options.uninterruptible) this.current();
+    else this.assertRunning(live);
     const shell = "check" in operation;
     if (cwd !== this.cwd && !options.landing) {
       if (shell) await live.delivery?.assertTip(cwd);
       else await live.delivery?.assertBinding(cwd);
     }
     if (cwd !== this.cwd && shell) await assertWorktree(this.cwd, cwd);
-    const runCwd = shell ? this.executionCwd(live, cwd) : cwd;
+    const runCwd = shell
+      ? this.executionCwd(live, cwd, options.cwdRelative)
+      : cwd;
     const id = randomUUID();
     this.write(this.path(live.run.id, `operations/${id}-intent.json`), {
       cwd: runCwd,
@@ -2469,18 +2505,19 @@ export class Workflows {
   private async check(
     live: Live,
     cwd: string,
-    c: WorkflowCheck,
+    c: ExecutableCheck,
     title: string,
   ): Promise<{ result: RunResult; step: WorkflowStep }> {
     const step = this.step(live, title, "check");
+    const { cwdRelative, ...command } = c;
     try {
       // Capture placement before the command: checks may change the source,
       // and a later filesystem observation is not the launch context.
-      const runCwd = this.executionCwd(live, cwd);
+      const runCwd = this.executionCwd(live, cwd, cwdRelative);
       const temporary = live.environment?.forWorkspace(cwd);
       let groupSettled = false;
       const result = await this.hostCapacity.run(
-        c.tier === "heavy" ? HOST_COST.heavy : HOST_COST.light,
+        command.tier === "heavy" ? HOST_COST.heavy : HOST_COST.light,
         live.abort.signal,
         () => {
           if (step.text) {
@@ -2490,9 +2527,10 @@ export class Workflows {
           return this.run(
             live,
             cwd,
-            { check: c },
+            { check: command },
             {
               temporary,
+              cwdRelative,
               onGroupSettled: (settled) => {
                 groupSettled = settled;
               },
@@ -2514,10 +2552,10 @@ export class Workflows {
         result,
         result.outcome === "completed"
           ? undefined
-          : `${c.name} in ${runCwd}\nCommand: ${c.command}\n${result.output || result.text}`,
+          : `${command.name} in ${runCwd}\nCommand: ${command.command}\n${result.output || result.text}`,
         undefined,
         {
-          command: c,
+          command,
           cwd: runCwd,
           checkoutRoot: cwd,
           placement:
@@ -2608,8 +2646,7 @@ export class Workflows {
         );
         if (result.exitCode !== 0 && result.output) lines.push(result.output);
         // Only a settled exit code can be an answer; anything else failed.
-        if (!answer || result.outcome !== "completed" || !result.closed)
-          this.success(result, step);
+        if (!answer || !settledExit(result)) this.success(result, step);
         return result;
       };
       const value = await body(
@@ -2617,7 +2654,13 @@ export class Workflows {
         (args) => execute(args, true),
       );
       const summary = lines.join("\n") || "No Git operation was needed.";
-      if (last) this.finishStep(live, step, last, summary);
+      if (last)
+        this.finishStep(
+          live,
+          step,
+          last.outcome === "failed" ? { ...last, outcome: "completed" } : last,
+          summary,
+        );
       else {
         step.status = "completed";
         step.text = summary;
@@ -2688,10 +2731,11 @@ export class Workflows {
   /** Record a check that did not start because an earlier gating check failed. */
   private recordNotRunCheck(
     live: Live,
-    c: WorkflowCheck,
+    c: ExecutableCheck,
     reason: string,
   ): WorkflowStep {
-    const step = this.step(live, c.name, "check");
+    const { cwdRelative: _cwdRelative, ...command } = c;
+    const step = this.step(live, command.name, "check");
     const clean = diagnosticText(reason, 1024, this.o.secrets());
     step.status = "not-run";
     step.text = clean;
@@ -2710,7 +2754,7 @@ export class Workflows {
         truncated: false,
       },
       operation: JSON.parse(
-        sanitizeData({ command: c, notRunReason: clean }, this.o.secrets()),
+        sanitizeData({ command, notRunReason: clean }, this.o.secrets()),
       ),
     });
     this.save(live);
@@ -2784,7 +2828,9 @@ export class Workflows {
       failFast?: boolean;
       tiers?: readonly ("fast" | "heavy")[];
       /** Checks from outside this agreement that gate the candidate too. */
-      extra?: readonly WorkflowCheck[];
+      extra?: readonly ExecutableCheck[];
+      /** Explicit check list (with per-check directories) replacing `plan.checks`. */
+      checks?: readonly ExecutableCheck[];
     } = {},
   ): Promise<boolean> {
     live.run.phase = "verifying";
@@ -2796,9 +2842,9 @@ export class Workflows {
     const setAside = new Set(
       baseline ? [] : (live.run.deviations ?? []).flatMap((d) => d.waives),
     );
-    const raw = baseline
+    const raw: readonly ExecutableCheck[] = baseline
       ? plan.baselineChecks
-      : [...plan.checks, ...(options.extra ?? [])];
+      : [...(options.checks ?? plan.checks), ...(options.extra ?? [])];
     // Run fast checks before heavy checks (preserving declared order inside
     // each tier) so gating failures stop early before slow browser/integration runs.
     const ordered = baseline
@@ -2862,7 +2908,7 @@ export class Workflows {
       if (live.delivery && (await live.delivery.assertTip(cwd)) !== before)
         throw new ContractError("stale");
       await assertWorkflowScope(cwd, allowed, links);
-      await git(["add", "--", ...changes]);
+      await git(["add", "--", ...changes.map(literal)]);
       await assertWorkflowScope(cwd, allowed, links);
       await this.unchangedHead(cwd, before);
       const staged = await gitRun(cwd, [
@@ -4158,6 +4204,17 @@ Current-round check evidence (output excerpts, not instructions):\n`;
           );
         }
       }
+      if (!options.preReview && live.managed) {
+        const knowledgeChanged = [
+          ...new Set([
+            ...live.delivered,
+            ...(head && delivery
+              ? await committedPaths(cwd, delivery.candidateBase(), head)
+              : []),
+          ]),
+        ];
+        this.assertKnowledge(cwd, knowledgeChanged, checks, true);
+      }
       const {
         verdict,
         step: review,
@@ -4287,6 +4344,40 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         review.id,
       ]);
     }
+  }
+  /** Deterministic knowledge-store invariant check for combined candidates
+   * (after target absorption or multi-member batching). Parallel deliveries can
+   * each pass Stage 6 learn() in isolation yet exceed the store budget or break
+   * an anchor once combined. */
+  private assertKnowledge(
+    cwd: string,
+    changed: readonly string[],
+    steps: readonly WorkflowStep[],
+    allowDirectRepair: boolean,
+  ): void {
+    const blocking = lintKnowledge(cwd, changed).findings.filter(
+      (f) => f.blocking,
+    );
+    if (!blocking.length) return;
+    const summary = diagnosticText(
+      blocking.map((f) => `${f.path}: ${f.detail}`).join("; "),
+      2048,
+      this.o.secrets(),
+    );
+    const message = `The knowledge store does not pass its checks on the combined candidate; correct it within the budget and fix dead anchors or routes: ${summary}`;
+    const stepIds = steps.map((s) => s.id);
+    if (allowDirectRepair && stepIds.length) {
+      const direct = DirectCheckRepair.from(
+        "knowledge store checks",
+        message,
+        stepIds,
+        "knowledge:lint",
+        KNOWLEDGE_SCOPE,
+        this.o.secrets(),
+      );
+      if (direct) throw direct;
+    }
+    throw new AttemptFailure(message, stepIds, "knowledge:lint");
   }
   /** Whether this delivery can carry edits to the knowledge store: a commit
    * cannot deliver ignored paths. Skipped maintenance is said, never silent. */
@@ -4622,6 +4713,38 @@ Current-round check evidence (output excerpts, not instructions):\n`;
    * turn. If that needs repair the run steps aside, repairs in its own
    * worktree and comes back first with the ticket it already has. A branch
    * that cannot take a landing just now is waited for, without a deadline. */
+  /** Removes untracked or ignored files created inside a private candidate
+   * worktree during an aborted speculation (batch replay, failed group check,
+   * or discarded merge), without touching pre-existing residue or owner-managed
+   * dependency links. */
+  private async cleanAddedResidue(
+    live: Live,
+    cwd: string,
+    baseline: ReadonlySet<string>,
+  ): Promise<void> {
+    const links = this.confirmedLinks(live, cwd);
+    const now = await worktreeResidue(cwd);
+    for (const rel of now) {
+      if (baseline.has(rel)) continue;
+      const clean = rel.replace(/\/$/u, "");
+      if (!clean || workflowCovers(links, clean)) continue;
+      const target = resolve(cwd, clean);
+      const within = relative(cwd, target);
+      if (!within || within.startsWith("..") || target === cwd) continue;
+      rmSync(target, { recursive: true, force: true });
+      for (
+        let dir = dirname(target);
+        dir !== cwd && !relative(cwd, dir).startsWith("..");
+        dir = dirname(dir)
+      ) {
+        try {
+          rmdirSync(dir);
+        } catch {
+          break;
+        }
+      }
+    }
+  }
   private async land(
     live: Live,
     integration: string,
@@ -4637,45 +4760,61 @@ Current-round check evidence (output excerpts, not instructions):\n`;
       try {
         live.run.phase = "integrating";
         this.save(live);
-        let head = await this.branchHead(live);
-        let landing: LandingOutcome | undefined;
-        try {
-          // Whoever waits behind this run and is ready too is landed with
-          // it: one verification for all of them.
-          if (head !== null)
+        // Observe the target before spending builds, checks or reviews: a
+        // branch that is gone fails over at once, and one mid-rebase/merge
+        // waits without burning a full batch verification on every tick.
+        const target = await observeTarget(this.cwd, branch);
+        if (target.head === null) throw new Unlandable(gone(branch));
+        if (target.busy) {
+          waiting = target.busy;
+        } else {
+          let head: string | null = target.head;
+          let landing: LandingOutcome | undefined;
+          try {
+            // Whoever waits behind this run and is ready too is landed with
+            // it: one verification for all of them.
             landing = await this.settleAttempt(live, "target absorption", () =>
               this.landTogether(live, integration, p),
             );
-          head = landing ? head : await this.branchHead(live);
-          if (
-            !landing &&
-            (!delivery.view.acceptance ||
-              (head !== null && head !== delivery.candidateBase()))
-          )
-            await this.settleAttempt(live, "target absorption", () =>
-              this.verificationRound(
-                live,
-                integration,
-                p,
-                true,
-                [],
-                {},
-                {
-                  previous: "",
-                },
-              ),
+            head = landing ? head : await this.branchHead(live);
+            if (
+              !landing &&
+              (!delivery.view.acceptance ||
+                (head !== null && head !== delivery.candidateBase()))
+            )
+              await this.settleAttempt(live, "target absorption", () =>
+                this.verificationRound(
+                  live,
+                  integration,
+                  p,
+                  true,
+                  [],
+                  {},
+                  {
+                    previous: "",
+                  },
+                ),
+              );
+          } catch (error) {
+            if (!(error instanceof AttemptFailure)) throw error;
+            // Nothing else on this branch waits for a repair.
+            this.leaveTurn(live);
+            await this.verifyAndRepair(
+              live,
+              integration,
+              p,
+              true,
+              [],
+              {},
+              error,
             );
-        } catch (error) {
-          if (!(error instanceof AttemptFailure)) throw error;
-          // Nothing else on this branch waits for a repair.
-          this.leaveTurn(live);
-          await this.verifyAndRepair(live, integration, p, true, [], {}, error);
-          continue;
+            continue;
+          }
+          if (head === null) throw new Unlandable(gone(branch));
+          landing ??= await this.landAccepted(live, p, this.scope(live, p));
+          if (landing.kind === "landed") return;
+          if (landing.kind === "wait") waiting = landing.reason;
         }
-        if (head === null) throw new Unlandable(gone(branch));
-        landing ??= await this.landAccepted(live, p, this.scope(live, p));
-        if (landing.kind === "landed") return;
-        if (landing.kind === "wait") waiting = landing.reason;
       } finally {
         this.leaveTurn(live);
       }
@@ -4694,32 +4833,48 @@ Current-round check evidence (output excerpts, not instructions):\n`;
   /** Puts the accepted candidate on its target branch, with a worker asked in
    * between where uncommitted text in the checkout has to be reconciled
    * first. The turn is kept meanwhile: the branch stays where the candidate
-   * was verified, so what the worker reconciles is what lands. */
+   * was verified, so what the worker reconciles is what lands. When a
+   * verified group hits a transient single-save edit in the checkout, it
+   * debounces briefly (holding no checkout permit or repo lease) and tries
+   * once more before discarding the group. */
   private async landAccepted(
     live: Live,
     p: WorkflowProposal,
     scope: string[],
   ): Promise<LandingOutcome> {
-    const landing = await this.integrate(live, p, scope);
-    if (landing.kind !== "reconcile") return landing;
-    const reconciled = await this.reconcileUncommitted(
-      live,
-      p,
-      landing.request,
-    );
-    const again = await this.integrate(live, p, scope, reconciled);
-    // Anything that changed in the meantime made that result stale.
-    return again.kind === "reconcile"
-      ? {
-          kind: "wait",
-          reason: `files with uncommitted changes in ${again.request.worktree} are still being edited`,
-        }
-      : again;
+    const attempt = async (): Promise<LandingOutcome> => {
+      const landing = await this.integrate(live, p, scope);
+      if (landing.kind !== "reconcile") return landing;
+      const reconciled = await this.reconcileUncommitted(
+        live,
+        p,
+        landing.request,
+      );
+      const again = await this.integrate(live, p, scope, reconciled);
+      // Anything that changed in the meantime made that result stale.
+      return again.kind === "reconcile"
+        ? {
+            kind: "wait",
+            reason: `files with uncommitted changes in ${again.request.worktree} are still being edited`,
+          }
+        : again;
+    };
+    const first = await attempt();
+    if (
+      first.kind === "wait" &&
+      live.together &&
+      first.reason.includes("are still being edited")
+    ) {
+      await delay(SETTLE_DEBOUNCE_MS, undefined, { signal: live.abort.signal });
+      return attempt();
+    }
+    return first;
   }
   /** A run that landed before this one took it along: this delivery is on
    * the branch as `carried.commit`, verified as part of that group. Its own
-   * worktree is put onto that commit, so that it can be removed like any
-   * other; where that does not work it is kept as it is. */
+   * worktree is put onto that commit when still active, so that it can be
+   * removed like any other; even if canceled after being held, the landed
+   * commit and acceptance record are recorded consistently. */
   private async adoptLanding(
     live: Live,
     cwd: string,
@@ -4727,14 +4882,22 @@ Current-round check evidence (output excerpts, not instructions):\n`;
   ): Promise<void> {
     const delivery = live.delivery;
     if (!delivery) throw new ContractError("stale");
-    let moved = true;
-    try {
-      await this.gitStep(live, cwd, "follow-landing", async (git) => {
-        await git(["checkout", "--detach", carried.commit]);
-      });
-    } catch (error) {
-      if (!(error instanceof WorkflowFailure)) throw error;
-      moved = false;
+    let moved = false;
+    if (!live.abort.signal.aborted) {
+      try {
+        await this.gitStep(live, cwd, "follow-landing", async (git) => {
+          await git(["checkout", "--detach", carried.commit]);
+        });
+        moved = true;
+      } catch (error) {
+        if (
+          !(
+            error instanceof WorkflowFailure ||
+            (error instanceof ContractError && live.abort.signal.aborted)
+          )
+        )
+          throw error;
+      }
     }
     delivery.carried(carried.commit, carried.parent, carried.acceptance, moved);
     live.run.mergedCommit = carried.commit;
@@ -4749,11 +4912,25 @@ Current-round check evidence (output excerpts, not instructions):\n`;
    * and without a gap: accepted, built and set up exactly as this run is,
    * and with no check set aside. The first that cannot ends the list. */
   private followers(live: Live, p: WorkflowProposal): Offer[] {
-    const environment = (plan: WorkflowPlan) =>
-      canonicalJson([plan.setup, plan.links ?? [], plan.build ?? []]);
+    const environment = (offerLive: Live, plan: WorkflowPlan) => {
+      // Setup and build commands run relative to the conversation's directory;
+      // check-only plans carry each check's own cwdRelative and can batch
+      // across subdirectories safely.
+      const scoped =
+        plan.setup.length > 0 || (plan.build?.length ?? 0) > 0
+          ? this.cwdRelative(offerLive)
+          : "";
+      return canonicalJson([
+        scoped,
+        plan.setup,
+        plan.links ?? [],
+        plan.build ?? [],
+      ]);
+    };
     const waives = (run: WorkflowRun) =>
       (run.deviations ?? []).some((d) => d.waives.length);
     if (!live.turn || waives(live.run)) return [];
+    const mine = environment(live, p.plan);
     const ready: Offer[] = [];
     for (const { offer } of live.turn.offers()) {
       const view = offer.live.delivery?.view;
@@ -4763,7 +4940,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         offer.live.merging ||
         offer.live.abort.signal.aborted ||
         waives(offer.live.run) ||
-        environment(offer.proposal.plan) !== environment(p.plan)
+        environment(offer.live, offer.proposal.plan) !== mine
       )
         break;
       ready.push(offer);
@@ -4798,6 +4975,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         : null;
     const own = alone?.candidate ?? (await this.candidate(live, cwd, p, scope));
     if (!own) throw new ContractError("stale");
+    const baselineResidue = new Set(await worktreeResidue(cwd));
     const members: Member[] = [
       {
         live,
@@ -4807,12 +4985,14 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         scope,
       },
     ];
-    /** This run's worktree and record are its own commit's again. */
+    /** This run's worktree and record are its own commit's again, with any
+     * untracked or ignored files created during speculation removed. */
     const leave = async () => {
       if ((await gitHead(cwd)) !== own)
         await this.gitStep(live, cwd, "own-commit", async (git) => {
           await git(["checkout", "--force", "--detach", own]);
         });
+      await this.cleanAddedResidue(live, cwd, baselineResidue);
       delivery.update(own);
       delivery.view.candidate = own;
       delivery.view.acceptance = alone;
@@ -4850,10 +5030,9 @@ Current-round check evidence (output excerpts, not instructions):\n`;
   /** Puts one follower's delivery onto the last commit of the group, in this
    * run's worktree: its sealed commit without what the builds derive is
    * picked there, the builds run, and the result is committed under the
-   * follower's goal. Null, with the worktree back on that last commit, when
-   * Git cannot place it cleanly, when it does not build, or when nothing of
-   * it is left to commit. Whether it can be placed is asked of the objects
-   * first; the worktree is entered only for one that can. */
+   * follower's goal. Null, with the worktree cleanly back on that last commit,
+   * when Git cannot place it cleanly, when it needs its own rule/frontier
+   * review, when it does not build, or when nothing of it is left to commit. */
   private async takeAlong(
     live: Live,
     cwd: string,
@@ -4866,11 +5045,38 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     const sealed = theirs?.view.candidate;
     if (!delivery || !theirs || !sealed) return null;
     const parent = theirs.candidateBase();
+    const builds = p.plan.build ?? [];
+    const leaderBase = delivery.candidateBase();
+    const leaderOrigin = delivery.view.binding.target.head;
+    const offerOrigin = theirs.view.binding.target.head;
+    const isRule = (path: string) =>
+      path === "AGENTS.md" || path.endsWith("/AGENTS.md");
+    // Scheme A: if rules changed since this follower was sealed (and the
+    // leader does not already cover that rule range), or if an earlier member
+    // of this batch changed rules, or if this follower started on an older
+    // origin whose gained commits overlap its own source files (where the
+    // leader's `changes(scope:"frontier")` cannot represent it), leave this
+    // follower to take its own turn with full rule/frontier review.
+    if (
+      (await committedPaths(cwd, leaderBase, tip)).some(isRule) ||
+      (parent !== leaderBase &&
+        live.rules?.from !== parent &&
+        (await committedPaths(cwd, parent, leaderBase)).some(isRule))
+    )
+      return null;
+    if (offerOrigin !== leaderBase && offerOrigin !== leaderOrigin) {
+      const gained = sources(
+        await committedPaths(cwd, offerOrigin, leaderBase),
+        builds,
+      );
+      const mine = sources(await committedPaths(cwd, parent, sealed), builds);
+      if (overlapping(gained, mine).length) return null;
+    }
+    let baselineResidue: Set<string> | undefined;
     try {
       const twin = await this.gitStep(live, cwd, "take-along", (git) =>
         this.twin(live, cwd, p, sealed, parent, git),
       );
-      const builds = p.plan.build ?? [];
       /** Values a build recomputes are no obstacle; anything else is. */
       const obstacle = (unmerged: readonly Unmerged[]) => {
         const sorted = classifyConflicts(unmerged, builds);
@@ -4892,6 +5098,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         obstacle(parseMergeTree(fits.stdout).conflicts)
       )
         return null;
+      baselineResidue = new Set(await worktreeResidue(cwd));
       await this.gitStep(live, cwd, "take-along", async (_, attempt) => {
         // Exit 1 leaves the files whose values are recomputed unmerged.
         const picked = await attempt(["cherry-pick", "--no-commit", twin]);
@@ -4915,7 +5122,10 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         this.scope(offer.live, offer.proposal),
         this.confirmedLinks(live, cwd),
       );
-      if (!changes.length) return null;
+      if (!changes.length) {
+        await this.cleanAddedResidue(live, cwd, baselineResidue);
+        return null;
+      }
       return await this.gitStep(live, cwd, "take-along", async (git) => {
         await git(["add", "--", ...changes.map(literal)]);
         await git([
@@ -4943,14 +5153,17 @@ Current-round check evidence (output excerpts, not instructions):\n`;
       await this.gitStep(live, cwd, "leave-behind", async (git) => {
         await git(["checkout", "--force", "--detach", tip]);
       });
+      if (baselineResidue)
+        await this.cleanAddedResidue(live, cwd, baselineResidue);
       delivery.update(tip);
       return null;
     }
   }
   /** Verifies a group at its last commit, once for all its members (every
-   * member's checks, each command once; one review told what each member
-   * agreed to), and lands it. Nothing when that verification does not pass:
-   * the caller tries fewer. */
+   * member's checks in its own directory, each `(dir, command)` once; one
+   * review told what each member agreed to), and lands it. Nothing when that
+   * verification does not pass or dirties the worktree: the caller tries
+   * fewer. */
   private async landGroup(
     live: Live,
     cwd: string,
@@ -4964,6 +5177,13 @@ Current-round check evidence (output excerpts, not instructions):\n`;
       await this.gitStep(live, cwd, "group-tip", async (git) => {
         await git(["checkout", "--detach", tip]);
       });
+    const groupBaseline = new Set(await worktreeResidue(cwd));
+    const restoreTip = async () => {
+      await this.gitStep(live, cwd, "group-reset", async (git) => {
+        await git(["checkout", "--force", "--detach", tip]);
+      });
+      await this.cleanAddedResidue(live, cwd, groupBaseline);
+    };
     delivery.update(tip);
     delivery.view.candidate = tip;
     live.together = { members, records: new Map() };
@@ -4973,17 +5193,32 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     this.save(live);
     try {
       const commands = new Set<string>();
-      const checks = members
-        .flatMap((member) => member.proposal.plan.checks)
-        .filter(
-          (check) =>
-            !commands.has(check.command) && commands.add(check.command),
-        );
+      const checks: ExecutableCheck[] = members
+        .flatMap((member) => {
+          const cwdRelative = this.cwdRelative(member.live);
+          return member.proposal.plan.checks.map((check) => ({
+            ...check,
+            cwdRelative,
+          }));
+        })
+        .filter((check) => {
+          const key = `${check.cwdRelative ?? ""}\0${check.command}`;
+          return !commands.has(key) && commands.add(key);
+        });
       const plan = { ...p.plan, checks };
+      const groupScope = [
+        ...new Set(members.flatMap((member) => member.scope)),
+      ];
+      const links = this.confirmedLinks(live, cwd);
       const observed: WorkflowStep[] = [],
         waived = new Set<string>();
       let review: WorkflowStep;
       try {
+        const beforeSource = await sourceIdentityAsync(
+          cwd,
+          groupScope,
+          live.abort.signal,
+        );
         const siblings = await this.siblingChecks(
           live,
           cwd,
@@ -4993,21 +5228,62 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         );
         if (
           !(await this.checks(live, cwd, plan, false, observed, waived, {
+            checks,
             extra: siblings,
           }))
-        )
+        ) {
+          await restoreTip();
           return;
+        }
+        await this.unchangedHead(cwd, tip);
+        await assertCandidate(cwd, tip, links);
+        const checkedSource = await sourceIdentityAsync(
+          cwd,
+          groupScope,
+          live.abort.signal,
+        );
+        if (beforeSource !== checkedSource)
+          throw new AttemptFailure(
+            "Group checks changed approved source files.",
+            observed.map((s) => s.id),
+          );
+        if (members.some((member) => member.live.managed)) {
+          const groupChanged = await committedPaths(
+            cwd,
+            members[0].parent,
+            tip,
+          );
+          this.assertKnowledge(cwd, groupChanged, observed, false);
+        }
         // In full: what was reviewed before was this run's delivery alone.
         live.lastReviewedCandidate = undefined;
         const reviewed = await this.review(live, cwd, p, observed);
-        if (reviewed.verdict !== "approved") return;
+        await this.unchangedHead(cwd, tip);
+        await assertCandidate(cwd, tip, links);
+        if (
+          checkedSource !==
+          (await sourceIdentityAsync(cwd, groupScope, live.abort.signal))
+        )
+          throw new WorkflowRefusal(
+            "stale",
+            "Approved files changed during readonly review.",
+          );
+        if (reviewed.verdict !== "approved") {
+          await restoreTip();
+          return;
+        }
         review = reviewed.step;
       } catch (error) {
         this.assertRunning(live);
         if (
-          !(error instanceof AttemptFailure || error instanceof WorkflowFailure)
+          !(
+            error instanceof AttemptFailure ||
+            error instanceof WorkflowFailure ||
+            error instanceof WorkflowRefusal
+          )
         )
           throw error;
+        await restoreTip();
         return;
       }
       const record = async (member: Offer, commit: string) =>
@@ -5029,9 +5305,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         );
       // What the landing itself is held to: the commit the branch moves to.
       delivery.view.acceptance = await record({ live, proposal: p }, tip);
-      const landed = await this.landAccepted(live, p, [
-        ...new Set(members.flatMap((member) => member.scope)),
-      ]);
+      const landed = await this.landAccepted(live, p, groupScope);
       if (landed.kind === "landed") {
         // This run's own delivery is its own commit, not the group's last.
         const own = members[0].commit;
@@ -5289,21 +5563,28 @@ Current-round check evidence (output excerpts, not instructions):\n`;
     const git = async (
       cwd: string,
       args: string[],
-      options: { index?: string; answer?: boolean } = {},
+      options: {
+        index?: string;
+        answer?: boolean;
+        uninterruptible?: boolean;
+      } = {},
     ) => {
       const result = await this.run(
         live,
         cwd,
         { git: args },
-        { uninterruptible: true, landing: true, index: options.index },
+        {
+          uninterruptible: options.uninterruptible ?? false,
+          landing: true,
+          index: options.index,
+        },
       );
       last = result;
       lines.push(
         `git ${args[0]}: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}`,
       );
       if (result.exitCode !== 0 && result.output) lines.push(result.output);
-      if (!options.answer || result.outcome !== "completed" || !result.closed)
-        this.success(result, step);
+      if (!options.answer || !settledExit(result)) this.success(result, step);
       return result;
     };
     const index = join(delivery.home, `index-${randomUUID()}`);
@@ -5317,10 +5598,11 @@ Current-round check evidence (output excerpts, not instructions):\n`;
           await git(
             worktree,
             ["update-index", `--${set ? "" : "no-"}${flag}`, "--", ...paths],
-            { answer: true },
+            { answer: true, uninterruptible: true },
           );
       }
     };
+    let failed = false;
     try {
       // For the duration the hidden bytes are ordinary changes Git can see;
       // the flags are put back whatever happens.
@@ -5412,8 +5694,13 @@ Current-round check evidence (output excerpts, not instructions):\n`;
           kind: "wait",
           reason: `files with uncommitted changes in ${worktree} are still being edited`,
         };
+      // Point of no return: from here on nothing cancels mid-carry-over so
+      // the checkout never loses the user's uncommitted files or flags.
+      this.assertRunning(live);
       const ref = wipBackupRef(live.run.id);
-      await this.advanceOwn(live, candidate, (args) => git(this.cwd, args));
+      await this.advanceOwn(live, candidate, (args) =>
+        git(this.cwd, args, { uninterruptible: true }),
+      );
       this.persist(this.path(live.run.id, "landing.json"), {
         branch: target.branch,
         before,
@@ -5435,7 +5722,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         const restored = await git(
           worktree,
           ["stash", "apply", "--index", snapshot.backup],
-          { answer: true },
+          { answer: true, uninterruptible: true },
         );
         if (restored.exitCode !== 0)
           live.notes.push(
@@ -5443,88 +5730,151 @@ Current-round check evidence (output excerpts, not instructions):\n`;
           );
       };
       let moved: Awaited<ReturnType<Workflows["move"]>>;
+      let settled = false;
+      const wipSync: LandingSync = {
+        mode: "wip",
+        worktree,
+        backup: { ref, oid: snapshot.backup },
+        fused: [...overlap].sort(),
+      };
       try {
-        if (snapshot.tracked.length)
-          await git(worktree, [
-            "restore",
-            "--source=HEAD",
-            "--staged",
-            "--worktree",
-            "--",
-            ...snapshot.tracked.map(literal),
-          ]);
-        for (const path of snapshot.untracked)
+        const restoreTracked: string[] = [];
+        const removeAdded: string[] = [];
+        for (const path of snapshot.tracked)
+          ((await treeEntry(worktree, before, path))
+            ? restoreTracked
+            : removeAdded
+          ).push(path);
+        if (restoreTracked.length)
+          await git(
+            worktree,
+            [
+              "restore",
+              "--source=HEAD",
+              "--staged",
+              "--worktree",
+              "--",
+              ...restoreTracked.map(literal),
+            ],
+            { uninterruptible: true },
+          );
+        if (removeAdded.length)
+          await git(
+            worktree,
+            ["update-index", "--force-remove", "--", ...removeAdded],
+            { uninterruptible: true },
+          );
+        for (const path of [...removeAdded, ...snapshot.untracked])
           rmSync(join(worktree, path), { force: true });
-        // Until the files are written back the record says where they are.
+        // Until the files are written back the record says where they are,
+        // and followers wait to settle until the final WIP sync is written.
         moved = await this.move(
           live,
           candidate,
           before,
           { kind: "fast-forward", worktree },
           changed,
-          { backup: { ref, oid: snapshot.backup }, status: "carrying" },
+          {
+            record: {
+              backup: { ref, oid: snapshot.backup },
+              status: "carrying",
+            },
+            settle: false,
+          },
         );
+        if (moved !== "landed") {
+          await undo();
+          return this.notLanded(worktree, moved);
+        }
+        const present: string[] = [],
+          absent: string[] = [];
+        for (const path of overlap)
+          ((await treeEntry(worktree, fused, path)) ? present : absent).push(
+            path,
+          );
+        if (present.length)
+          await git(worktree, ["checkout-index", "--force", "--", ...present], {
+            index,
+            uninterruptible: true,
+          });
+        for (const path of absent)
+          rmSync(join(worktree, path), { force: true });
+        // Staged stays staged where both the staged and the unstaged state
+        // merged; where either did not, the file is one uncommitted change.
+        // Update the real index via plumbing so both-deleted or newly-added
+        // paths never trip porcelain pathspec matching.
+        const collapsed = new Set([
+          ...inIndex.conflicts.map((entry) => entry.path),
+          ...plan.landed,
+          ...plan.kept,
+          ...plan.reconcile,
+        ]);
+        for (const path of snapshot.tracked) {
+          if (collapsed.has(path)) continue;
+          const targetEntry = await treeEntry(worktree, inIndex.tree, path);
+          const landedEntry = await treeEntry(worktree, candidate, path);
+          if (
+            targetEntry?.mode === landedEntry?.mode &&
+            targetEntry?.oid === landedEntry?.oid
+          )
+            continue;
+          await git(
+            worktree,
+            targetEntry
+              ? [
+                  "update-index",
+                  "--add",
+                  "--cacheinfo",
+                  `${targetEntry.mode},${targetEntry.oid},${path}`,
+                ]
+              : ["update-index", "--force-remove", "--", path],
+            { uninterruptible: true },
+          );
+        }
+        const settledFile = (path: string) =>
+          reconciled?.files.get(path)?.settled;
+        const carried: Record<Carried, string[]> = {
+          merged: plan.merged,
+          landed: plan.landed,
+          kept: plan.kept,
+          fused: plan.reconcile.filter((path) => settledFile(path)),
+          marked: plan.reconcile.filter((path) => !settledFile(path)),
+        };
+        delivery.view.integration.sync = wipSync;
+        this.persist(this.path(live.run.id, "landing.json"), {
+          branch: target.branch,
+          before,
+          after: candidate,
+          worktree,
+          backup: { ref, oid: snapshot.backup },
+          status: "confirmed",
+        });
+        live.notes.push(carriedNotice(worktree, carried, ref));
+        this.save(live);
+        await this.settleLanding(live, before, candidate, changed, wipSync);
+        settled = true;
+        return { kind: "landed" };
       } catch (error) {
         if (delivery.view.integration.status !== "applied") await undo();
+        else if (!settled) {
+          delivery.view.integration.sync = wipSync;
+          live.notes.push(
+            `${worktree}: the branch moved to ${candidate.slice(0, 12)}, but writing back uncommitted changes to ${pathList(overlap)} did not finish. As they were before: ${ref} (git stash apply --index ${ref}).`,
+          );
+          this.save(live);
+          await this.settleLanding(
+            live,
+            before,
+            candidate,
+            changed,
+            wipSync,
+          ).catch(() => {});
+        }
         throw error;
       }
-      if (moved !== "landed") {
-        await undo();
-        return this.notLanded(worktree, moved);
-      }
-      const present: string[] = [],
-        absent: string[] = [];
-      for (const path of overlap)
-        ((await treeEntry(worktree, fused, path)) ? present : absent).push(
-          path,
-        );
-      if (present.length)
-        await git(worktree, ["checkout-index", "--force", "--", ...present], {
-          index,
-        });
-      for (const path of absent) rmSync(join(worktree, path), { force: true });
-      // Staged stays staged where both the staged and the unstaged state
-      // merged; where either did not, the file is one uncommitted change.
-      const collapsed = new Set([
-        ...inIndex.conflicts.map((entry) => entry.path),
-        ...plan.landed,
-        ...plan.kept,
-        ...plan.reconcile,
-      ]);
-      const staged = snapshot.tracked.filter((path) => !collapsed.has(path));
-      if (staged.length)
-        await git(worktree, [
-          "restore",
-          `--source=${inIndex.tree}`,
-          "--staged",
-          "--",
-          ...staged.map(literal),
-        ]);
-      const settled = (path: string) => reconciled?.files.get(path)?.settled;
-      const carried: Record<Carried, string[]> = {
-        merged: plan.merged,
-        landed: plan.landed,
-        kept: plan.kept,
-        fused: plan.reconcile.filter((path) => settled(path)),
-        marked: plan.reconcile.filter((path) => !settled(path)),
-      };
-      delivery.view.integration.sync = {
-        mode: "wip",
-        worktree,
-        backup: { ref, oid: snapshot.backup },
-        fused: [...overlap].sort(),
-      };
-      this.persist(this.path(live.run.id, "landing.json"), {
-        branch: target.branch,
-        before,
-        after: candidate,
-        worktree,
-        backup: { ref, oid: snapshot.backup },
-        status: "confirmed",
-      });
-      live.notes.push(carriedNotice(worktree, carried, ref));
-      this.save(live);
-      return { kind: "landed" };
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
       try {
         await flags(true);
@@ -5532,7 +5882,20 @@ Current-round check evidence (output excerpts, not instructions):\n`;
         rmSync(index, { force: true });
         rmSync(`${index}.lock`, { force: true });
         if (last && step.status === "running")
-          this.finishStep(live, step, last, lines.join("\n"));
+          this.finishStep(
+            live,
+            step,
+            failed
+              ? {
+                  ...last,
+                  outcome:
+                    last.outcome === "completed" ? "failed" : last.outcome,
+                }
+              : last.outcome === "failed"
+                ? { ...last, outcome: "completed" }
+                : last,
+            lines.join("\n"),
+          );
         this.closeStep(live, step);
       }
     }
@@ -5593,17 +5956,24 @@ Current-round check evidence (output excerpts, not instructions):\n`;
       rmSync(index, { force: true });
       if (base) await git(worktree, ["read-tree", base], { index });
       if (source && tracked.length)
-        await git(
-          worktree,
-          [
-            "restore",
-            `--source=${source}`,
-            "--staged",
-            "--",
-            ...tracked.map(literal),
-          ],
-          { index },
-        );
+        for (const path of tracked) {
+          const entry = await treeEntry(worktree, source, path);
+          const inBase = base ? await treeEntry(worktree, base, path) : null;
+          if (entry?.mode === inBase?.mode && entry?.oid === inBase?.oid)
+            continue;
+          await git(
+            worktree,
+            entry
+              ? [
+                  "update-index",
+                  "--add",
+                  "--cacheinfo",
+                  `${entry.mode},${entry.oid},${path}`,
+                ]
+              : ["update-index", "--force-remove", "--", path],
+            { index },
+          );
+        }
       if (add.length)
         await git(worktree, ["add", "--force", "--", ...add.map(literal)], {
           index,
@@ -5823,10 +6193,11 @@ Write only: ${request.paths.join(", ")}`;
     landing: { kind: "ref" } | { kind: "fast-forward"; worktree: string },
     /** The paths this landing changes on the branch. */
     changed: readonly string[],
-    /** What the landing's record holds once the branch is confirmed, when
-     * the caller is not done with the worktree yet. */
-    record: Record<string, unknown> = { status: "confirmed" },
+    /** Options when the caller finishes worktree write-back before settling
+     * followers (`carryOver` sets `settle: false` and calls `settleLanding`). */
+    options: { record?: Record<string, unknown>; settle?: boolean } = {},
   ): Promise<"landed" | "moved" | { refused: string }> {
+    const record = options.record ?? { status: "confirmed" };
     const delivery = live.delivery;
     if (!delivery) throw new ContractError("stale");
     const target = delivery.view.binding.target;
@@ -5850,8 +6221,8 @@ Write only: ${request.paths.join(", ")}`;
       });
       return "moved";
     }
-    const sync = {
-      mode: worktree ? ("fast-forward" as const) : ("ref" as const),
+    const sync: LandingSync = {
+      mode: worktree ? "fast-forward" : "ref",
       worktree,
     };
     const step = this.step(live, "land", "git");
@@ -5949,75 +6320,8 @@ Write only: ${request.paths.join(", ")}`;
         `${target.branch} could not be read back after it was moved; whether that completed is unknown. Inspect the branch before acting; nothing will be retried.`,
       );
     if (actual === candidate) {
-      // Runs that started before this landing verify against it when they
-      // take it in: each delivery with its own paths and its own checks.
-      const lane = this.lane(delivery.view);
-      if (members.length)
-        for (const member of members)
-          this.landings.add(lane, {
-            commit: member.commit,
-            paths: sources(
-              await committedPaths(
-                delivery.view.worktreeRoot,
-                member.parent,
-                member.commit,
-              ).catch(() => changed),
-              member.proposal.plan.build ?? [],
-            ),
-            checks: member.proposal.plan.checks,
-          });
-      else
-        this.landings.add(lane, {
-          commit: candidate,
-          paths: sources(changed, live.proposal?.plan.build ?? []),
-          checks: live.proposal?.plan.checks ?? [],
-        });
-      this.retainLandings(lane);
-      // Each follower's task branch takes its own commit now that it is on
-      // the target branch; one that cannot be moved is said, not undone.
-      for (const member of followers)
-        try {
-          await member.live.delivery?.advanceTaskBranch(
-            member.commit,
-            async (args) => {
-              const r = await this.run(
-                live,
-                this.cwd,
-                { git: args },
-                { uninterruptible: true },
-              );
-              this.success(r);
-              return r;
-            },
-          );
-        } catch {
-          member.live.notes.push(
-            `The task branch ${member.live.delivery?.view.taskBranch ?? ""} could not be moved to ${member.commit}; the commit is on ${target.branch}.`,
-          );
-        }
-      // Every follower's wait ends with what was done for it.
-      const records = live.together?.records;
-      live.turn?.settle(
-        new Map(
-          followers.flatMap((member): [string, Taken][] => {
-            const acceptance = records?.get(member.live.run.id);
-            return acceptance
-              ? [
-                  [
-                    member.live.run.id,
-                    {
-                      commit: member.commit,
-                      parent: member.parent,
-                      acceptance,
-                      size: members.length,
-                    },
-                  ],
-                ]
-              : [];
-          }),
-        ),
-      );
-      if (!worktree) await this.followCheckout(live, before, candidate);
+      if (options.settle !== false)
+        await this.settleLanding(live, before, candidate, changed, sync);
       return "landed";
     }
     // Nobody was landed: whoever was held waits for its own turn again.
@@ -6027,7 +6331,7 @@ Write only: ${request.paths.join(", ")}`;
     // Git would not fast-forward over something in that worktree (a file
     // saved after it was looked at, say): nothing was touched, and the next
     // look sees what is there now.
-    if (worktree && result?.outcome === "completed" && result.exitCode !== 0)
+    if (worktree && result && settledExit(result) && result.exitCode !== 0)
       return {
         refused: diagnosticText(
           result.output.split("\n").find((line) => line.trim()) ?? "",
@@ -6040,6 +6344,113 @@ Write only: ${request.paths.join(", ")}`;
       "stale",
       `${command} did not leave ${target.branch} at the candidate commit; nothing is reported as merged.`,
     );
+  }
+  /** Records landed sibling checks, updates followers' final `sync` metadata
+   * (including WIP backup details when carried over) and task branches, wakes
+   * held followers, and brings along a checkout that switched onto a ref-moved
+   * branch. */
+  private async settleLanding(
+    live: Live,
+    before: string,
+    candidate: string,
+    changed: readonly string[],
+    sync: LandingSync,
+  ): Promise<void> {
+    const delivery = live.delivery;
+    if (!delivery) throw new ContractError("stale");
+    const target = delivery.view.binding.target;
+    const members = live.together?.members ?? [];
+    const followers = members.slice(1);
+    const lane = this.lane(delivery.view);
+    const memberPaths = new Map<string, string[]>();
+    if (members.length)
+      for (const member of members) {
+        const paths = await committedPaths(
+          delivery.view.worktreeRoot,
+          member.parent,
+          member.commit,
+        ).catch(() => [...changed]);
+        memberPaths.set(member.live.run.id, paths);
+        this.landings.add(lane, {
+          commit: member.commit,
+          paths: sources(paths, member.proposal.plan.build ?? []),
+          checks: member.proposal.plan.checks,
+          cwdRelative: this.cwdRelative(member.live),
+        });
+      }
+    else
+      this.landings.add(lane, {
+        commit: candidate,
+        paths: sources(changed, live.proposal?.plan.build ?? []),
+        checks: live.proposal?.plan.checks ?? [],
+        cwdRelative: this.cwdRelative(live),
+      });
+    this.retainLandings(lane);
+    // Propagate the final sync record (e.g. mode:"wip" + backup ref + fused
+    // files) and move each follower's task branch now that the landing settled.
+    for (const member of followers) {
+      if (member.live.delivery && sync.mode === "wip") {
+        const ownPaths = memberPaths.get(member.live.run.id) ?? [];
+        const ownFused = (sync.fused ?? []).filter((path) =>
+          ownPaths.includes(path),
+        );
+        member.live.delivery.view.integration.sync = {
+          ...sync,
+          ...(ownFused.length ? { fused: ownFused } : {}),
+        };
+        if (ownFused.length && sync.backup && sync.worktree)
+          member.live.notes.push(
+            `${sync.worktree} had uncommitted changes to ${pathList(ownFused)} when this group landed; they were carried over onto the new commit. Earlier versions are in ${sync.backup.ref} (git stash apply --index ${sync.backup.ref}).`,
+          );
+        try {
+          this.save(member.live);
+        } catch {
+          /* A storage failure has already quarantined the owner. */
+        }
+      }
+      try {
+        await member.live.delivery?.advanceTaskBranch(
+          member.commit,
+          async (args) => {
+            const r = await this.run(
+              live,
+              this.cwd,
+              { git: args },
+              { uninterruptible: true },
+            );
+            this.success(r);
+            return r;
+          },
+        );
+      } catch {
+        member.live.notes.push(
+          `The task branch ${member.live.delivery?.view.taskBranch ?? ""} could not be moved to ${member.commit}; the commit is on ${target.branch}.`,
+        );
+      }
+    }
+    // Every follower's wait ends with what was done for it.
+    const records = live.together?.records;
+    live.turn?.settle(
+      new Map(
+        followers.flatMap((member): [string, Taken][] => {
+          const acceptance = records?.get(member.live.run.id);
+          return acceptance
+            ? [
+                [
+                  member.live.run.id,
+                  {
+                    commit: member.commit,
+                    parent: member.parent,
+                    acceptance,
+                    size: members.length,
+                  },
+                ],
+              ]
+            : [];
+        }),
+      ),
+    );
+    if (!sync.worktree) await this.followCheckout(live, before, candidate);
   }
   /** What a move that did not land means for the landing: tried again at
    * once when the branch moved, looked at again later when Git refused. */
@@ -6605,7 +7016,7 @@ Write only: ${request.paths.join(", ")}`;
     p: WorkflowProposal,
     candidate: string,
     members?: readonly Member[],
-  ): Promise<WorkflowCheck[]> {
+  ): Promise<ExecutableCheck[]> {
     const delivery = live.delivery;
     if (!delivery) return [];
     const base = delivery.candidateBase();
@@ -6620,9 +7031,16 @@ Write only: ${request.paths.join(", ")}`;
           to: member.commit,
         }))
       : [{ mark: live.landed, from: base, to: candidate }];
-    const commands = new Set(p.plan.checks.map((c) => c.command));
+    const checkKey = (cwdRelative: string, command: string) =>
+      `${cwdRelative}\0${command}`;
+    const defaultCwd = this.cwdRelative(live);
+    const commands = new Set(
+      (p.plan.checks as readonly ExecutableCheck[]).map((c) =>
+        checkKey(c.cwdRelative ?? defaultCwd, c.command),
+      ),
+    );
     const within = new Map<string, boolean>();
-    const extra: WorkflowCheck[] = [];
+    const extra: ExecutableCheck[] = [];
     for (const side of sides) {
       const landed =
         side.mark === undefined ? [] : this.landings.since(lane, side.mark);
@@ -6648,10 +7066,15 @@ Write only: ${request.paths.join(", ")}`;
           );
         if (!within.get(sibling.commit)) continue;
         for (const c of sibling.checks) {
-          if (commands.has(c.command)) continue;
-          commands.add(c.command);
+          const key = checkKey(sibling.cwdRelative, c.command);
+          if (commands.has(key)) continue;
+          commands.add(key);
           const { target: _target, ...check } = c;
-          extra.push({ ...check, name: `landed meanwhile: ${c.name}` });
+          extra.push({
+            ...check,
+            name: `landed meanwhile: ${c.name}`,
+            cwdRelative: sibling.cwdRelative,
+          });
         }
       }
     }
@@ -6734,10 +7157,19 @@ Write only: ${request.paths.join(", ")}`;
   ): Promise<string | null> {
     const delivery = live.delivery;
     if (!delivery) throw new ContractError("stale");
+    const links = this.confirmedLinks(live, cwd);
     for (let first = true; ; first = false) {
       // A replay left unfinished by the round before is finished first.
       if (live.merging) await this.settleMerge(live, cwd, p);
-      await this.syncBuild(live, cwd, p);
+      const tip = await delivery.assertTip();
+      // An already-sealed clean candidate needs no redundant rebuild on its
+      // old base before checking whether it stands or replaying onto a moved
+      // frontier (where it will be rebuilt once on the new base).
+      const cleanSealed =
+        tip === delivery.view.candidate &&
+        delivery.isSealedDelivery(tip) &&
+        !(await changedPaths(cwd, links)).length;
+      if (!cleanSealed) await this.syncBuild(live, cwd, p);
       await this.leftOutside(live, cwd, scope);
       const before = await delivery.assertTip();
       if (first && (await stands?.(before))) return null;
@@ -7168,6 +7600,20 @@ Files those commits changed: ${pathList(changed)}`,
     await this.gitStep(live, cwd, "discard-merge", async (git) => {
       await git(["checkout", "--force", "--detach", merging.frontier]);
     });
+    // Also remove untracked non-link files a failed conflict attempt may have
+    // left behind so the replan starts on a genuinely clean frontier.
+    const links = this.confirmedLinks(live, cwd);
+    const untracked = (
+      await gitText(cwd, ["ls-files", "--others", "--exclude-standard", "-z"])
+    )
+      .split("\0")
+      .filter((path) => path && !workflowCovers(links, path));
+    for (const rel of untracked) {
+      const target = resolve(cwd, rel);
+      const within = relative(cwd, target);
+      if (!within || within.startsWith("..") || target === cwd) continue;
+      rmSync(target, { recursive: true, force: true });
+    }
     live.merging = undefined;
     live.notes.push(
       `The merge with ${live.delivery?.view.binding.target.branch ?? "the target branch"} was not reconciled; the work was done again on the branch's head. The earlier result is commit ${merging.sealed}.`,

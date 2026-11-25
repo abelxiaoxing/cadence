@@ -21,6 +21,11 @@ export const HOST_COST = {
 } as const satisfies Record<string, HostCost>;
 /** Memory left alone for everything else on the machine. */
 export const HOST_RESERVE_BYTES = GIB;
+/** Newly admitted steps need a moment to allocate their memory before
+ * `availableMemory()` drops; hold their budget across this warmup window to
+ * prevent simultaneous bursts from oversubscribing the host, then hand back
+ * to live OS memory without double-counting. */
+export const HOST_WARMUP_MS = 5000;
 /** Memory can free up without any of our steps ending. */
 const RECHECK_MS = 1000;
 
@@ -41,13 +46,20 @@ interface Waiter {
   cost: HostCost;
   start(): void;
 }
+interface RunningStep {
+  bytes: number;
+  until: number;
+}
 
 export class HostCapacity {
   private readonly waiting: Waiter[] = [];
+  private readonly active = new Set<RunningStep>();
   private cores = 0;
-  private running = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
-  constructor(private readonly probe: HostProbe = hostProbe) {}
+  constructor(
+    private readonly probe: HostProbe = hostProbe,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   /** Runs `work` once the machine has room for it. `queued` is told how many
    * steps are ahead when it has to wait. Aborting while waiting gives the
@@ -58,12 +70,12 @@ export class HostCapacity {
     work: () => Promise<T>,
     queued?: (ahead: number) => void,
   ): Promise<T> {
-    await this.admit(cost, signal, queued);
+    const running = await this.admit(cost, signal, queued);
     try {
       return await work();
     } finally {
       this.cores -= cost.cores;
-      this.running--;
+      this.active.delete(running);
       this.pump();
     }
   }
@@ -72,10 +84,11 @@ export class HostCapacity {
     cost: HostCost,
     signal: AbortSignal,
     queued?: (ahead: number) => void,
-  ): Promise<void> {
+  ): Promise<RunningStep> {
     if (signal.aborted) throw new ContractError("stale");
     let waiter!: Waiter;
-    const admitted = new Promise<void>((resolve, reject) => {
+    let started: RunningStep | undefined;
+    const admitted = new Promise<RunningStep>((resolve, reject) => {
       const abort = () => {
         const at = this.waiting.indexOf(waiter);
         if (at < 0) return;
@@ -88,7 +101,13 @@ export class HostCapacity {
         cost,
         start: () => {
           signal.removeEventListener("abort", abort);
-          resolve();
+          const running: RunningStep = {
+            bytes: cost.bytes,
+            until: this.now() + HOST_WARMUP_MS,
+          };
+          this.active.add(running);
+          started = running;
+          resolve(running);
         },
       };
       this.waiting.push(waiter);
@@ -96,17 +115,24 @@ export class HostCapacity {
     });
     this.pump();
     const ahead = this.waiting.indexOf(waiter);
-    if (ahead >= 0) queued?.(ahead);
+    if (!started && ahead >= 0) queued?.(ahead);
     return admitted;
+  }
+
+  private warmingBytes(at: number): number {
+    let total = 0;
+    for (const step of this.active) if (step.until > at) total += step.bytes;
+    return total;
   }
 
   /** One step always runs, whatever the machine reports: a small host makes
    * work slow, never impossible. */
   private fits(cost: HostCost): boolean {
+    if (this.active.size === 0) return true;
+    const available = this.probe.memory() - this.warmingBytes(this.now());
     return (
-      this.running === 0 ||
-      (this.cores + cost.cores <= this.probe.cores() &&
-        this.probe.memory() >= cost.bytes + HOST_RESERVE_BYTES)
+      this.cores + cost.cores <= this.probe.cores() &&
+      available >= cost.bytes + HOST_RESERVE_BYTES
     );
   }
 
@@ -116,7 +142,6 @@ export class HostCapacity {
     while (this.waiting.length && this.fits(this.waiting[0].cost)) {
       const waiter = this.waiting.shift() as Waiter;
       this.cores += waiter.cost.cores;
-      this.running++;
       waiter.start();
     }
     if (this.waiting.length && !this.timer) {

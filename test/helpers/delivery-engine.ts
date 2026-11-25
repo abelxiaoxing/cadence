@@ -53,6 +53,8 @@ export interface DeliveryOptions {
   scope?: string[];
   build?: WorkflowBuild[];
   checks?: WorkflowCheck[];
+  /** Optional subdirectory relative to repo root for execution.cwd. */
+  executionSubdir?: string;
 }
 
 export function repository() {
@@ -65,6 +67,7 @@ export function repository() {
     execFileSync("git", [...IDENTITY, ...args], {
       cwd,
       encoding: "utf8",
+      env: { ...process.env, GIT_EDITOR: "true", GIT_SEQUENCE_EDITOR: "true" },
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
   const git = (...args: string[]) => gitAt(root, ...args);
@@ -92,8 +95,11 @@ export function repository() {
   /** One delivery of `goal`, admitted now: its baseline is the branch's head. */
   const delivery = (goal: string, options: DeliveryOptions = {}) => {
     const id = randomUUID();
+    const execCwd = options.executionSubdir
+      ? join(root, options.executionSubdir)
+      : root;
     const execution: ExecutionContext = {
-      cwd: root,
+      cwd: execCwd,
       checkoutRoot: root,
       model: null,
       version: {
@@ -123,7 +129,7 @@ export function repository() {
     const proposal: WorkflowProposal = {
       id: randomUUID(),
       epoch,
-      cwd: root,
+      cwd: execCwd,
       checkoutRoot: root,
       digest: "d".repeat(64),
       observation: "a".repeat(64),
@@ -227,19 +233,37 @@ export function repository() {
         if (live.abort.signal.aborted) throw new Error("canceled");
       },
       confirmedLinks: () => [],
-      executionCwd: (_live: unknown, cwd: string) => cwd,
+      executionCwd: (
+        targetLive: { execution: ExecutionContext },
+        cwd: string,
+        cwdRelative?: string,
+      ) => {
+        if (cwdRelative !== undefined)
+          return cwdRelative ? join(cwd, cwdRelative) : cwd;
+        if (targetLive.execution.cwd === root) return cwd;
+        return join(cwd, targetLive.execution.cwd.slice(root.length + 1));
+      },
       /** Every Git and shell command of the engine, really run. */
       async run(
-        _live: unknown,
+        targetLive: { abort: AbortController; execution: ExecutionContext },
         cwd: string,
         operation: { git?: string[]; check?: WorkflowCheck },
-        runOptions: { index?: string } = {},
+        runOptions: {
+          index?: string;
+          uninterruptible?: boolean;
+          cwdRelative?: string;
+        } = {},
       ) {
+        if (!runOptions.uninterruptible && targetLive.abort.signal.aborted)
+          throw new Error("canceled");
+        const runCwd = operation.check
+          ? engine.executionCwd(targetLive, cwd, runOptions.cwdRelative)
+          : cwd;
         if (operation.check)
-          commands.push({ cwd, command: operation.check.command });
+          commands.push({ cwd: runCwd, command: operation.check.command });
         const done = operation.check
           ? spawnSync("/bin/sh", ["-c", operation.check.command], {
-              cwd,
+              cwd: runCwd,
               encoding: "utf8",
             })
           : spawnSync("git", [...IDENTITY, ...(operation.git ?? [])], {
@@ -254,8 +278,7 @@ export function repository() {
             });
         return {
           ...OK,
-          outcome:
-            operation.check && done.status !== 0 ? "failed" : "completed",
+          outcome: done.status === 0 ? "completed" : "failed",
           exitCode: done.status,
           output: `${done.stdout}${done.stderr}`.trim(),
         };

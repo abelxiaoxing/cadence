@@ -3,17 +3,21 @@ import { expect, it } from "vitest";
 import {
   HOST_COST,
   HOST_RESERVE_BYTES,
+  HOST_WARMUP_MS,
   HostCapacity,
 } from "../src/service/host-capacity.ts";
 
 const GIB = 1024 ** 3;
 const never = new AbortController().signal;
 function fixture(cores = 8, memory = 64 * GIB) {
-  const host = { cores, memory };
-  const capacity = new HostCapacity({
-    cores: () => host.cores,
-    memory: () => host.memory,
-  });
+  const host = { cores, memory, now: 1000 };
+  const capacity = new HostCapacity(
+    {
+      cores: () => host.cores,
+      memory: () => host.memory,
+    },
+    () => host.now,
+  );
   const started: string[] = [];
   const open = new Map<string, () => void>();
   /** Starts a step that stays running until `finish(name)`. */
@@ -144,4 +148,34 @@ it("a step that throws gives its room back", async () => {
   expect(f.started).toEqual(["next"]);
   await f.finish("next");
   await next;
+});
+it("holds warmup memory for newly admitted bursts without double-counting once live OS memory takes over", async () => {
+  // 16 cores, 5 GiB free: room for two 2 GiB heavy steps plus 1 GiB reserve,
+  // never four on the same tick before they allocate RSS.
+  const f = fixture(16, 5 * GIB);
+  const steps = [1, 2, 3, 4].map((i) => f.step(`h${i}`, HOST_COST.heavy));
+  await f.settle();
+  expect(f.started).toEqual(["h1", "h2"]);
+  // Once the warmup window elapses, live OS memory governs: if h1/h2 only
+  // used 0.5 GiB total (4.5 GiB still free), h3 is admitted without double-
+  // counting h1/h2's 4 GiB estimate.
+  f.host.now += HOST_WARMUP_MS;
+  f.host.memory = 4.5 * GIB;
+  // Trigger pump by aborting a dummy waiter or finishing h1; here advance via
+  // finishing h1 would free h1, so instead enqueue and abort a tiny step?
+  // Wait: verify h3 stays queued if real memory dropped, then admits when free.
+  f.host.memory = 2 * GIB;
+  const probeAbort = new AbortController();
+  const poke = f.step("poke", HOST_COST.light, probeAbort.signal);
+  probeAbort.abort();
+  await expect(poke).rejects.toThrow("stale");
+  expect(f.started).toEqual(["h1", "h2"]);
+  f.host.memory = 4.5 * GIB;
+  const poke2Abort = new AbortController();
+  const poke2 = f.step("poke2", HOST_COST.light, poke2Abort.signal);
+  poke2Abort.abort();
+  await expect(poke2).rejects.toThrow("stale");
+  expect(f.started).toEqual(["h1", "h2", "h3"]);
+  for (const name of ["h1", "h2", "h3", "h4"]) await f.finish(name);
+  await Promise.all(steps);
 });

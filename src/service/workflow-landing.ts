@@ -5,7 +5,7 @@
  * decision is a pure function of what was seen. Nothing here verifies a
  * candidate, reconciles a conflict or moves a ref. */
 import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { ContractError } from "./contracts/core.ts";
 import type { WorkflowBuild } from "./contracts/workflow.ts";
 import {
@@ -90,10 +90,33 @@ export async function observeTarget(
   for (const tree of parseWorktrees(
     await gitText(cwd, ["worktree", "list", "--porcelain", "-z"]),
   )) {
-    if (tree.prunable || !existsSync(tree.path)) continue;
-    const gitDir = (
-      await gitText(tree.path, ["rev-parse", "--absolute-git-dir"])
-    ).trim();
+    if (tree.prunable || !existsSync(join(tree.path, ".git"))) continue;
+    let gitDir: string;
+    try {
+      gitDir = (
+        await gitText(tree.path, ["rev-parse", "--absolute-git-dir"])
+      ).trim();
+    } catch (error) {
+      // A sibling detached worktree can be mid-`worktree add` or mid-`worktree
+      // remove` while another run observes the target branch without the `.git`
+      // lease. Skip only non-holder worktrees whose directory or gitdir vanished.
+      if (tree.branch !== branch) {
+        const pointer = firstLine(join(tree.path, ".git"));
+        const linkedDir = pointer?.startsWith("gitdir:")
+          ? resolve(tree.path, pointer.slice("gitdir:".length).trim())
+          : null;
+        const vanished =
+          !existsSync(tree.path) ||
+          !existsSync(join(tree.path, ".git")) ||
+          (linkedDir !== null && !existsSync(join(linkedDir, "HEAD")));
+        if (vanished) continue;
+        const fresh = parseWorktrees(
+          await gitText(cwd, ["worktree", "list", "--porcelain", "-z"]),
+        ).find((entry) => entry.path === tree.path);
+        if (!fresh || fresh.prunable) continue;
+      }
+      throw error;
+    }
     if (tree.branch === branch) {
       holder = tree.path;
       const unfinished = UNFINISHED.find((name) =>

@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { lintKnowledge } from "../src/service/knowledge-store.ts";
 import { repository } from "./helpers/delivery-engine.ts";
 
 const lines = (text: string) => text.trimEnd().split("\n");
@@ -1128,3 +1129,337 @@ it("a delivery canceled while it is being landed with others is not landed: the 
   expect(r.git("rev-parse", z.view.taskBranch)).toBe(z.base);
   expect(r.queue.busy).toBe(false);
 }, 20_000);
+
+it("a follower whose build or check leaves untracked or ignored files in the leader's worktree never contaminates or blocks the leader", async () => {
+  const r = repository();
+  mkdirSync(join(r.root, "dist"), { recursive: true });
+  writeFileSync(
+    join(r.root, "build.sh"),
+    "#!/bin/sh\ncat a.txt > dist/app.js\nif grep -q TWO a.txt && grep -q B_BAD b.txt; then\n  echo junk > dist/partial.js\n  mkdir -p ignored\n  echo cache > ignored/tmp.cache\n  exit 1\nfi\n",
+    { mode: 0o755 },
+  );
+  spawnSync("/bin/sh", ["-c", "./build.sh"], { cwd: r.root });
+  r.git("add", "-A");
+  r.git("commit", "-qm", "conditional build");
+  const build = [{ name: "bundle", command: "./build.sh", outputs: ["dist"] }];
+  const x = r.delivery("leader ok", {
+    build,
+    scope: ["a.txt"],
+    checks: [{ name: "two", command: "grep -q TWO a.txt" }],
+  });
+  const y = r.delivery("follower breaks build", {
+    build,
+    scope: ["b.txt"],
+    checks: [{ name: "b", command: "grep -q B_BAD b.txt" }],
+  });
+  await Promise.all([x.create(), y.create()]);
+  writeFileSync(join(x.cwd, "a.txt"), "one\nTWO\nthree\nfour\nfive\n");
+  writeFileSync(join(y.cwd, "b.txt"), "B_BAD\n");
+  await Promise.all([x.accept(), y.accept()]);
+  y.hooks.repair = () => {};
+  y.hooks.diagnose = (_p, failed) => ({
+    action: "blocked",
+    blocker: "tool",
+    cause: "incompatible build",
+    evidence: [failed],
+    strategy: "deliver on branch",
+    work: [],
+  });
+  await Promise.all([x.deliver(), y.deliver()]);
+  expect(x.view.integration.status).toBe("applied");
+  expect(r.gitAt(x.cwd, "status", "--porcelain", "--ignored")).toBe("");
+  expect(
+    r.git("ls-tree", "-r", "--name-only", x.live.run.mergedCommit as string),
+  ).not.toContain("dist/partial.js");
+  expect(y.view.integration.status).toBe("branch");
+}, 20_000);
+
+it("when both delivery and user delete the same file, carry-over settles cleanly without failing after main moved; group WIP metadata reaches followers too", async () => {
+  const { r, status, put, read } = await ready();
+  const y = r.delivery("remove gone", {
+    scope: ["gone.txt"],
+    checks: [{ name: "gone", command: "test ! -f gone.txt" }],
+  });
+  await y.create();
+  rmSync(join(y.cwd, "gone.txt"));
+  await y.accept();
+  // User also deletes gone.txt (staged) and edits b.txt (overlapping x).
+  r.git("rm", "-q", "gone.txt");
+  put("b.txt", "b1, mine\nb2\nb3\nb4\nb5\n");
+  await y.land();
+  expect(y.view.integration.status).toBe("applied");
+  expect(y.view.integration.sync?.mode).toBe("wip");
+  expect(existsSync(join(r.root, "gone.txt"))).toBe(false);
+  expect(read("b.txt")).toBe("b1, mine\nb2\nb3\nb4\nb5\n");
+  expect(status()).toEqual([" M b.txt"]);
+  // Now test a group of two landing together over overlapping WIP.
+  const r2 = repository();
+  const g1 = r2.delivery("g1", {
+    scope: ["a.txt"],
+    checks: [{ name: "g1", command: "grep -q TWO a.txt" }],
+  });
+  const g2 = r2.delivery("g2", {
+    scope: ["b.txt"],
+    checks: [{ name: "g2", command: "grep -q B2 b.txt" }],
+  });
+  await Promise.all([g1.create(), g2.create()]);
+  writeFileSync(join(g1.cwd, "a.txt"), "one\nTWO\nthree\nfour\nfive\n");
+  writeFileSync(join(g2.cwd, "b.txt"), "B2\nb2\nb3\nb4\nb5\n");
+  await Promise.all([g1.accept(), g2.accept()]);
+  writeFileSync(join(r2.root, "b.txt"), "b\nb2\nb3\nb4\nUSER\n");
+  r2.git("commit", "-q", "--allow-empty", "-m", "noop");
+  // Reset r2 to base so g1/g2 batch cleanly with WIP on b.txt:
+  r2.git("reset", "--hard", g1.base);
+  writeFileSync(join(r2.root, "a.txt"), "one\ntwo\nthree\nfour\nFIVE_WIP\n");
+  await Promise.all([g1.land(), g2.land()]);
+  expect(g1.view.integration.sync?.mode).toBe("wip");
+  expect(g2.view.integration.sync?.mode).toBe("wip");
+  expect(g2.view.integration.sync?.backup).toEqual(
+    g1.view.integration.sync?.backup,
+  );
+}, 20_000);
+
+it("subdirectory conversations run their own checks in their own directory during both batching and bilateral sibling verification", async () => {
+  const r = repository();
+  mkdirSync(join(r.root, "packages/pkg-a"), { recursive: true });
+  mkdirSync(join(r.root, "packages/pkg-b"), { recursive: true });
+  writeFileSync(join(r.root, "packages/pkg-a/api.txt"), "v1\n");
+  writeFileSync(join(r.root, "packages/pkg-b/consumer.txt"), "expects-v1\n");
+  writeFileSync(
+    join(r.root, "packages/pkg-a/check.sh"),
+    "#!/bin/sh\ntest -f api.txt\n",
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(r.root, "packages/pkg-b/check.sh"),
+    "#!/bin/sh\nif grep -q v2 ../pkg-a/api.txt && grep -q expects-v1 consumer.txt; then exit 1; fi\n",
+    { mode: 0o755 },
+  );
+  r.git("add", "-A");
+  r.git("commit", "-qm", "monorepo");
+  const a = r.delivery("pkg-a v2", {
+    executionSubdir: "packages/pkg-a",
+    scope: ["packages/pkg-a/api.txt"],
+    checks: [{ name: "test", command: "./check.sh" }],
+  });
+  const b = r.delivery("pkg-b consumer", {
+    executionSubdir: "packages/pkg-b",
+    scope: ["packages/pkg-b/consumer.txt"],
+    checks: [{ name: "test", command: "./check.sh" }],
+  });
+  await Promise.all([a.create(), b.create()]);
+  writeFileSync(join(a.cwd, "packages/pkg-a/api.txt"), "v2\n");
+  writeFileSync(
+    join(b.cwd, "packages/pkg-b/consumer.txt"),
+    "expects-v1\n# note\n",
+  );
+  await Promise.all([a.accept(), b.accept()]);
+  let repaired = false;
+  b.hooks.repair = ({ cwd }) => {
+    repaired = true;
+    writeFileSync(join(cwd, "packages/pkg-b/consumer.txt"), "expects-v2\n");
+  };
+  await Promise.all([a.land(), b.land()]);
+  // Both shared identical command "./check.sh", yet pkg-b's check was NOT
+  // deduplicated away: it caught the v2 break, split the batch, and repaired.
+  expect(repaired).toBe(true);
+  expect(
+    spawnSync("/bin/sh", ["-c", "./check.sh"], {
+      cwd: join(r.root, "packages/pkg-b"),
+    }).status,
+  ).toBe(0);
+}, 20_000);
+
+it("a batch waiting while the branch is being rebased does not rebuild or review on every wait tick, and an older follower needing rule/frontier review steps out of a newer leader's batch", async () => {
+  const { r, build, scope } = derived();
+  // Part 1: rebase wait does zero wasted builds/reviews.
+  const x = r.delivery("wait x", { build, scope });
+  const y = r.delivery("wait y", { build, scope });
+  await Promise.all([x.create(), y.create()]);
+  writeFileSync(join(x.cwd, "a.txt"), "one\nTWO\nthree\nfour\nfive\n");
+  writeFileSync(join(y.cwd, "b.txt"), "B\n");
+  await Promise.all([x.accept(), y.accept()]);
+  r.git("switch", "-qc", "up");
+  writeFileSync(join(r.root, "a.txt"), "one\ntwo\nthree\nfour\nUP\n");
+  r.git("commit", "-qam", "up");
+  r.git("switch", "-q", "main");
+  writeFileSync(join(r.root, "a.txt"), "one\ntwo\nthree\nfour\nMAIN\n");
+  r.git("commit", "-qam", "main");
+  expect(() => r.git("rebase", "up")).toThrow();
+  const reviewsBefore = x.asked.filter((a) => a.kind === "review").length;
+  const buildsBefore = x.commands.filter(
+    (c) => c.command === "./build.sh",
+  ).length;
+  let pauses = 0;
+  for (const d of [x, y]) {
+    d.engine.pause = async () => {
+      if (++pauses === 2) {
+        writeFileSync(join(r.root, "a.txt"), "one\ntwo\nthree\nfour\nBOTH\n");
+        r.git("add", "a.txt");
+        r.git("rebase", "--continue");
+      }
+    };
+  }
+  await Promise.all([x.land(), y.land()]);
+  expect(pauses).toBe(2);
+  // Zero wasted reviews during the 2 rebase pauses: only the 1 review after rebase finishes!
+  expect(
+    x.asked.filter((a) => a.kind === "review").length - reviewsBefore,
+  ).toBe(1);
+  expect(
+    x.commands.filter((c) => c.command === "./build.sh").length - buildsBefore,
+  ).toBe(2);
+
+  // Part 2: old-baseline follower after AGENTS.md change steps out of newer leader's batch.
+  const r2 = repository();
+  const slow = r2.delivery("old follower", { scope: ["b.txt"] });
+  await slow.create();
+  writeFileSync(join(slow.cwd, "b.txt"), "SLOW\n");
+  await slow.accept();
+  writeFileSync(join(r2.root, "AGENTS.md"), "# New Rule\nCheck everything.\n");
+  r2.git("add", "AGENTS.md");
+  r2.git("commit", "-qm", "add AGENTS.md");
+  const fast = r2.delivery("new leader", { scope: ["a.txt"] });
+  await fast.create();
+  writeFileSync(join(fast.cwd, "a.txt"), "one\nFAST\nthree\nfour\nfive\n");
+  await fast.accept();
+  await Promise.all([fast.land(), slow.land()]);
+  expect(slow.view.acceptance?.group).toBeUndefined();
+  expect(slow.live.rules?.paths).toEqual(["AGENTS.md"]);
+}, 25_000);
+
+it("files with glob brackets like src/[id]/page.tsx commit and land cleanly", async () => {
+  const r = repository();
+  mkdirSync(join(r.root, "src/[id]"), { recursive: true });
+  writeFileSync(join(r.root, "src/[id]/page.tsx"), "export const v = 1;\n");
+  r.git("add", "--", ":(literal)src/[id]/page.tsx");
+  r.git("commit", "-qm", "route");
+  const x = r.delivery("update dynamic route", {
+    scope: ["src/[id]/page.tsx"],
+    checks: [{ name: "ok", command: "grep -q 'v = 2' 'src/[id]/page.tsx'" }],
+  });
+  await x.create();
+  writeFileSync(join(x.cwd, "src/[id]/page.tsx"), "export const v = 2;\n");
+  await x.accept();
+  await x.land();
+  expect(readFileSync(join(r.root, "src/[id]/page.tsx"), "utf8")).toBe(
+    "export const v = 2;\n",
+  );
+}, 15_000);
+
+it("concurrent managed deliveries that exceed knowledge topic budget or create a cross-task dead anchor when combined are split and auto-repaired before landing", async () => {
+  // Part 1: Budget overflow (each individually < 8 KiB, combined > 8 KiB)
+  const r = repository();
+  mkdirSync(join(r.root, ".cadence/knowledge"), { recursive: true });
+  writeFileSync(
+    join(r.root, ".cadence/project.md"),
+    "# Map\n\n## Routes\n- `a.txt` -> `.cadence/knowledge/core.md#Core` — core\n",
+  );
+  writeFileSync(
+    join(r.root, ".cadence/knowledge/core.md"),
+    "# Core\n\n## Top\n### Base\nAnchors: `a.txt`\nbase\n\n## Mid\n### Mid\nAnchors: `b.txt`\nmid\n\n## Bot\n",
+  );
+  r.git("add", "-A");
+  r.git("commit", "-qm", "knowledge baseline");
+
+  const mkBlocks = (tag: string, file: string) =>
+    Array.from(
+      { length: 6 },
+      (_, i) =>
+        `### ${tag} ${i + 1}\nAnchors: \`${file}\`\n${`${tag}-detail-${i}-`.repeat(62)}end\n`,
+    ).join("\n");
+
+  const k1 = r.delivery("k1", {
+    scope: ["a.txt", ".cadence/knowledge/core.md"],
+  });
+  const k2 = r.delivery("k2", {
+    scope: ["b.txt", ".cadence/knowledge/core.md"],
+  });
+  (k1.live as { managed?: boolean }).managed = true;
+  (k2.live as { managed?: boolean }).managed = true;
+  await Promise.all([k1.create(), k2.create()]);
+  writeFileSync(join(k1.cwd, "a.txt"), "one\nK1\nthree\nfour\nfive\n");
+  writeFileSync(
+    join(k1.cwd, ".cadence/knowledge/core.md"),
+    readFileSync(join(k1.cwd, ".cadence/knowledge/core.md"), "utf8").replace(
+      "## Mid",
+      `${mkBlocks("K1", "a.txt")}\n## Mid`,
+    ),
+  );
+  writeFileSync(join(k2.cwd, "b.txt"), "K2\n");
+  writeFileSync(
+    join(k2.cwd, ".cadence/knowledge/core.md"),
+    `${readFileSync(join(k2.cwd, ".cadence/knowledge/core.md"), "utf8")}\n${mkBlocks("K2", "b.txt")}`,
+  );
+  await Promise.all([k1.accept(), k2.accept()]);
+
+  let budgetRepairs = 0;
+  for (const d of [k1, k2]) {
+    d.hooks.repair = ({ cwd }) => {
+      budgetRepairs++;
+      writeFileSync(
+        join(cwd, ".cadence/knowledge/core.md"),
+        "# Core\n\n## Top\n### Compressed\nAnchors: `a.txt`, `b.txt`\nCompressed within 8 KiB.\n",
+      );
+    };
+  }
+  await Promise.all([k1.land(), k2.land()]);
+  expect(budgetRepairs).toBeGreaterThanOrEqual(1);
+  expect(
+    lintKnowledge(r.root, [".cadence/knowledge/core.md"]).findings.filter(
+      (f) => f.blocking,
+    ),
+  ).toEqual([]);
+
+  // Part 2: Cross-task dead anchor (k3 deletes symbol `legacyFn`, k4 anchors `helper.ts#legacyFn`)
+  const r2 = repository();
+  mkdirSync(join(r2.root, ".cadence/knowledge"), { recursive: true });
+  writeFileSync(
+    join(r2.root, "helper.ts"),
+    "export function legacyFn() {}\nexport function keepFn() {}\n",
+  );
+  writeFileSync(
+    join(r2.root, ".cadence/project.md"),
+    "# Map\n\n## Routes\n- `helper.ts` -> `.cadence/knowledge/helper.md#Helper` — helper\n",
+  );
+  writeFileSync(
+    join(r2.root, ".cadence/knowledge/helper.md"),
+    "# Helper\n\n## Notes\n### Keep\nAnchors: `helper.ts#keepFn`\nkeep\n",
+  );
+  r2.git("add", "-A");
+  r2.git("commit", "-qm", "helper baseline");
+
+  const k3 = r2.delivery("k3 remove legacyFn", { scope: ["helper.ts"] });
+  const k4 = r2.delivery("k4 anchor legacyFn", {
+    scope: ["b.txt", ".cadence/knowledge/helper.md"],
+  });
+  (k3.live as { managed?: boolean }).managed = true;
+  (k4.live as { managed?: boolean }).managed = true;
+  await Promise.all([k3.create(), k4.create()]);
+  writeFileSync(join(k3.cwd, "helper.ts"), "export function keepFn() {}\n");
+  writeFileSync(join(k4.cwd, "b.txt"), "K4\n");
+  writeFileSync(
+    join(k4.cwd, ".cadence/knowledge/helper.md"),
+    `${readFileSync(join(k4.cwd, ".cadence/knowledge/helper.md"), "utf8")}\n### Legacy\nAnchors: \`helper.ts#legacyFn\`\nlegacy\n`,
+  );
+  await Promise.all([k3.accept(), k4.accept()]);
+
+  let anchorRepairs = 0;
+  for (const d of [k3, k4]) {
+    d.hooks.repair = ({ cwd }) => {
+      anchorRepairs++;
+      writeFileSync(
+        join(cwd, ".cadence/knowledge/helper.md"),
+        "# Helper\n\n## Notes\n### Keep\nAnchors: `helper.ts#keepFn`\nkeep\n",
+      );
+    };
+  }
+  await Promise.all([k3.land(), k4.land()]);
+  expect(anchorRepairs).toBeGreaterThanOrEqual(1);
+  expect(
+    lintKnowledge(r2.root, [
+      "helper.ts",
+      ".cadence/knowledge/helper.md",
+    ]).findings.filter((f) => f.blocking),
+  ).toEqual([]);
+}, 30_000);

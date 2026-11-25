@@ -36893,10 +36893,11 @@ import {
   copyFileSync,
   opendirSync as opendirSync16,
   realpathSync as realpathSync17,
+  rmdirSync as rmdirSync3,
   rmSync as rmSync6,
   statfsSync as statfsSync4
 } from "node:fs";
-import { basename as basename7, dirname as dirname29, join as join47, relative as relative14, resolve as resolve17 } from "node:path";
+import { basename as basename7, dirname as dirname29, join as join47, relative as relative14, resolve as resolve18 } from "node:path";
 import { setTimeout as delay2 } from "node:timers/promises";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
@@ -37150,6 +37151,7 @@ var HOST_COST = {
   heavy: { cores: 4, bytes: 2 * GIB }
 };
 var HOST_RESERVE_BYTES = GIB;
+var HOST_WARMUP_MS = 5000;
 var RECHECK_MS = 1000;
 var hostProbe = {
   cores: () => availableParallelism(),
@@ -37158,20 +37160,22 @@ var hostProbe = {
 
 class HostCapacity {
   probe;
+  now;
   waiting = [];
+  active = new Set;
   cores = 0;
-  running = 0;
   timer;
-  constructor(probe2 = hostProbe) {
+  constructor(probe2 = hostProbe, now = Date.now) {
     this.probe = probe2;
+    this.now = now;
   }
   async run(cost2, signal, work, queued) {
-    await this.admit(cost2, signal, queued);
+    const running = await this.admit(cost2, signal, queued);
     try {
       return await work();
     } finally {
       this.cores -= cost2.cores;
-      this.running--;
+      this.active.delete(running);
       this.pump();
     }
   }
@@ -37179,6 +37183,7 @@ class HostCapacity {
     if (signal.aborted)
       throw new ContractError("stale");
     let waiter;
+    let started;
     const admitted = new Promise((resolve16, reject) => {
       const abort = () => {
         const at2 = this.waiting.indexOf(waiter);
@@ -37192,7 +37197,13 @@ class HostCapacity {
         cost: cost2,
         start: () => {
           signal.removeEventListener("abort", abort);
-          resolve16();
+          const running = {
+            bytes: cost2.bytes,
+            until: this.now() + HOST_WARMUP_MS
+          };
+          this.active.add(running);
+          started = running;
+          resolve16(running);
         }
       };
       this.waiting.push(waiter);
@@ -37200,18 +37211,27 @@ class HostCapacity {
     });
     this.pump();
     const ahead = this.waiting.indexOf(waiter);
-    if (ahead >= 0)
+    if (!started && ahead >= 0)
       queued?.(ahead);
     return admitted;
   }
+  warmingBytes(at2) {
+    let total = 0;
+    for (const step of this.active)
+      if (step.until > at2)
+        total += step.bytes;
+    return total;
+  }
   fits(cost2) {
-    return this.running === 0 || this.cores + cost2.cores <= this.probe.cores() && this.probe.memory() >= cost2.bytes + HOST_RESERVE_BYTES;
+    if (this.active.size === 0)
+      return true;
+    const available2 = this.probe.memory() - this.warmingBytes(this.now());
+    return this.cores + cost2.cores <= this.probe.cores() && available2 >= cost2.bytes + HOST_RESERVE_BYTES;
   }
   pump() {
     while (this.waiting.length && this.fits(this.waiting[0].cost)) {
       const waiter = this.waiting.shift();
       this.cores += waiter.cost.cores;
-      this.running++;
       waiter.start();
     }
     if (this.waiting.length && !this.timer) {
@@ -39451,7 +39471,7 @@ class WorkflowHistoryScanner {
 
 // src/service/workflow-landing.ts
 import { existsSync as existsSync4, lstatSync as lstatSync30, readFileSync as readFileSync8 } from "node:fs";
-import { join as join45 } from "node:path";
+import { join as join45, resolve as resolve16 } from "node:path";
 function parseWorktrees(output) {
   const list4 = [];
   let current2;
@@ -39503,9 +39523,24 @@ async function observeTarget(cwd, branch) {
   const head = ref.code === 0 ? ref.stdout.trim() : null;
   let holder = null, busy = null;
   for (const tree of parseWorktrees(await gitText(cwd, ["worktree", "list", "--porcelain", "-z"]))) {
-    if (tree.prunable || !existsSync4(tree.path))
+    if (tree.prunable || !existsSync4(join45(tree.path, ".git")))
       continue;
-    const gitDir = (await gitText(tree.path, ["rev-parse", "--absolute-git-dir"])).trim();
+    let gitDir;
+    try {
+      gitDir = (await gitText(tree.path, ["rev-parse", "--absolute-git-dir"])).trim();
+    } catch (error) {
+      if (tree.branch !== branch) {
+        const pointer2 = firstLine2(join45(tree.path, ".git"));
+        const linkedDir = pointer2?.startsWith("gitdir:") ? resolve16(tree.path, pointer2.slice("gitdir:".length).trim()) : null;
+        const vanished = !existsSync4(tree.path) || !existsSync4(join45(tree.path, ".git")) || linkedDir !== null && !existsSync4(join45(linkedDir, "HEAD"));
+        if (vanished)
+          continue;
+        const fresh2 = parseWorktrees(await gitText(cwd, ["worktree", "list", "--porcelain", "-z"])).find((entry) => entry.path === tree.path);
+        if (!fresh2 || fresh2.prunable)
+          continue;
+      }
+      throw error;
+    }
     if (tree.branch === branch) {
       holder = tree.path;
       const unfinished = UNFINISHED.find((name) => existsSync4(join45(gitDir, name)));
@@ -39625,7 +39660,7 @@ import {
   symlinkSync,
   unlinkSync as unlinkSync5
 } from "node:fs";
-import { dirname as dirname28, join as join46, relative as relative13, resolve as resolve16 } from "node:path";
+import { dirname as dirname28, join as join46, relative as relative13, resolve as resolve17 } from "node:path";
 var isEnoent = (error) => error instanceof Error && ("code" in error) && (error.code === "ENOENT" || error.code === "ENOTDIR");
 function normalizeWindowsLinkTarget(target2) {
   let normalized = target2.replace(/^\\\\\?\\/u, "");
@@ -39718,7 +39753,7 @@ function validateManagedLinks(checkoutRoot, links, writes) {
     workflowPath(sourceRel, true);
     if (workflowCovers(writes, link.path) || writes.some((w) => workflowCovers([link.path], w)))
       throw new WorkflowRefusal("invalid", `Managed dependency link "${link.path}" overlaps approved write paths; keep dependencies separate from committed edits.`);
-    const sourceFull = resolve16(realRoot, sourceRel);
+    const sourceFull = resolve17(realRoot, sourceRel);
     if (!withinWorkspace(realRoot, sourceFull))
       throw new WorkflowRefusal("forbidden", `Managed dependency link source "${sourceRel}" escapes the checkout root.`);
     if (!existsSync5(sourceFull))
@@ -39744,7 +39779,7 @@ function ensurePlainParent(root, dir) {
     for (const part of rel.split(/[/\\]/u)) {
       if (!part || part === ".")
         continue;
-      current2 = resolve16(current2, part);
+      current2 = resolve17(current2, part);
       const st = lstatSync31(current2);
       if (st.isSymbolicLink() || !st.isDirectory())
         throw new ContractError("forbidden");
@@ -39764,10 +39799,10 @@ function provisionManagedLinks(targetCheckoutRoot, worktreeRoot, links, placemen
   const records = [...journal.read()];
   for (const link of selected2) {
     const sourceRel = link.source ?? link.path;
-    const sourceFull = resolve16(realTarget, sourceRel);
+    const sourceFull = resolve17(realTarget, sourceRel);
     if (!withinWorkspace(realTarget, sourceFull) || !existsSync5(sourceFull))
       throw new WorkflowRefusal("invalid", `Managed dependency link source "${sourceRel}" is unavailable in ${realTarget}.`);
-    const linkFull = resolve16(realWorktree, link.path);
+    const linkFull = resolve17(realWorktree, link.path);
     if (!withinWorkspace(realWorktree, linkFull))
       throw new ContractError("forbidden");
     const parent = ensurePlainParent(realWorktree, dirname28(linkFull));
@@ -39814,7 +39849,7 @@ function confirmedManagedLinkPaths(worktreeRoot, journal) {
   for (const record3 of records) {
     if (record3.worktree !== realWorktree || record3.status !== "confirmed")
       continue;
-    const linkFull = resolve16(realWorktree, record3.path);
+    const linkFull = resolve17(realWorktree, record3.path);
     const parentDir = dirname28(linkFull);
     if (!withinWorkspace(realWorktree, linkFull))
       continue;
@@ -39839,7 +39874,7 @@ function unlinkManagedLinks(worktreeRoot, journal) {
   if (!owned.length)
     return;
   for (const record3 of owned) {
-    const linkFull = resolve16(realWorktree, record3.path);
+    const linkFull = resolve17(realWorktree, record3.path);
     const parentDir = dirname28(linkFull);
     if (!withinWorkspace(realWorktree, linkFull)) {
       record3.status = "retained";
@@ -40310,7 +40345,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.7",
-  build: "56bcbc6ced60e08dd2a2e41dbb1429990b02b25faaf3227619b91756231184fd",
+  build: "1e5edf83cd6c14e4e5f500dabf6a8cc17dc9fb366807ab13ec2abb92106d0999",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -40323,6 +40358,7 @@ var PROMPT_BYTES = 32768;
 var MAX_STEPS = 256;
 var STEP_UNITS = 80;
 var LANDING_WAIT = { first: 2000, most: 30000 };
+var SETTLE_DEBOUNCE_MS = 500;
 var WIP_BACKUP_MS = 30 * 24 * 60 * 60 * 1000;
 var CONFLICT_BYTES = 8 * 1024 * 1024;
 var literal2 = (path) => `:(literal)${path}`;
@@ -40393,6 +40429,7 @@ function clipBytes(value, maximum) {
     return value;
   return Buffer.from(value).subarray(0, maximum).toString("utf8").replace(/�+$/u, "");
 }
+var settledExit = (result) => result.closed && result.exitCode !== null && (result.outcome === "completed" || result.outcome === "failed");
 var LESSONS = 32;
 var IMPLEMENTATION_REPORT = `After the assigned work, call cadence_report with status completed, partial (useful outputs with remaining work), or blocked (a concrete unmet prerequisite) and a concrete summary of actual work and remaining gaps. Its optional lessons are for what this work taught that the code does not show and a later worker here would have to rediscover; usually there is none. Then give a short final answer. The report is not passing check evidence; the owner verifies and reviews independently. Never claim completion just because a tool exited zero.`;
 
@@ -40671,12 +40708,15 @@ class Workflows {
       throw new ContractError("stale");
     return execution.model;
   }
-  executionCwd(live2, tree) {
+  cwdRelative(live2) {
+    return relative14(this.cwd, live2.execution.cwd);
+  }
+  executionCwd(live2, tree, cwdRelative) {
     if (live2.execution.checkoutRoot !== this.cwd)
       throw new ContractError("stale");
     let cwd;
     try {
-      cwd = executionDirectory(live2.execution, tree);
+      cwd = cwdRelative !== undefined ? cwdRelative ? resolve18(tree, cwdRelative) : tree : executionDirectory(live2.execution, tree);
     } catch {
       throw new ContractError("stale");
     }
@@ -41145,8 +41185,8 @@ class Workflows {
     };
     const abort = new AbortController;
     let begin;
-    const ready2 = new Promise((resolve18) => {
-      begin = resolve18;
+    const ready2 = new Promise((resolve19) => {
+      begin = resolve19;
     });
     const live2 = {
       runtime,
@@ -41454,7 +41494,7 @@ ${placement}`,
       const running = Promise.resolve().then(() => launchWorkflowWorker(prepared.prepared, runCwd, live2.abort.signal, {
         ownerSecrets: this.o.secrets(),
         temporaryDirectory: live2.environment?.forWorkspace(cwd).TMPDIR,
-        roots: roots2?.length ? roots2.map((p) => resolve17(runCwd, p)) : [kind === "research" ? runCwd : cwd],
+        roots: roots2?.length ? roots2.map((p) => resolve18(runCwd, p)) : [kind === "research" ? runCwd : cwd],
         onLifecycle: (event) => {
           if (!step.timing)
             return;
@@ -41565,7 +41605,10 @@ Partial work is preserved.`);
     }
   }
   async run(live2, cwd, operation, options = {}) {
-    this.assertRunning(live2);
+    if (options.uninterruptible)
+      this.current();
+    else
+      this.assertRunning(live2);
     const shell = "check" in operation;
     if (cwd !== this.cwd && !options.landing) {
       if (shell)
@@ -41575,7 +41618,7 @@ Partial work is preserved.`);
     }
     if (cwd !== this.cwd && shell)
       await assertWorktree(this.cwd, cwd);
-    const runCwd = shell ? this.executionCwd(live2, cwd) : cwd;
+    const runCwd = shell ? this.executionCwd(live2, cwd, options.cwdRelative) : cwd;
     const id = randomUUID29();
     this.write(this.path(live2.run.id, `operations/${id}-intent.json`), {
       cwd: runCwd,
@@ -41650,17 +41693,19 @@ Partial work is preserved.`);
   }
   async check(live2, cwd, c, title) {
     const step = this.step(live2, title, "check");
+    const { cwdRelative, ...command } = c;
     try {
-      const runCwd = this.executionCwd(live2, cwd);
+      const runCwd = this.executionCwd(live2, cwd, cwdRelative);
       const temporary = live2.environment?.forWorkspace(cwd);
       let groupSettled = false;
-      const result = await this.hostCapacity.run(c.tier === "heavy" ? HOST_COST.heavy : HOST_COST.light, live2.abort.signal, () => {
+      const result = await this.hostCapacity.run(command.tier === "heavy" ? HOST_COST.heavy : HOST_COST.light, live2.abort.signal, () => {
         if (step.text) {
           step.text = "";
           this.save(live2);
         }
-        return this.run(live2, cwd, { check: c }, {
+        return this.run(live2, cwd, { check: command }, {
           temporary,
+          cwdRelative,
           onGroupSettled: (settled) => {
             groupSettled = settled;
           }
@@ -41673,10 +41718,10 @@ Partial work is preserved.`);
         live2.groupSettled ??= new Map;
         live2.groupSettled.set(step.id, groupSettled);
       }
-      this.finishStep(live2, step, result, result.outcome === "completed" ? undefined : `${c.name} in ${runCwd}
-Command: ${c.command}
+      this.finishStep(live2, step, result, result.outcome === "completed" ? undefined : `${command.name} in ${runCwd}
+Command: ${command.command}
 ${result.output || result.text}`, undefined, {
-        command: c,
+        command,
         cwd: runCwd,
         checkoutRoot: cwd,
         placement: cwd === this.cwd ? "target" : cwd === live2.delivery?.view.worktreeRoot ? "candidate" : "child",
@@ -41719,7 +41764,7 @@ ${step.text}` : ""}`, step?.id);
         lines.push(`git ${args.slice(0, args[0] === "worktree" ? 2 : 1).join(" ")}: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}`);
         if (result.exitCode !== 0 && result.output)
           lines.push(result.output);
-        if (!answer || result.outcome !== "completed" || !result.closed)
+        if (!answer || !settledExit(result))
           this.success(result, step);
         return result;
       };
@@ -41727,7 +41772,7 @@ ${step.text}` : ""}`, step?.id);
       const summary2 = lines.join(`
 `) || "No Git operation was needed.";
       if (last)
-        this.finishStep(live2, step, last, summary2);
+        this.finishStep(live2, step, last.outcome === "failed" ? { ...last, outcome: "completed" } : last, summary2);
       else {
         step.status = "completed";
         step.text = summary2;
@@ -41770,7 +41815,8 @@ ${error.message}`, step?.id);
     }
   }
   recordNotRunCheck(live2, c, reason) {
-    const step = this.step(live2, c.name, "check");
+    const { cwdRelative: _cwdRelative, ...command } = c;
+    const step = this.step(live2, command.name, "check");
     const clean = diagnosticText(reason, 1024, this.o.secrets());
     step.status = "not-run";
     step.text = clean;
@@ -41788,7 +41834,7 @@ ${error.message}`, step?.id);
         output: "",
         truncated: false
       },
-      operation: JSON.parse(sanitizeData({ command: c, notRunReason: clean }, this.o.secrets()))
+      operation: JSON.parse(sanitizeData({ command, notRunReason: clean }, this.o.secrets()))
     });
     this.save(live2);
     return step;
@@ -41836,7 +41882,7 @@ ${error.message}`, step?.id);
     let passed = true;
     const failFast = options.failFast ?? true;
     const setAside = new Set(baseline ? [] : (live2.run.deviations ?? []).flatMap((d) => d.waives));
-    const raw = baseline ? plan.baselineChecks : [...plan.checks, ...options.extra ?? []];
+    const raw = baseline ? plan.baselineChecks : [...options.checks ?? plan.checks, ...options.extra ?? []];
     const ordered = baseline ? raw : [
       ...raw.filter((c) => (c.tier ?? "fast") === "fast"),
       ...raw.filter((c) => c.tier === "heavy")
@@ -41878,7 +41924,7 @@ ${error.message}`, step?.id);
       if (live2.delivery && await live2.delivery.assertTip(cwd) !== before)
         throw new ContractError("stale");
       await assertWorkflowScope(cwd, allowed, links);
-      await git(["add", "--", ...changes]);
+      await git(["add", "--", ...changes.map(literal2)]);
       await assertWorkflowScope(cwd, allowed, links);
       await this.unchangedHead(cwd, before);
       const staged = await gitRun(cwd, [
@@ -42589,6 +42635,15 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`;
           throw new AttemptFailure("Acceptance checks failed; review awaits a passing candidate.", checks.map((s) => s.id), identity2);
         }
       }
+      if (!options.preReview && live2.managed) {
+        const knowledgeChanged = [
+          ...new Set([
+            ...live2.delivered,
+            ...head && delivery ? await committedPaths(cwd, delivery.candidateBase(), head) : []
+          ])
+        ];
+        this.assertKnowledge(cwd, knowledgeChanged, checks, true);
+      }
       const {
         verdict,
         step: review,
@@ -42679,6 +42734,20 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`;
         review.id
       ]);
     }
+  }
+  assertKnowledge(cwd, changed, steps, allowDirectRepair) {
+    const blocking = lintKnowledge(cwd, changed).findings.filter((f) => f.blocking);
+    if (!blocking.length)
+      return;
+    const summary2 = diagnosticText(blocking.map((f) => `${f.path}: ${f.detail}`).join("; "), 2048, this.o.secrets());
+    const message2 = `The knowledge store does not pass its checks on the combined candidate; correct it within the budget and fix dead anchors or routes: ${summary2}`;
+    const stepIds = steps.map((s) => s.id);
+    if (allowDirectRepair && stepIds.length) {
+      const direct = DirectCheckRepair.from("knowledge store checks", message2, stepIds, "knowledge:lint", KNOWLEDGE_SCOPE, this.o.secrets());
+      if (direct)
+        throw direct;
+    }
+    throw new AttemptFailure(message2, stepIds, "knowledge:lint");
   }
   async storeDeliverable(live2) {
     if (!live2.delivery)
@@ -42888,6 +42957,29 @@ ${changed.length ? markdownLiteral(changed.join(`
 `)) : `None recorded.
 `}`;
   }
+  async cleanAddedResidue(live2, cwd, baseline) {
+    const links = this.confirmedLinks(live2, cwd);
+    const now = await worktreeResidue(cwd);
+    for (const rel of now) {
+      if (baseline.has(rel))
+        continue;
+      const clean = rel.replace(/\/$/u, "");
+      if (!clean || workflowCovers(links, clean))
+        continue;
+      const target2 = resolve18(cwd, clean);
+      const within2 = relative14(cwd, target2);
+      if (!within2 || within2.startsWith("..") || target2 === cwd)
+        continue;
+      rmSync6(target2, { recursive: true, force: true });
+      for (let dir = dirname29(target2);dir !== cwd && !relative14(cwd, dir).startsWith(".."); dir = dirname29(dir)) {
+        try {
+          rmdirSync3(dir);
+        } catch {
+          break;
+        }
+      }
+    }
+  }
   async land(live2, integration, p) {
     const delivery = live2.delivery;
     if (!delivery)
@@ -42901,30 +42993,36 @@ ${changed.length ? markdownLiteral(changed.join(`
       try {
         live2.run.phase = "integrating";
         this.save(live2);
-        let head = await this.branchHead(live2);
-        let landing;
-        try {
-          if (head !== null)
-            landing = await this.settleAttempt(live2, "target absorption", () => this.landTogether(live2, integration, p));
-          head = landing ? head : await this.branchHead(live2);
-          if (!landing && (!delivery.view.acceptance || head !== null && head !== delivery.candidateBase()))
-            await this.settleAttempt(live2, "target absorption", () => this.verificationRound(live2, integration, p, true, [], {}, {
-              previous: ""
-            }));
-        } catch (error) {
-          if (!(error instanceof AttemptFailure))
-            throw error;
-          this.leaveTurn(live2);
-          await this.verifyAndRepair(live2, integration, p, true, [], {}, error);
-          continue;
-        }
-        if (head === null)
+        const target2 = await observeTarget(this.cwd, branch);
+        if (target2.head === null)
           throw new Unlandable(gone(branch));
-        landing ??= await this.landAccepted(live2, p, this.scope(live2, p));
-        if (landing.kind === "landed")
-          return;
-        if (landing.kind === "wait")
-          waiting = landing.reason;
+        if (target2.busy) {
+          waiting = target2.busy;
+        } else {
+          let head = target2.head;
+          let landing;
+          try {
+            landing = await this.settleAttempt(live2, "target absorption", () => this.landTogether(live2, integration, p));
+            head = landing ? head : await this.branchHead(live2);
+            if (!landing && (!delivery.view.acceptance || head !== null && head !== delivery.candidateBase()))
+              await this.settleAttempt(live2, "target absorption", () => this.verificationRound(live2, integration, p, true, [], {}, {
+                previous: ""
+              }));
+          } catch (error) {
+            if (!(error instanceof AttemptFailure))
+              throw error;
+            this.leaveTurn(live2);
+            await this.verifyAndRepair(live2, integration, p, true, [], {}, error);
+            continue;
+          }
+          if (head === null)
+            throw new Unlandable(gone(branch));
+          landing ??= await this.landAccepted(live2, p, this.scope(live2, p));
+          if (landing.kind === "landed")
+            return;
+          if (landing.kind === "wait")
+            waiting = landing.reason;
+        }
       } finally {
         this.leaveTurn(live2);
       }
@@ -42939,29 +43037,39 @@ ${changed.length ? markdownLiteral(changed.join(`
     }
   }
   async landAccepted(live2, p, scope) {
-    const landing = await this.integrate(live2, p, scope);
-    if (landing.kind !== "reconcile")
-      return landing;
-    const reconciled = await this.reconcileUncommitted(live2, p, landing.request);
-    const again = await this.integrate(live2, p, scope, reconciled);
-    return again.kind === "reconcile" ? {
-      kind: "wait",
-      reason: `files with uncommitted changes in ${again.request.worktree} are still being edited`
-    } : again;
+    const attempt2 = async () => {
+      const landing = await this.integrate(live2, p, scope);
+      if (landing.kind !== "reconcile")
+        return landing;
+      const reconciled = await this.reconcileUncommitted(live2, p, landing.request);
+      const again = await this.integrate(live2, p, scope, reconciled);
+      return again.kind === "reconcile" ? {
+        kind: "wait",
+        reason: `files with uncommitted changes in ${again.request.worktree} are still being edited`
+      } : again;
+    };
+    const first = await attempt2();
+    if (first.kind === "wait" && live2.together && first.reason.includes("are still being edited")) {
+      await delay2(SETTLE_DEBOUNCE_MS, undefined, { signal: live2.abort.signal });
+      return attempt2();
+    }
+    return first;
   }
   async adoptLanding(live2, cwd, carried) {
     const delivery = live2.delivery;
     if (!delivery)
       throw new ContractError("stale");
-    let moved = true;
-    try {
-      await this.gitStep(live2, cwd, "follow-landing", async (git) => {
-        await git(["checkout", "--detach", carried.commit]);
-      });
-    } catch (error) {
-      if (!(error instanceof WorkflowFailure))
-        throw error;
-      moved = false;
+    let moved = false;
+    if (!live2.abort.signal.aborted) {
+      try {
+        await this.gitStep(live2, cwd, "follow-landing", async (git) => {
+          await git(["checkout", "--detach", carried.commit]);
+        });
+        moved = true;
+      } catch (error) {
+        if (!(error instanceof WorkflowFailure || error instanceof ContractError && live2.abort.signal.aborted))
+          throw error;
+      }
     }
     delivery.carried(carried.commit, carried.parent, carried.acceptance, moved);
     live2.run.mergedCommit = carried.commit;
@@ -42971,14 +43079,23 @@ ${changed.length ? markdownLiteral(changed.join(`
     this.save(live2);
   }
   followers(live2, p) {
-    const environment2 = (plan) => canonicalJson([plan.setup, plan.links ?? [], plan.build ?? []]);
+    const environment2 = (offerLive, plan) => {
+      const scoped = plan.setup.length > 0 || (plan.build?.length ?? 0) > 0 ? this.cwdRelative(offerLive) : "";
+      return canonicalJson([
+        scoped,
+        plan.setup,
+        plan.links ?? [],
+        plan.build ?? []
+      ]);
+    };
     const waives = (run) => (run.deviations ?? []).some((d) => d.waives.length);
     if (!live2.turn || waives(live2.run))
       return [];
+    const mine = environment2(live2, p.plan);
     const ready2 = [];
     for (const { offer } of live2.turn.offers()) {
       const view = offer.live.delivery?.view;
-      if (!view?.acceptance || view.acceptance.candidate !== view.candidate || offer.live.merging || offer.live.abort.signal.aborted || waives(offer.live.run) || environment2(offer.proposal.plan) !== environment2(p.plan))
+      if (!view?.acceptance || view.acceptance.candidate !== view.candidate || offer.live.merging || offer.live.abort.signal.aborted || waives(offer.live.run) || environment2(offer.live, offer.proposal.plan) !== mine)
         break;
       ready2.push(offer);
     }
@@ -42996,6 +43113,7 @@ ${changed.length ? markdownLiteral(changed.join(`
     const own3 = alone?.candidate ?? await this.candidate(live2, cwd, p, scope);
     if (!own3)
       throw new ContractError("stale");
+    const baselineResidue = new Set(await worktreeResidue(cwd));
     const members = [
       {
         live: live2,
@@ -43010,6 +43128,7 @@ ${changed.length ? markdownLiteral(changed.join(`
         await this.gitStep(live2, cwd, "own-commit", async (git) => {
           await git(["checkout", "--force", "--detach", own3]);
         });
+      await this.cleanAddedResidue(live2, cwd, baselineResidue);
       delivery.update(own3);
       delivery.view.candidate = own3;
       delivery.view.acceptance = alone;
@@ -43048,9 +43167,22 @@ ${changed.length ? markdownLiteral(changed.join(`
     if (!delivery || !theirs || !sealed)
       return null;
     const parent = theirs.candidateBase();
+    const builds = p.plan.build ?? [];
+    const leaderBase = delivery.candidateBase();
+    const leaderOrigin = delivery.view.binding.target.head;
+    const offerOrigin = theirs.view.binding.target.head;
+    const isRule = (path) => path === "AGENTS.md" || path.endsWith("/AGENTS.md");
+    if ((await committedPaths(cwd, leaderBase, tip)).some(isRule) || parent !== leaderBase && live2.rules?.from !== parent && (await committedPaths(cwd, parent, leaderBase)).some(isRule))
+      return null;
+    if (offerOrigin !== leaderBase && offerOrigin !== leaderOrigin) {
+      const gained = sources(await committedPaths(cwd, offerOrigin, leaderBase), builds);
+      const mine = sources(await committedPaths(cwd, parent, sealed), builds);
+      if (overlapping(gained, mine).length)
+        return null;
+    }
+    let baselineResidue;
     try {
       const twin = await this.gitStep(live2, cwd, "take-along", (git) => this.twin(live2, cwd, p, sealed, parent, git));
-      const builds = p.plan.build ?? [];
       const obstacle = (unmerged2) => {
         const sorted = classifyConflicts(unmerged2, builds);
         return sorted.text.length + sorted.other.length + sorted.derived.length > 0;
@@ -43066,6 +43198,7 @@ ${changed.length ? markdownLiteral(changed.join(`
       ]);
       if (fits3.code !== 0 && fits3.code !== 1 || obstacle(parseMergeTree(fits3.stdout).conflicts))
         return null;
+      baselineResidue = new Set(await worktreeResidue(cwd));
       await this.gitStep(live2, cwd, "take-along", async (_, attempt2) => {
         const picked = await attempt2(["cherry-pick", "--no-commit", twin]);
         if (picked.exitCode !== 0 && picked.exitCode !== 1)
@@ -43076,8 +43209,10 @@ ${changed.length ? markdownLiteral(changed.join(`
         throw new AttemptFailure("This delivery does not go onto the one before it without a decision.", []);
       await this.syncBuild(live2, cwd, p);
       const changes = await assertWorkflowScope(cwd, this.scope(offer.live, offer.proposal), this.confirmedLinks(live2, cwd));
-      if (!changes.length)
+      if (!changes.length) {
+        await this.cleanAddedResidue(live2, cwd, baselineResidue);
         return null;
+      }
       return await this.gitStep(live2, cwd, "take-along", async (git) => {
         await git(["add", "--", ...changes.map(literal2)]);
         await git([
@@ -43098,6 +43233,8 @@ ${changed.length ? markdownLiteral(changed.join(`
       await this.gitStep(live2, cwd, "leave-behind", async (git) => {
         await git(["checkout", "--force", "--detach", tip]);
       });
+      if (baselineResidue)
+        await this.cleanAddedResidue(live2, cwd, baselineResidue);
       delivery.update(tip);
       return null;
     }
@@ -43111,6 +43248,13 @@ ${changed.length ? markdownLiteral(changed.join(`
       await this.gitStep(live2, cwd, "group-tip", async (git) => {
         await git(["checkout", "--detach", tip]);
       });
+    const groupBaseline = new Set(await worktreeResidue(cwd));
+    const restoreTip = async () => {
+      await this.gitStep(live2, cwd, "group-reset", async (git) => {
+        await git(["checkout", "--force", "--detach", tip]);
+      });
+      await this.cleanAddedResidue(live2, cwd, groupBaseline);
+    };
     delivery.update(tip);
     delivery.view.candidate = tip;
     live2.together = { members, records: new Map };
@@ -43118,34 +43262,65 @@ ${changed.length ? markdownLiteral(changed.join(`
     this.save(live2);
     try {
       const commands = new Set;
-      const checks = members.flatMap((member) => member.proposal.plan.checks).filter((check) => !commands.has(check.command) && commands.add(check.command));
+      const checks = members.flatMap((member) => {
+        const cwdRelative = this.cwdRelative(member.live);
+        return member.proposal.plan.checks.map((check) => ({
+          ...check,
+          cwdRelative
+        }));
+      }).filter((check) => {
+        const key3 = `${check.cwdRelative ?? ""}\x00${check.command}`;
+        return !commands.has(key3) && commands.add(key3);
+      });
       const plan = { ...p.plan, checks };
+      const groupScope = [
+        ...new Set(members.flatMap((member) => member.scope))
+      ];
+      const links = this.confirmedLinks(live2, cwd);
       const observed = [], waived = new Set;
       let review;
       try {
+        const beforeSource = await sourceIdentityAsync(cwd, groupScope, live2.abort.signal);
         const siblings = await this.siblingChecks(live2, cwd, { ...p, plan }, tip, members);
         if (!await this.checks(live2, cwd, plan, false, observed, waived, {
+          checks,
           extra: siblings
-        }))
+        })) {
+          await restoreTip();
           return;
+        }
+        await this.unchangedHead(cwd, tip);
+        await assertCandidate(cwd, tip, links);
+        const checkedSource = await sourceIdentityAsync(cwd, groupScope, live2.abort.signal);
+        if (beforeSource !== checkedSource)
+          throw new AttemptFailure("Group checks changed approved source files.", observed.map((s) => s.id));
+        if (members.some((member) => member.live.managed)) {
+          const groupChanged = await committedPaths(cwd, members[0].parent, tip);
+          this.assertKnowledge(cwd, groupChanged, observed, false);
+        }
         live2.lastReviewedCandidate = undefined;
         const reviewed = await this.review(live2, cwd, p, observed);
-        if (reviewed.verdict !== "approved")
+        await this.unchangedHead(cwd, tip);
+        await assertCandidate(cwd, tip, links);
+        if (checkedSource !== await sourceIdentityAsync(cwd, groupScope, live2.abort.signal))
+          throw new WorkflowRefusal("stale", "Approved files changed during readonly review.");
+        if (reviewed.verdict !== "approved") {
+          await restoreTip();
           return;
+        }
         review = reviewed.step;
       } catch (error) {
         this.assertRunning(live2);
-        if (!(error instanceof AttemptFailure || error instanceof WorkflowFailure))
+        if (!(error instanceof AttemptFailure || error instanceof WorkflowFailure || error instanceof WorkflowRefusal))
           throw error;
+        await restoreTip();
         return;
       }
       const record3 = async (member, commit) => acceptanceRecord(commit, (await gitText(cwd, ["rev-parse", `${commit}^{tree}`])).trim(), member.proposal.digest, member.live.execution, observed, review, observed.length, waived, { run: live2.run.id, tip });
       for (const member of members)
         live2.together.records.set(member.live.run.id, await record3(member, member.commit));
       delivery.view.acceptance = await record3({ live: live2, proposal: p }, tip);
-      const landed = await this.landAccepted(live2, p, [
-        ...new Set(members.flatMap((member) => member.scope))
-      ]);
+      const landed = await this.landAccepted(live2, p, groupScope);
       if (landed.kind === "landed") {
         const own3 = members[0].commit;
         if (own3 !== tip)
@@ -43280,12 +43455,16 @@ Judge every one of them against its own agreement; the full diff covers all of t
     const lines = [];
     let last;
     const git = async (cwd, args, options = {}) => {
-      const result = await this.run(live2, cwd, { git: args }, { uninterruptible: true, landing: true, index: options.index });
+      const result = await this.run(live2, cwd, { git: args }, {
+        uninterruptible: options.uninterruptible ?? false,
+        landing: true,
+        index: options.index
+      });
       last = result;
       lines.push(`git ${args[0]}: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}`);
       if (result.exitCode !== 0 && result.output)
         lines.push(result.output);
-      if (!options.answer || result.outcome !== "completed" || !result.closed)
+      if (!options.answer || !settledExit(result))
         this.success(result, step);
       return result;
     };
@@ -43295,9 +43474,10 @@ Judge every one of them against its own agreement; the full diff covers all of t
       for (const flag of ["assume-unchanged", "skip-worktree"]) {
         const paths = flagged.filter((entry) => entry.flag === flag).map((entry) => entry.path);
         if (paths.length)
-          await git(worktree, ["update-index", `--${set ? "" : "no-"}${flag}`, "--", ...paths], { answer: true });
+          await git(worktree, ["update-index", `--${set ? "" : "no-"}${flag}`, "--", ...paths], { answer: true, uninterruptible: true });
       }
     };
+    let failed = false;
     try {
       await flags(false);
       const snapshot = await this.snapshotUncommitted(live2, git, {
@@ -43368,8 +43548,9 @@ Judge every one of them against its own agreement; the full diff covers all of t
           kind: "wait",
           reason: `files with uncommitted changes in ${worktree} are still being edited`
         };
+      this.assertRunning(live2);
       const ref = wipBackupRef(live2.run.id);
-      await this.advanceOwn(live2, candidate, (args) => git(this.cwd, args));
+      await this.advanceOwn(live2, candidate, (args) => git(this.cwd, args, { uninterruptible: true }));
       this.persist(this.path(live2.run.id, "landing.json"), {
         branch: target2.branch,
         before,
@@ -43386,82 +43567,113 @@ Judge every one of them against its own agreement; the full diff covers all of t
       };
       this.save(live2);
       const undo = async () => {
-        const restored = await git(worktree, ["stash", "apply", "--index", snapshot.backup], { answer: true });
+        const restored = await git(worktree, ["stash", "apply", "--index", snapshot.backup], { answer: true, uninterruptible: true });
         if (restored.exitCode !== 0)
           live2.notes.push(`${worktree}: the uncommitted changes to ${pathList(overlap)} were set aside for a landing that did not happen and could not be put back automatically. They are in ${ref}: git stash apply --index ${ref}`);
       };
       let moved;
+      let settled = false;
+      const wipSync = {
+        mode: "wip",
+        worktree,
+        backup: { ref, oid: snapshot.backup },
+        fused: [...overlap].sort()
+      };
       try {
-        if (snapshot.tracked.length)
+        const restoreTracked = [];
+        const removeAdded = [];
+        for (const path of snapshot.tracked)
+          (await treeEntry(worktree, before, path) ? restoreTracked : removeAdded).push(path);
+        if (restoreTracked.length)
           await git(worktree, [
             "restore",
             "--source=HEAD",
             "--staged",
             "--worktree",
             "--",
-            ...snapshot.tracked.map(literal2)
-          ]);
-        for (const path of snapshot.untracked)
+            ...restoreTracked.map(literal2)
+          ], { uninterruptible: true });
+        if (removeAdded.length)
+          await git(worktree, ["update-index", "--force-remove", "--", ...removeAdded], { uninterruptible: true });
+        for (const path of [...removeAdded, ...snapshot.untracked])
           rmSync6(join47(worktree, path), { force: true });
-        moved = await this.move(live2, candidate, before, { kind: "fast-forward", worktree }, changed, { backup: { ref, oid: snapshot.backup }, status: "carrying" });
+        moved = await this.move(live2, candidate, before, { kind: "fast-forward", worktree }, changed, {
+          record: {
+            backup: { ref, oid: snapshot.backup },
+            status: "carrying"
+          },
+          settle: false
+        });
+        if (moved !== "landed") {
+          await undo();
+          return this.notLanded(worktree, moved);
+        }
+        const present = [], absent3 = [];
+        for (const path of overlap)
+          (await treeEntry(worktree, fused, path) ? present : absent3).push(path);
+        if (present.length)
+          await git(worktree, ["checkout-index", "--force", "--", ...present], {
+            index,
+            uninterruptible: true
+          });
+        for (const path of absent3)
+          rmSync6(join47(worktree, path), { force: true });
+        const collapsed = new Set([
+          ...inIndex.conflicts.map((entry) => entry.path),
+          ...plan.landed,
+          ...plan.kept,
+          ...plan.reconcile
+        ]);
+        for (const path of snapshot.tracked) {
+          if (collapsed.has(path))
+            continue;
+          const targetEntry = await treeEntry(worktree, inIndex.tree, path);
+          const landedEntry = await treeEntry(worktree, candidate, path);
+          if (targetEntry?.mode === landedEntry?.mode && targetEntry?.oid === landedEntry?.oid)
+            continue;
+          await git(worktree, targetEntry ? [
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            `${targetEntry.mode},${targetEntry.oid},${path}`
+          ] : ["update-index", "--force-remove", "--", path], { uninterruptible: true });
+        }
+        const settledFile = (path) => reconciled?.files.get(path)?.settled;
+        const carried = {
+          merged: plan.merged,
+          landed: plan.landed,
+          kept: plan.kept,
+          fused: plan.reconcile.filter((path) => settledFile(path)),
+          marked: plan.reconcile.filter((path) => !settledFile(path))
+        };
+        delivery.view.integration.sync = wipSync;
+        this.persist(this.path(live2.run.id, "landing.json"), {
+          branch: target2.branch,
+          before,
+          after: candidate,
+          worktree,
+          backup: { ref, oid: snapshot.backup },
+          status: "confirmed"
+        });
+        live2.notes.push(carriedNotice(worktree, carried, ref));
+        this.save(live2);
+        await this.settleLanding(live2, before, candidate, changed, wipSync);
+        settled = true;
+        return { kind: "landed" };
       } catch (error) {
         if (delivery.view.integration.status !== "applied")
           await undo();
+        else if (!settled) {
+          delivery.view.integration.sync = wipSync;
+          live2.notes.push(`${worktree}: the branch moved to ${candidate.slice(0, 12)}, but writing back uncommitted changes to ${pathList(overlap)} did not finish. As they were before: ${ref} (git stash apply --index ${ref}).`);
+          this.save(live2);
+          await this.settleLanding(live2, before, candidate, changed, wipSync).catch(() => {});
+        }
         throw error;
       }
-      if (moved !== "landed") {
-        await undo();
-        return this.notLanded(worktree, moved);
-      }
-      const present = [], absent3 = [];
-      for (const path of overlap)
-        (await treeEntry(worktree, fused, path) ? present : absent3).push(path);
-      if (present.length)
-        await git(worktree, ["checkout-index", "--force", "--", ...present], {
-          index
-        });
-      for (const path of absent3)
-        rmSync6(join47(worktree, path), { force: true });
-      const collapsed = new Set([
-        ...inIndex.conflicts.map((entry) => entry.path),
-        ...plan.landed,
-        ...plan.kept,
-        ...plan.reconcile
-      ]);
-      const staged = snapshot.tracked.filter((path) => !collapsed.has(path));
-      if (staged.length)
-        await git(worktree, [
-          "restore",
-          `--source=${inIndex.tree}`,
-          "--staged",
-          "--",
-          ...staged.map(literal2)
-        ]);
-      const settled = (path) => reconciled?.files.get(path)?.settled;
-      const carried = {
-        merged: plan.merged,
-        landed: plan.landed,
-        kept: plan.kept,
-        fused: plan.reconcile.filter((path) => settled(path)),
-        marked: plan.reconcile.filter((path) => !settled(path))
-      };
-      delivery.view.integration.sync = {
-        mode: "wip",
-        worktree,
-        backup: { ref, oid: snapshot.backup },
-        fused: [...overlap].sort()
-      };
-      this.persist(this.path(live2.run.id, "landing.json"), {
-        branch: target2.branch,
-        before,
-        after: candidate,
-        worktree,
-        backup: { ref, oid: snapshot.backup },
-        status: "confirmed"
-      });
-      live2.notes.push(carriedNotice(worktree, carried, ref));
-      this.save(live2);
-      return { kind: "landed" };
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
       try {
         await flags(true);
@@ -43469,7 +43681,10 @@ Judge every one of them against its own agreement; the full diff covers all of t
         rmSync6(index, { force: true });
         rmSync6(`${index}.lock`, { force: true });
         if (last && step.status === "running")
-          this.finishStep(live2, step, last, lines.join(`
+          this.finishStep(live2, step, failed ? {
+            ...last,
+            outcome: last.outcome === "completed" ? "failed" : last.outcome
+          } : last.outcome === "failed" ? { ...last, outcome: "completed" } : last, lines.join(`
 `));
         this.closeStep(live2, step);
       }
@@ -43497,13 +43712,18 @@ Judge every one of them against its own agreement; the full diff covers all of t
       if (base)
         await git(worktree, ["read-tree", base], { index });
       if (source && tracked.length)
-        await git(worktree, [
-          "restore",
-          `--source=${source}`,
-          "--staged",
-          "--",
-          ...tracked.map(literal2)
-        ], { index });
+        for (const path of tracked) {
+          const entry = await treeEntry(worktree, source, path);
+          const inBase = base ? await treeEntry(worktree, base, path) : null;
+          if (entry?.mode === inBase?.mode && entry?.oid === inBase?.oid)
+            continue;
+          await git(worktree, entry ? [
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            `${entry.mode},${entry.oid},${path}`
+          ] : ["update-index", "--force-remove", "--", path], { index });
+        }
       if (add.length)
         await git(worktree, ["add", "--force", "--", ...add.map(literal2)], {
           index
@@ -43625,7 +43845,8 @@ Write only: ${request3.paths.join(", ")}`;
     }
     return { key: request3.key, files };
   }
-  async move(live2, candidate, before, landing, changed, record3 = { status: "confirmed" }) {
+  async move(live2, candidate, before, landing, changed, options = {}) {
+    const record3 = options.record ?? { status: "confirmed" };
     const delivery = live2.delivery;
     if (!delivery)
       throw new ContractError("stale");
@@ -43713,55 +43934,15 @@ ${result.output}`}`);
     if (actual === undefined)
       throw new WorkflowFailure("unknown", `${target2.branch} could not be read back after it was moved; whether that completed is unknown. Inspect the branch before acting; nothing will be retried.`);
     if (actual === candidate) {
-      const lane = this.lane(delivery.view);
-      if (members.length)
-        for (const member of members)
-          this.landings.add(lane, {
-            commit: member.commit,
-            paths: sources(await committedPaths(delivery.view.worktreeRoot, member.parent, member.commit).catch(() => changed), member.proposal.plan.build ?? []),
-            checks: member.proposal.plan.checks
-          });
-      else
-        this.landings.add(lane, {
-          commit: candidate,
-          paths: sources(changed, live2.proposal?.plan.build ?? []),
-          checks: live2.proposal?.plan.checks ?? []
-        });
-      this.retainLandings(lane);
-      for (const member of followers)
-        try {
-          await member.live.delivery?.advanceTaskBranch(member.commit, async (args) => {
-            const r = await this.run(live2, this.cwd, { git: args }, { uninterruptible: true });
-            this.success(r);
-            return r;
-          });
-        } catch {
-          member.live.notes.push(`The task branch ${member.live.delivery?.view.taskBranch ?? ""} could not be moved to ${member.commit}; the commit is on ${target2.branch}.`);
-        }
-      const records = live2.together?.records;
-      live2.turn?.settle(new Map(followers.flatMap((member) => {
-        const acceptance = records?.get(member.live.run.id);
-        return acceptance ? [
-          [
-            member.live.run.id,
-            {
-              commit: member.commit,
-              parent: member.parent,
-              acceptance,
-              size: members.length
-            }
-          ]
-        ] : [];
-      })));
-      if (!worktree)
-        await this.followCheckout(live2, before, candidate);
+      if (options.settle !== false)
+        await this.settleLanding(live2, before, candidate, changed, sync);
       return "landed";
     }
     if (followers.length)
       live2.turn?.letGo();
     if (actual !== before)
       return "moved";
-    if (worktree && result?.outcome === "completed" && result.exitCode !== 0)
+    if (worktree && result && settledExit(result) && result.exitCode !== 0)
       return {
         refused: diagnosticText(result.output.split(`
 `).find((line) => line.trim()) ?? "", 256, this.o.secrets())
@@ -43769,6 +43950,76 @@ ${result.output}`}`);
     if (result)
       this.success(result);
     throw new WorkflowRefusal("stale", `${command} did not leave ${target2.branch} at the candidate commit; nothing is reported as merged.`);
+  }
+  async settleLanding(live2, before, candidate, changed, sync) {
+    const delivery = live2.delivery;
+    if (!delivery)
+      throw new ContractError("stale");
+    const target2 = delivery.view.binding.target;
+    const members = live2.together?.members ?? [];
+    const followers = members.slice(1);
+    const lane = this.lane(delivery.view);
+    const memberPaths = new Map;
+    if (members.length)
+      for (const member of members) {
+        const paths = await committedPaths(delivery.view.worktreeRoot, member.parent, member.commit).catch(() => [...changed]);
+        memberPaths.set(member.live.run.id, paths);
+        this.landings.add(lane, {
+          commit: member.commit,
+          paths: sources(paths, member.proposal.plan.build ?? []),
+          checks: member.proposal.plan.checks,
+          cwdRelative: this.cwdRelative(member.live)
+        });
+      }
+    else
+      this.landings.add(lane, {
+        commit: candidate,
+        paths: sources(changed, live2.proposal?.plan.build ?? []),
+        checks: live2.proposal?.plan.checks ?? [],
+        cwdRelative: this.cwdRelative(live2)
+      });
+    this.retainLandings(lane);
+    for (const member of followers) {
+      if (member.live.delivery && sync.mode === "wip") {
+        const ownPaths = memberPaths.get(member.live.run.id) ?? [];
+        const ownFused = (sync.fused ?? []).filter((path) => ownPaths.includes(path));
+        member.live.delivery.view.integration.sync = {
+          ...sync,
+          ...ownFused.length ? { fused: ownFused } : {}
+        };
+        if (ownFused.length && sync.backup && sync.worktree)
+          member.live.notes.push(`${sync.worktree} had uncommitted changes to ${pathList(ownFused)} when this group landed; they were carried over onto the new commit. Earlier versions are in ${sync.backup.ref} (git stash apply --index ${sync.backup.ref}).`);
+        try {
+          this.save(member.live);
+        } catch {}
+      }
+      try {
+        await member.live.delivery?.advanceTaskBranch(member.commit, async (args) => {
+          const r = await this.run(live2, this.cwd, { git: args }, { uninterruptible: true });
+          this.success(r);
+          return r;
+        });
+      } catch {
+        member.live.notes.push(`The task branch ${member.live.delivery?.view.taskBranch ?? ""} could not be moved to ${member.commit}; the commit is on ${target2.branch}.`);
+      }
+    }
+    const records = live2.together?.records;
+    live2.turn?.settle(new Map(followers.flatMap((member) => {
+      const acceptance = records?.get(member.live.run.id);
+      return acceptance ? [
+        [
+          member.live.run.id,
+          {
+            commit: member.commit,
+            parent: member.parent,
+            acceptance,
+            size: members.length
+          }
+        ]
+      ] : [];
+    })));
+    if (!sync.worktree)
+      await this.followCheckout(live2, before, candidate);
   }
   notLanded(worktree, moved) {
     return moved === "moved" ? { kind: "moved" } : {
@@ -44038,8 +44289,8 @@ ${objection}` : "", "", PROMPT_BYTES);
         break;
       await Promise.race([
         ...running.values(),
-        new Promise((resolve18) => {
-          revised = resolve18;
+        new Promise((resolve19) => {
+          revised = resolve19;
         })
       ]);
     }
@@ -44128,7 +44379,9 @@ ${objection}` : "", "", PROMPT_BYTES);
       from: member.parent,
       to: member.commit
     })) : [{ mark: live2.landed, from: base, to: candidate }];
-    const commands = new Set(p.plan.checks.map((c) => c.command));
+    const checkKey = (cwdRelative, command) => `${cwdRelative}\x00${command}`;
+    const defaultCwd = this.cwdRelative(live2);
+    const commands = new Set(p.plan.checks.map((c) => checkKey(c.cwdRelative ?? defaultCwd, c.command)));
     const within2 = new Map;
     const extra = [];
     for (const side of sides) {
@@ -44149,11 +44402,16 @@ ${objection}` : "", "", PROMPT_BYTES);
         if (!within2.get(sibling.commit))
           continue;
         for (const c of sibling.checks) {
-          if (commands.has(c.command))
+          const key3 = checkKey(sibling.cwdRelative, c.command);
+          if (commands.has(key3))
             continue;
-          commands.add(c.command);
+          commands.add(key3);
           const { target: _target, ...check } = c;
-          extra.push({ ...check, name: `landed meanwhile: ${c.name}` });
+          extra.push({
+            ...check,
+            name: `landed meanwhile: ${c.name}`,
+            cwdRelative: sibling.cwdRelative
+          });
         }
       }
     }
@@ -44204,10 +44462,14 @@ ${objection}` : "", "", PROMPT_BYTES);
     const delivery = live2.delivery;
     if (!delivery)
       throw new ContractError("stale");
+    const links = this.confirmedLinks(live2, cwd);
     for (let first = true;; first = false) {
       if (live2.merging)
         await this.settleMerge(live2, cwd, p);
-      await this.syncBuild(live2, cwd, p);
+      const tip = await delivery.assertTip();
+      const cleanSealed = tip === delivery.view.candidate && delivery.isSealedDelivery(tip) && !(await changedPaths(cwd, links)).length;
+      if (!cleanSealed)
+        await this.syncBuild(live2, cwd, p);
       await this.leftOutside(live2, cwd, scope);
       const before = await delivery.assertTip();
       if (first && await stands?.(before))
@@ -44496,6 +44758,15 @@ Files those commits changed: ${pathList(changed)}`, 6144, secrets));
     await this.gitStep(live2, cwd, "discard-merge", async (git) => {
       await git(["checkout", "--force", "--detach", merging.frontier]);
     });
+    const links = this.confirmedLinks(live2, cwd);
+    const untracked = (await gitText(cwd, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\x00").filter((path) => path && !workflowCovers(links, path));
+    for (const rel of untracked) {
+      const target2 = resolve18(cwd, rel);
+      const within2 = relative14(cwd, target2);
+      if (!within2 || within2.startsWith("..") || target2 === cwd)
+        continue;
+      rmSync6(target2, { recursive: true, force: true });
+    }
     live2.merging = undefined;
     live2.notes.push(`The merge with ${live2.delivery?.view.binding.target.branch ?? "the target branch"} was not reconciled; the work was done again on the branch's head. The earlier result is commit ${merging.sealed}.`);
   }
@@ -45207,7 +45478,7 @@ async function predecessorExited() {
     } catch {
       return;
     }
-    await new Promise((resolve18) => setTimeout(resolve18, 100));
+    await new Promise((resolve19) => setTimeout(resolve19, 100));
   }
 }
 async function healBeforeStart(c) {
@@ -45383,8 +45654,8 @@ async function createServiceHost(value, sourceBuild, lifetime) {
         let timer;
         await Promise.race([
           owner?.idle(),
-          new Promise((resolve18) => {
-            timer = setTimeout(resolve18, FAULT_SETTLE_MS);
+          new Promise((resolve19) => {
+            timer = setTimeout(resolve19, FAULT_SETTLE_MS);
           })
         ]);
         clearTimeout(timer);
