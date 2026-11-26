@@ -4975,17 +4975,22 @@ button.file-item:hover:not(:disabled),
   white-space: nowrap;
   font-size: 12px;
 }
-/* A phone has no room for the goal and its state side by side: the state
- * (assignment counts, a deviation statement) goes under the goal, whole. */
+/* A phone has no room for the goal and its state side by side: keep the
+ * chevron beside the goal on row 1 and wrap the state whole underneath. */
 @media (max-width: 640px) {
   .workflow-line-open {
     flex-wrap: wrap;
     row-gap: 2px;
   }
   .workflow-line-goal {
-    flex-basis: calc(100% - 16px);
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .workflow-line-chevron {
+    order: 1;
   }
   .workflow-line-meta.ep-state {
+    order: 2;
     flex-basis: 100%;
     padding-left: 16px;
     white-space: normal;
@@ -5075,6 +5080,9 @@ button.file-item:hover:not(:disabled),
 .workflow-stage.failed {
   color: var(--red);
 }
+.workflow-stage.unmerged {
+  color: var(--amber-text);
+}
 .workflow-stage-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5133,6 +5141,14 @@ button.file-item:hover:not(:disabled),
 .workflow-outcome dd {
   margin: 0;
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workflow-outcome-notice {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .workflow-line-actions {

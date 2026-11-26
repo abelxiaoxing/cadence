@@ -152,13 +152,16 @@ function agoText(at: number, now: number, t: Translator["t"]): string {
 /** The browser clock for the live line's elapsed time and relative activity.
  * It ticks only while the line is live or expanded; polling stays the source
  * of every fact shown, this clock only re-expresses their timestamps. */
-function useNow(active: boolean): number {
+function useNow(active: boolean, fast: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    // Sync immediately when expanding a previously collapsed line so relative
+    // timestamps never flash a stale mount-time value before the first tick.
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), fast ? 1000 : 60_000);
     return () => clearInterval(timer);
-  }, [active]);
+  }, [active, fast]);
   return now;
 }
 /** One workflow in the conversation: a line saying what it is doing or how it
@@ -195,7 +198,18 @@ export function WorkflowLine({
     };
   }, []);
   const live = workflowLive(run);
-  const now = useNow(live || expanded);
+  const newestStepAt = run.steps.reduce((max, step) => {
+    const t =
+      step.timing?.settledAt ??
+      step.timing?.closedAt ??
+      step.timing?.startedAt ??
+      step.timing?.createdAt ??
+      0;
+    return Math.max(max, t);
+  }, 0);
+  const fastTick =
+    live || (newestStepAt > 0 && Date.now() - newestStepAt < 65_000);
+  const now = useNow(live || expanded, fastTick);
   // Assignments that run side by side are counted, not named: their names
   // would not fit the line, and the queued ones have no step to name.
   const counts = live ? sideBySideCounts(run) : null;
@@ -330,6 +344,7 @@ export function WorkflowLine({
           {describeError(t, error)}
         </p>
       ) : (
+        !expanded &&
         reason && (
           <p className="workflow-line-reason" title={reason}>
             {tx(reason)}
@@ -372,7 +387,12 @@ export function WorkflowLineProgress({
       <WorkflowStages run={run} />
       {live && <CurrentSteps run={run} now={now} />}
       <RecentActivity run={run} now={now} />
-      <AssignmentBoard run={run} steps={run.steps} onOpen={onOpenStep} />
+      <AssignmentBoard
+        run={run}
+        steps={run.steps}
+        partial={(run.stepsBefore ?? 0) > 0}
+        onOpen={onOpenStep}
+      />
       {!!run.deviations?.length && <Deviations run={run} />}
       {!live && <WorkflowOutcome run={run} />}
       <p className="workflow-line-actions">
@@ -383,7 +403,12 @@ export function WorkflowLineProgress({
     </div>
   );
 }
-type WorkflowStageState = "done" | "current" | "failed" | "pending";
+type WorkflowStageState =
+  | "done"
+  | "current"
+  | "failed"
+  | "unmerged"
+  | "pending";
 const STAGE_SEQUENCE: readonly {
   key: MessageKey;
   phases: readonly WorkflowRun["phase"][];
@@ -393,6 +418,48 @@ const STAGE_SEQUENCE: readonly {
   { key: "Verify", phases: ["verifying", "reviewing", "learning"] },
   { key: "Merge", phases: ["integrating"] },
 ];
+/** When a non-completed run settles, the owner sets `phase` to `"finished"`.
+ * Infer which coarse stage stopped from the run's own recorded facts so
+ * failed/canceled/unknown runs never masquerade as all-green or always Plan. */
+function settledFailureStage(
+  run: WorkflowRun,
+  sequence: readonly {
+    key: MessageKey;
+    phases: readonly WorkflowRun["phase"][];
+  }[],
+): number {
+  const indexOf = (key: MessageKey) =>
+    sequence.findIndex((stage) => stage.key === key);
+  const mergeIdx = indexOf("Merge");
+  const lastStep = run.steps.at(-1);
+  if (
+    mergeIdx >= 0 &&
+    run.delivery &&
+    (["applying", "applied", "branch", "unknown"].includes(
+      run.delivery.integration.status,
+    ) ||
+      (run.delivery.integration.status === "blocked" &&
+        run.delivery.acceptance !== null &&
+        lastStep?.kind !== "knowledge"))
+  )
+    return mergeIdx;
+  const implIdx = run.steps.findIndex((s) => s.kind === "implementation");
+  const hasPostImplCheck =
+    implIdx >= 0 &&
+    run.steps.slice(implIdx + 1).some((s) => s.kind === "check");
+  if (
+    run.delivery?.acceptance != null ||
+    run.steps.some((s) => s.kind === "review" || s.kind === "knowledge") ||
+    hasPostImplCheck
+  )
+    return Math.max(0, indexOf("Verify"));
+  if (
+    run.tasks?.length ||
+    run.steps.some((s) => s.kind === "implementation" || s.kind === "diagnosis")
+  )
+    return Math.max(0, indexOf("Develop"));
+  return 0;
+}
 /** The run's coarse stages from its phase, not a second state machine: plan →
  * develop → verify, plus merge only for a branch delivery. A research-only
  * run has its single stage. Settled states mark the stage they stopped in. */
@@ -422,14 +489,20 @@ function workflowStages(
   const sequence = STAGE_SEQUENCE.filter(
     (stage) => stage.key !== "Merge" || run.delivery,
   );
-  if (run.status === "completed" || run.phase === "finished")
-    return sequence.map((stage) => ({ key: stage.key, state: "done" }));
+  if (run.status === "completed") {
+    const unmerged = run.delivery?.integration.status === "branch";
+    return sequence.map((stage) => ({
+      key: stage.key,
+      state: stage.key === "Merge" && unmerged ? "unmerged" : "done",
+    }));
+  }
   if (run.status === "queued")
     return sequence.map((stage) => ({ key: stage.key, state: "pending" }));
-  const current = Math.max(
-    0,
-    sequence.findIndex((stage) => stage.phases.includes(run.phase)),
+  const matched = sequence.findIndex((stage) =>
+    stage.phases.includes(run.phase),
   );
+  const current =
+    matched >= 0 ? matched : failed ? settledFailureStage(run, sequence) : 0;
   return sequence.map((stage, index) => ({
     key: stage.key,
     state:
@@ -454,6 +527,8 @@ function WorkflowStages({ run }: { run: WorkflowRun }) {
               <FiCheck />
             ) : stage.state === "failed" ? (
               <FiX />
+            ) : stage.state === "unmerged" ? (
+              <FiAlertTriangle />
             ) : stage.state === "current" ? (
               <HalfRingSpinner />
             ) : null}
@@ -510,12 +585,21 @@ function RecentActivity({ run, now }: { run: WorkflowRun; now: number }) {
       const settled = step.timing?.settledAt ?? step.timing?.closedAt;
       return [
         ...(started
-          ? [{ at: started, verb: t("Started"), label, id: `${step.id}:start` }]
+          ? [
+              {
+                at: started,
+                rank: 0,
+                verb: t("Started"),
+                label,
+                id: `${step.id}:start`,
+              },
+            ]
           : []),
         ...(settled
           ? [
               {
                 at: settled,
+                rank: 1,
                 verb: tx(step.status),
                 label,
                 id: `${step.id}:settle`,
@@ -524,7 +608,7 @@ function RecentActivity({ run, now }: { run: WorkflowRun; now: number }) {
           : []),
       ];
     })
-    .sort((a, b) => b.at - a.at)
+    .sort((a, b) => b.at - a.at || b.rank - a.rank)
     .slice(0, 3);
   if (!items.length) return null;
   return (
@@ -545,15 +629,17 @@ function RecentActivity({ run, now }: { run: WorkflowRun; now: number }) {
  * stayed when it was not merged, what acceptance recorded and how long it
  * took. A run that did not deliver shows its full notice instead. */
 function WorkflowOutcome({ run }: { run: WorkflowRun }) {
-  const { t } = useT();
+  const { t, tx } = useT();
   const d = run.delivery;
   if (run.status !== "completed")
     return run.notice ? (
-      <p className="workflow-line-reason">{run.notice}</p>
+      <p className="workflow-outcome-notice">{tx(run.notice)}</p>
     ) : null;
   const duration = workflowDuration(run, t);
   const unmerged = d?.integration.status === "branch" ? d : undefined;
   const branchName = (ref: string) => ref.replace(/^refs\/heads\//u, "");
+  if (!run.mergedCommit && !unmerged && !d?.acceptance && !duration)
+    return null;
   return (
     <dl className="workflow-outcome">
       {run.mergedCommit && (

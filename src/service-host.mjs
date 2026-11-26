@@ -37807,7 +37807,16 @@ class WorkflowTranscript {
     if (this.reportTool !== tool || this.reportText === undefined)
       return;
     try {
-      const value = closed(parseWireJson(this.reportText, SUBMISSION_ENVELOPE_BYTES), ["content"]);
+      const raw = parseWireJson(this.reportText, SUBMISSION_ENVELOPE_BYTES);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        return;
+      if (Object.hasOwn(raw, "details")) {
+        const value2 = closed(raw, ["content", "details"]);
+        if (!value2.details || typeof value2.details !== "object" || Array.isArray(value2.details))
+          return;
+        return canonicalJson(value2.details, SUBMISSION_ENVELOPE_BYTES);
+      }
+      const value = closed(raw, ["content"]);
       if (!Array.isArray(value.content) || value.content.length !== 1)
         return;
       const item = closed(value.content[0], ["type", "text"]);
@@ -38376,6 +38385,14 @@ function decodeRecoveryDecision(reply, bounds, secrets = []) {
       refuse3("A deviation is recorded exactly when the level is deviate: name the item, the reason and what is delivered instead");
     if (deviation?.waives.some((name) => !bounds.checks.includes(name)))
       refuse3("A deviation can set aside only declared acceptance checks");
+    if (deviation?.waives.length && bounds.checks.length) {
+      const allWaived = new Set([
+        ...bounds.waived ?? [],
+        ...deviation.waives
+      ]);
+      if (bounds.checks.every((name) => allWaived.has(name)))
+        refuse3('A deviation cannot set aside every declared acceptance check; leave at least one passing check, or submit action "blocked" with the outside blocker');
+    }
     const blocker = has("blocker") ? nullable(o.blocker, (v) => oneOf(v, BLOCKERS)) : null;
     const completesStage = has("completesStage") ? bool(o.completesStage) : undefined;
     if (action === "blocked") {
@@ -38740,7 +38757,7 @@ Choose the least departure that can work:
 - level "repair": retry or repair inside the current write scope. Use work=[] for a safe retry of the original operation (for example report formatting); never to declare success.
 Each work item is an editing assignment and needs at least one write path. Omit check-only work items: the owner reruns the declared checks and independent review after repairs.
 - level "replan": a genuinely different implementation or split of the remaining work (name the shared false assumption, the distinct alternative design, obsolete branches to delete, and the minimal discriminating test); list in "scope" any further repository files it must write, including tests, fixtures, build scripts and project guidance needed to make the approved checks work. The initial write scope is not a permission boundary: the owner checks and records repository-local additions under the original approval. A decision that supplies scope or route changes is recorded as replan even if its level was omitted or labelled repair. Files edited outside the scope so far are either adopted this way, when the goal needs them, or restored by a work item. While assignments are still waiting to start you may also revise them in "route": drop one that the new approach makes wrong or unnecessary, add one, or give one again under its own ID to rewrite it. An assignment that already started cannot change; what remains of the failed one is your work items. Every assignment that waits for a dropped one must be dropped or rewritten too.
-- level "deviate": only when an acceptance item or decision cannot be met as written (never merely because previous attempts failed). Deliver the closest achievable result and record the deviation: the item, the evidence it is impossible, what is delivered instead, and in "waives" any declared check that can no longer pass because of it. An independent review must find it necessary and minimal, and it leads the final report.
+- level "deviate": only when an acceptance item or decision cannot be met as written (never merely because previous attempts failed). Deliver the closest achievable result and record the deviation: the item, the evidence it is impossible, what is delivered instead, and in "waives" any declared check that can no longer pass because of it (never all declared checks: a delivery needs at least one passing acceptance check, so if no declared check can pass because of an outside condition, use action "blocked" with the matching blocker instead). An independent review must find it necessary and minimal, and it leads the final report.
 Use action "blocked" only for a condition outside the repository that no route can remove, and name it in "blocker": an unavailable model, failed authentication, actual storage or permission limits, an installation this agreement does not allow, or a missing tool with no repository-local alternative. A target branch that moved is never a blocker: the owner takes its new head in and verifies again. Before blocking, consider changes beyond the initial scope. A failing baseline, test fixture incompatible with a long temporary path or inherited service environment, or an unsuitable original approach is a repository repair, not proof of an external blocker. Repair the fixture or implementation while preserving the tested behavior and production protections; do not demand relocation of owner resources, execution outside the service, or another user confirmation when a repository-local route can work. A hard problem is not a blocker.
 The execution context supplied with evidence is authoritative about what ran and where. Project guidance that applies only when a resource was declared does not create a missing resource requirement: do not demand an original temporary directory or marker unless the approved commands actually declared one. Never ask a repair worker to obtain undisclosed owner records, inspect private state or reconstruct the owner environment. Keep every scratch file in the inherited owner temporary root; a socket pathname limit calls for changing the fixture's addressing (such as a relative name in a child process), never a /tmp fallback or another temporary root. Strategy text is explanation only; executable repair actions must be in work. A repair that reports partial progress does not resolve the original failure. Rewording a strategy or work instructions is not progress: the same failed operation with unchanged observed state escalates. Every continuation needs new evidence or an actionable changed approach, not another copy of a failed attempt. Model-request recovery belongs to the SDK and is never permission to replay a workflow step. The owner will run the acceptance checks and independent review again.
 ${REPLY}`;
@@ -39951,17 +39968,75 @@ function boundedResult(value, [textKey, outputKey, truncatedKey], maximum = WORK
   result[truncatedKey] = original[truncatedKey] || keptText !== text2 || keptOutput !== output;
   return result;
 }
+function sanitizeStructuredObject(value, secrets) {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}"))
+    return;
+  try {
+    const parsed = parseWireJson(trimmed, WORKFLOW_RESULT_BYTES);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return;
+    const sanitized = sanitizeData(parsed, secrets);
+    if (canonicalJson(parsed, WORKFLOW_RESULT_BYTES) === sanitized)
+      return value;
+    return sanitized;
+  } catch {
+    return;
+  }
+}
+function ownPlainObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value)))
+    return;
+  return value;
+}
+function ownDataProperty(obj, key3) {
+  const desc = Object.getOwnPropertyDescriptor(obj, key3);
+  if (!desc || !("value" in desc))
+    return;
+  return { value: desc.value };
+}
+function cloneWithOwnDescriptors(obj, override) {
+  const copy = Object.create(Object.getPrototypeOf(obj));
+  const descriptors = Object.getOwnPropertyDescriptors(obj);
+  for (const [k, v] of Object.entries(override)) {
+    descriptors[k] = {
+      value: v,
+      writable: true,
+      enumerable: true,
+      configurable: true
+    };
+  }
+  Object.defineProperties(copy, descriptors);
+  return copy;
+}
 function workflowResult(original, secrets) {
   return boundedResult({
     ...original,
-    text: sanitizeText(original.text, secrets),
+    text: sanitizeStructuredObject(original.text, secrets) ?? sanitizeText(original.text, secrets),
     output: sanitizeText(original.output, secrets)
   }, ["text", "output", "truncated"]);
 }
 function workflowResultDetail(value, secrets) {
-  const record3 = JSON.parse(sanitizeData(value, secrets));
+  let structuredText;
+  let source = value;
+  const root = ownPlainObject(value);
+  const resProp = root ? ownDataProperty(root, "result") : undefined;
+  const resObj = resProp ? ownPlainObject(resProp.value) : undefined;
+  const textProp = resObj ? ownDataProperty(resObj, "text") : undefined;
+  if (root && resObj && textProp && typeof textProp.value === "string") {
+    structuredText = sanitizeStructuredObject(textProp.value, secrets);
+    if (structuredText !== undefined) {
+      source = cloneWithOwnDescriptors(root, {
+        result: cloneWithOwnDescriptors(resObj, { text: "" })
+      });
+    }
+  }
+  const record3 = JSON.parse(sanitizeData(source, secrets));
   const resultKey = sanitizeText("result", secrets);
   const keys2 = ["text", "output", "truncated"].map((key3) => sanitizeText(key3, secrets));
+  if (structuredText !== undefined && keys2[0] !== keys2[1] && keys2[0] !== keys2[2] && record3[resultKey] && typeof record3[resultKey] === "object" && !Array.isArray(record3[resultKey]) && Object.hasOwn(record3[resultKey], keys2[0])) {
+    record3[resultKey][keys2[0]] = structuredText;
+  }
   const wrapper = Buffer.byteLength(JSON.stringify({ ...record3, [resultKey]: null })) - 4;
   const result = boundedResult(record3[resultKey], keys2, Math.min(WORKFLOW_RESULT_BYTES, 256 * 1024 - wrapper));
   record3[resultKey] = result;
@@ -40295,7 +40370,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.3.8",
-  build: "a582f8c15f63c97147d5c3f0c5b7795a2caafd74d38fe2f9cb768f283a5f796a",
+  build: "dbb3960369a25cbf792e291f990faa8d7a9eb81a5cfd291e59df801c35fa1e44",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -41523,26 +41598,25 @@ ${placement}`,
       ]) : undefined;
       if (completed.outcome === "completed") {
         const selected2 = recorder.selected(selectedMessageId);
-        if (selected2 === undefined) {
-          if (recorder.complete)
-            throw new ContractError("corrupt-selected");
-          completed.text = report2 ? canonicalJson(report2, RECORD_BYTES3) : structured ? structured : FINAL_UNAVAILABLE;
-          completed.truncated ||= !report2 && !structured;
+        if (selected2 === undefined && recorder.complete)
+          throw new ContractError("corrupt-selected");
+        if (structured !== undefined) {
+          completed.text = structured;
+        } else if (selected2 === undefined) {
+          completed.text = report2 ? canonicalJson(report2, RECORD_BYTES3) : FINAL_UNAVAILABLE;
+          completed.truncated ||= !report2;
         } else {
           const secrets = [...this.o.secrets(), ...credentials];
-          const finalBytes = kind === "diagnosis" ? RECOVERY_BYTES : kind === "planning" ? ROUTE_PLAN_BYTES : 16384;
+          const finalBytes = 16384;
           if (!readonly && !report2)
             report2 = implementationReport(selected2, secrets);
-          let final = report2 ? canonicalJson(report2, RECORD_BYTES3) : sanitizeText(selected2, secrets);
-          if (structured)
-            final = structured;
-          if (kind === "review") {
+          const final = report2 ? canonicalJson(report2, RECORD_BYTES3) : kind === "review" ? (() => {
             const review = reviewReport(selected2, secrets);
-            final = review.text;
             completed.truncated ||= review.truncated;
-          }
-          completed.text = report2 || structured ? final : diagnosticText(final, finalBytes);
-          completed.truncated ||= !report2 && !structured && Buffer.byteLength(final) > finalBytes;
+            return review.text;
+          })() : sanitizeText(selected2, secrets);
+          completed.text = report2 ? final : diagnosticText(final, finalBytes);
+          completed.truncated ||= !report2 && Buffer.byteLength(final) > finalBytes;
         }
       }
       transcript.status = completed.outcome;
@@ -42341,6 +42415,7 @@ Previous recovery (historical, not current check evidence): ${previous ? diagnos
           evidence: failure2.steps,
           floor,
           checks,
+          waived: (live2.run.deviations ?? []).flatMap((d) => d.waives),
           ...live2.route ? {
             route: {
               tasks: live2.run.tasks ?? [],

@@ -353,14 +353,26 @@ export class WorkflowTranscript {
   private reportText: string | undefined;
   private reportTool: string | undefined;
   /** A submission tool's result is retained independently of transcript preview
-   * limits; undefined unless the latest submission came from `tool`. */
+   * limits; undefined unless the latest submission came from `tool`. Current
+   * tools carry the structured payload in `details` so capture sanitizes each
+   * string field before JSON encoding (never corrupting JSON delimiters); older
+   * retained envelopes carrying JSON inside `content[0].text` still decode. */
   submission(tool: string): string | undefined {
     if (this.reportTool !== tool || this.reportText === undefined) return;
     try {
-      const value = closed(
-        parseWireJson(this.reportText, SUBMISSION_ENVELOPE_BYTES),
-        ["content"],
-      );
+      const raw = parseWireJson(this.reportText, SUBMISSION_ENVELOPE_BYTES);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+      if (Object.hasOwn(raw, "details")) {
+        const value = closed(raw, ["content", "details"]);
+        if (
+          !value.details ||
+          typeof value.details !== "object" ||
+          Array.isArray(value.details)
+        )
+          return;
+        return canonicalJson(value.details, SUBMISSION_ENVELOPE_BYTES);
+      }
+      const value = closed(raw, ["content"]);
       if (!Array.isArray(value.content) || value.content.length !== 1) return;
       const item = closed(value.content[0], ["type", "text"]);
       return item.type === "text" && typeof item.text === "string"

@@ -237,7 +237,10 @@ it("only admitted editing workers get structured reporting; it grants no executi
     status: "blocked",
     summary: "Partial work; fixture-secret was withheld",
   });
-  expect(JSON.parse(result.content[0].text)).toEqual({
+  expect(result.content).toEqual([
+    { type: "text", text: "Assignment report submitted." },
+  ]);
+  expect(result.details).toEqual({
     status: "blocked",
     summary: "Partial work; [redacted] was withheld",
   });
@@ -247,21 +250,19 @@ it("only admitted editing workers get structured reporting; it grants no executi
     summary: "Done",
     lessons: ["The fixture-secret header is read by auth.ts before routing"],
   });
-  expect(JSON.parse(taught.content[0].text)).toEqual({
+  expect(taught.details).toEqual({
     status: "completed",
     summary: "Done",
     lessons: ["The [redacted] header is read by auth.ts before routing"],
   });
   expect(
-    JSON.parse(
-      (
-        await report.execute("report", {
-          status: "completed",
-          summary: "Done",
-          lessons: [],
-        })
-      ).content[0].text,
-    ),
+    (
+      await report.execute("report", {
+        status: "completed",
+        summary: "Done",
+        lessons: [],
+      })
+    ).details,
   ).toEqual({ status: "completed", summary: "Done" });
   for (const lessons of [
     "one",
@@ -327,19 +328,34 @@ it("route planners and diagnosis workers submit through their tool: closed, self
     writes: ["a.txt"],
   });
   // Values pass through untouched (secrets stay the owner's to refuse), in the
-  // tool's own serialization: a hand-escaped reply is never parsed.
+  // tool's structured details payload so capture sanitizes string values before
+  // JSON encoding without corrupting escaped quotes.
   const plan = {
     tasks: [task("core"), { ...task("follow"), after: ["core"] }],
     reviewReads: [{ path: "AGENTS.md", reason: "Rules" }],
   };
-  expect(JSON.parse((await route.execute("c", plan)).content[0].text)).toEqual(
-    plan,
-  );
+  const routeResult = await route.execute("c", plan);
+  expect(routeResult.content).toEqual([
+    { type: "text", text: "Route plan submitted." },
+  ]);
+  expect(routeResult.details).toEqual(plan);
   for (const [input, field] of [
     [{ tasks: [] }, "route.tasks"],
     [{ tasks: [task("a"), task("a")] }, "tasks[1].id"],
     [{ tasks: [{ ...task("a"), after: ["zzz"] }] }, "tasks[0].after"],
+    [{ tasks: [{ ...task("a"), after: ["a"] }] }, "route.tasks"],
+    [
+      {
+        tasks: [
+          { ...task("a"), after: ["b"] },
+          { ...task("b"), after: ["a"] },
+        ],
+      },
+      "cycle",
+    ],
     [{ tasks: [{ ...task("a"), writes: [] }] }, "tasks[0].writes"],
+    [{ tasks: [{ ...task("a"), writes: ["a.txt", "a.txt"] }] }, "writes"],
+    [{ tasks: [task("a")], documents: ["a.md", "a.md"] }, "documents"],
     [{ action: "blocked" }, "route.reason"],
     [{ action: "later", tasks: [task("a")] }, "route.action"],
     [{ tasks: [task("a")], extra: 1 }, "route"],
@@ -350,10 +366,8 @@ it("route planners and diagnosis workers submit through their tool: closed, self
   ])
     await expect(route.execute("c", input)).rejects.toThrow(field);
   expect(
-    JSON.parse(
-      (await route.execute("c", { action: "blocked", reason: "Immutable API" }))
-        .content[0].text,
-    ),
+    (await route.execute("c", { action: "blocked", reason: "Immutable API" }))
+      .details,
   ).toEqual({ action: "blocked", reason: "Immutable API" });
   const decision = {
     action: "continue",
@@ -362,13 +376,36 @@ it("route planners and diagnosis workers submit through their tool: closed, self
     strategy: "s",
     work: [{ title: "t", instructions: "i", writes: ["a.ts"] }],
   };
+  const recResult = await recovery.execute("c", decision);
+  expect(recResult.content).toEqual([
+    { type: "text", text: "Recovery decision submitted." },
+  ]);
+  expect(recResult.details).toEqual(decision);
+  // A route revision that only drops a waiting assignment may pass add: [].
   expect(
-    JSON.parse((await recovery.execute("c", decision)).content[0].text),
-  ).toEqual(decision);
+    (
+      await recovery.execute("c", {
+        ...decision,
+        level: "replan",
+        route: { drop: ["old"], add: [] },
+      })
+    ).details,
+  ).toMatchObject({ route: { drop: ["old"], add: [] } });
   for (const [input, field] of [
     [{ ...decision, action: "blocked" }, "recovery.blocker"],
     [{ ...decision, blocker: "model" }, "recovery.blocker"],
     [{ ...decision, evidence: [] }, "recovery.evidence"],
+    [{ ...decision, work: null }, "recovery.work"],
+    [{ ...decision, route: { drop: [], add: [] } }, "recovery.route"],
+    [{ ...decision, level: "deviate" }, "recovery.deviation"],
+    [
+      {
+        ...decision,
+        level: "repair",
+        deviation: { item: "i", reason: "r", delivered: "d" },
+      },
+      "recovery.level",
+    ],
     [
       { ...decision, work: [{ title: "t", instructions: "i", writes: [] }] },
       "recovery.work[0].writes",

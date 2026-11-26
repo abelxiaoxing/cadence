@@ -542,6 +542,8 @@ export interface RecoveryBounds {
   floor: RecoveryLevel;
   /** Names of the declared acceptance checks. */
   checks: readonly string[];
+  /** Declared acceptance checks already set aside by earlier deviations. */
+  waived?: readonly string[];
 }
 export function decodeRecoveryDecision(
   reply: string,
@@ -713,6 +715,16 @@ export function decodeRecoveryDecision(
       );
     if (deviation?.waives.some((name) => !bounds.checks.includes(name)))
       refuse("A deviation can set aside only declared acceptance checks");
+    if (deviation?.waives.length && bounds.checks.length) {
+      const allWaived = new Set([
+        ...(bounds.waived ?? []),
+        ...deviation.waives,
+      ]);
+      if (bounds.checks.every((name) => allWaived.has(name)))
+        refuse(
+          'A deviation cannot set aside every declared acceptance check; leave at least one passing check, or submit action "blocked" with the outside blocker',
+        );
+    }
     const blocker = has("blocker")
       ? nullable(o.blocker, (v) => oneOf(v, BLOCKERS))
       : null;
@@ -1273,7 +1285,7 @@ Choose the least departure that can work:
 - level "repair": retry or repair inside the current write scope. Use work=[] for a safe retry of the original operation (for example report formatting); never to declare success.
 Each work item is an editing assignment and needs at least one write path. Omit check-only work items: the owner reruns the declared checks and independent review after repairs.
 - level "replan": a genuinely different implementation or split of the remaining work (name the shared false assumption, the distinct alternative design, obsolete branches to delete, and the minimal discriminating test); list in "scope" any further repository files it must write, including tests, fixtures, build scripts and project guidance needed to make the approved checks work. The initial write scope is not a permission boundary: the owner checks and records repository-local additions under the original approval. A decision that supplies scope or route changes is recorded as replan even if its level was omitted or labelled repair. Files edited outside the scope so far are either adopted this way, when the goal needs them, or restored by a work item. While assignments are still waiting to start you may also revise them in "route": drop one that the new approach makes wrong or unnecessary, add one, or give one again under its own ID to rewrite it. An assignment that already started cannot change; what remains of the failed one is your work items. Every assignment that waits for a dropped one must be dropped or rewritten too.
-- level "deviate": only when an acceptance item or decision cannot be met as written (never merely because previous attempts failed). Deliver the closest achievable result and record the deviation: the item, the evidence it is impossible, what is delivered instead, and in "waives" any declared check that can no longer pass because of it. An independent review must find it necessary and minimal, and it leads the final report.
+- level "deviate": only when an acceptance item or decision cannot be met as written (never merely because previous attempts failed). Deliver the closest achievable result and record the deviation: the item, the evidence it is impossible, what is delivered instead, and in "waives" any declared check that can no longer pass because of it (never all declared checks: a delivery needs at least one passing acceptance check, so if no declared check can pass because of an outside condition, use action "blocked" with the matching blocker instead). An independent review must find it necessary and minimal, and it leads the final report.
 Use action "blocked" only for a condition outside the repository that no route can remove, and name it in "blocker": an unavailable model, failed authentication, actual storage or permission limits, an installation this agreement does not allow, or a missing tool with no repository-local alternative. A target branch that moved is never a blocker: the owner takes its new head in and verifies again. Before blocking, consider changes beyond the initial scope. A failing baseline, test fixture incompatible with a long temporary path or inherited service environment, or an unsuitable original approach is a repository repair, not proof of an external blocker. Repair the fixture or implementation while preserving the tested behavior and production protections; do not demand relocation of owner resources, execution outside the service, or another user confirmation when a repository-local route can work. A hard problem is not a blocker.
 The execution context supplied with evidence is authoritative about what ran and where. Project guidance that applies only when a resource was declared does not create a missing resource requirement: do not demand an original temporary directory or marker unless the approved commands actually declared one. Never ask a repair worker to obtain undisclosed owner records, inspect private state or reconstruct the owner environment. Keep every scratch file in the inherited owner temporary root; a socket pathname limit calls for changing the fixture's addressing (such as a relative name in a child process), never a /tmp fallback or another temporary root. Strategy text is explanation only; executable repair actions must be in work. A repair that reports partial progress does not resolve the original failure. Rewording a strategy or work instructions is not progress: the same failed operation with unchanged observed state escalates. Every continuation needs new evidence or an actionable changed approach, not another copy of a failed attempt. Model-request recovery belongs to the SDK and is never permission to replay a workflow step. The owner will run the acceptance checks and independent review again.
 ${REPLY}`;

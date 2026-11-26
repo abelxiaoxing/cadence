@@ -29,8 +29,13 @@ export function message(messageId: string, chunks: string[]): CaptureFrame[] {
     frame({ kind: "message-end", messageId }),
   ];
 }
-/** A structured submission tool call whose result text the owner retains. */
-export function submission(tool: string, text: string): CaptureFrame[] {
+/** A structured submission tool call whose result the owner retains.
+ * Current submission tools carry the structured payload in `details`; string
+ * payloads exercise the retained `content[0].text` envelope path. */
+export function submission(
+  tool: string,
+  payload: string | Record<string, unknown>,
+): CaptureFrame[] {
   const callId = randomUUID(),
     detailId = randomUUID();
   return [
@@ -49,7 +54,14 @@ export function submission(tool: string, text: string): CaptureFrame[] {
       detailId,
       // The declared encoding is canonical JSON: keys ascending, as the real
       // capture emits it; a plain JSON.stringify order is refused here.
-      text: canonicalJson({ content: [{ type: "text", text }] }),
+      text: canonicalJson(
+        typeof payload === "string"
+          ? { content: [{ type: "text", text: payload }] }
+          : {
+              content: [{ type: "text", text: "Submitted." }],
+              details: payload,
+            },
+      ),
     }),
     frame({ kind: "detail-end", detailId }),
     frame({ kind: "tool-end", callId, name: tool, isError: false }),

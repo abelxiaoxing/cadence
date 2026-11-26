@@ -2330,41 +2330,38 @@ export class Workflows {
         // The runner's preview may cut through an owner literal before it is
         // sanitized: use the sanitized complete message, then bound it.
         const selected = recorder.selected(selectedMessageId);
-        if (selected === undefined) {
-          if (recorder.complete) throw new ContractError("corrupt-selected");
+        if (selected === undefined && recorder.complete)
+          throw new ContractError("corrupt-selected");
+        if (structured !== undefined) {
+          // Structured roles never fall back to final prose (or FINAL_UNAVAILABLE):
+          // an empty string triggers the caller's missing-submission objection.
+          completed.text = structured;
+        } else if (selected === undefined) {
           completed.text = report
             ? canonicalJson(report, RECORD_BYTES)
-            : structured
-              ? structured
-              : FINAL_UNAVAILABLE;
-          completed.truncated ||= !report && !structured;
+            : FINAL_UNAVAILABLE;
+          completed.truncated ||= !report;
         } else {
           const secrets = [...this.o.secrets(), ...credentials];
-          const finalBytes =
-            kind === "diagnosis"
-              ? RECOVERY_BYTES
-              : kind === "planning"
-                ? ROUTE_PLAN_BYTES
-                : 16384;
+          const finalBytes = 16384;
           // This is the independently retained, complete selected message, not
           // runProcess's preview. Stderr/other diagnostic clipping says nothing
           // about its completeness. Never parse a display-truncated fallback.
           // Older workers/results remain parseable; current workers submit via cadence_report.
           if (!readonly && !report)
             report = implementationReport(selected, secrets);
-          let final = report
+          const final = report
             ? canonicalJson(report, RECORD_BYTES)
-            : sanitizeText(selected, secrets);
-          if (structured) final = structured;
-          if (kind === "review") {
-            const review = reviewReport(selected, secrets);
-            final = review.text;
-            completed.truncated ||= review.truncated;
-          }
-          completed.text =
-            report || structured ? final : diagnosticText(final, finalBytes);
+            : kind === "review"
+              ? (() => {
+                  const review = reviewReport(selected, secrets);
+                  completed.truncated ||= review.truncated;
+                  return review.text;
+                })()
+              : sanitizeText(selected, secrets);
+          completed.text = report ? final : diagnosticText(final, finalBytes);
           completed.truncated ||=
-            !report && !structured && Buffer.byteLength(final) > finalBytes;
+            !report && Buffer.byteLength(final) > finalBytes;
         }
       }
       transcript.status = completed.outcome;
@@ -3699,6 +3696,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
             evidence: failure.steps,
             floor,
             checks,
+            waived: (live.run.deviations ?? []).flatMap((d) => d.waives),
             ...(live.route
               ? {
                   route: {

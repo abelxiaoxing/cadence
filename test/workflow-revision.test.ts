@@ -266,6 +266,36 @@ it("a deviation is recorded on the run, shown to later workers and the review, a
     "unnecessary or larger than needed is a blocking issue",
   );
   expect(prompts.at(-1)).toContain("Checks set aside: format");
+
+  // A subsequent deviation cannot waive the last remaining check ("unit"):
+  // diagnosis receives the objection and can block cleanly instead of failing
+  // later with a stale acceptance record.
+  const second = failed();
+  replies.push(
+    reply(second.id, {
+      level: "deviate",
+      deviation: {
+        item: "Unit tests pass",
+        reason: "External runner missing",
+        delivered: "No checks",
+        waives: ["unit"],
+      },
+    }),
+    reply(second.id, {
+      action: "blocked",
+      blocker: "tool",
+      strategy: "External test runner is unavailable on host",
+      work: [],
+    }),
+  );
+  await expect(
+    owner.gate(live, owner.cwd, proposal).verify("verification", async () => {
+      throw new AttemptFailure("unit failed", [second.id]);
+    }),
+  ).rejects.toThrow("Delivery blocked (tool)");
+  expect(prompts.at(-1)).toContain(
+    "cannot set aside every declared acceptance check",
+  );
 });
 
 it("hands complete review conditions directly to a focused repair and accepts only the next full round", async () => {

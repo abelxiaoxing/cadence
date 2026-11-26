@@ -932,7 +932,7 @@ it("a completed delivery's progress shows its merge evidence and elapsed time", 
   expect(zh).toContain("检查和自动 Agent review 已通过");
   expect(zh).toContain("已用时间");
 });
-it("an unmerged delivery says where the result stayed, and a failed run shows its full notice", () => {
+it("an unmerged delivery marks Merge unmerged and says where the result stayed, and a settled failed run marks its failure stage", async () => {
   const delivery = observed();
   delivery.integration.status = "branch";
   delivery.integration.reason =
@@ -943,20 +943,140 @@ it("an unmerged delivery says where the result stayed, and a failed run shows it
     1_072_000,
   );
   const html = progress(unmerged);
+  expect(html.match(/workflow-stage done/g)).toHaveLength(3);
+  expect(html.match(/workflow-stage unmerged/g)).toHaveLength(1);
   expect(html).toContain("Local integration");
   expect(html).toContain(
     "not merged into main; the result is on cadence/feature-",
   );
-  const failed = run({
+  // Real settled failed runs carry phase: "finished"; the stage bar must still
+  // identify the exact stage where it stopped, never all-green done.
+  const failedPlan = run({
     status: "failed",
-    phase: "implementing",
+    phase: "finished",
+    tasks: [],
+    steps: [step("route-plan", "planning", "failed")],
+    notice: "route planning blocked",
+  });
+  const planHtml = progress(failedPlan);
+  expect(planHtml.match(/workflow-stage done/g)).toBeNull();
+  expect(planHtml.match(/workflow-stage failed/g)).toHaveLength(1);
+  expect(planHtml.match(/workflow-stage pending/g)).toHaveLength(2);
+  expect(planHtml).toContain("workflow-outcome-notice");
+
+  const failedDev = run({
+    status: "failed",
+    phase: "finished",
+    tasks: [task("a", "failed")],
+    steps: [step("a", "implementation", "failed")],
     notice: "checks failed\nfix required",
   });
-  const failure = progress(failed);
-  expect(failure).toContain("workflow-stage failed");
-  expect(failure).toContain("checks failed");
-  expect(failure).toContain("fix required");
-  expect(failure).not.toContain("Current activity");
+  const devHtml = progress(failedDev);
+  expect(devHtml.match(/workflow-stage done/g)).toHaveLength(1);
+  expect(devHtml.match(/workflow-stage failed/g)).toHaveLength(1);
+  expect(devHtml.match(/workflow-stage pending/g)).toHaveLength(1);
+  expect(devHtml).toContain("checks failed");
+  expect(devHtml).toContain("fix required");
+  expect(devHtml).not.toContain("Current activity");
+
+  const failedVerify = run({
+    status: "canceled",
+    phase: "finished",
+    tasks: [task("a", "completed")],
+    steps: [
+      step("a", "implementation", "completed"),
+      step("unit", "check", "failed"),
+    ],
+    notice: "canceled",
+  });
+  const verifyHtml = progress(failedVerify);
+  expect(verifyHtml.match(/workflow-stage done/g)).toHaveLength(2);
+  expect(verifyHtml.match(/workflow-stage failed/g)).toHaveLength(1);
+
+  const mergeFailedDelivery = observed();
+  mergeFailedDelivery.candidate = "a".repeat(40);
+  mergeFailedDelivery.acceptance = {
+    candidate: "a".repeat(40),
+    tree: "b".repeat(40),
+    planDigest: "c".repeat(64),
+    contextDigest: "d".repeat(64),
+    checks: ["unit"],
+    review: "review-1",
+  };
+  mergeFailedDelivery.integration.status = "blocked";
+  const failedMerge = run({
+    status: "failed",
+    phase: "finished",
+    delivery: mergeFailedDelivery,
+    tasks: [task("a", "completed")],
+    steps: [
+      step("a", "implementation", "completed"),
+      step("review-1", "review", "completed"),
+    ],
+    notice: "merge blocked",
+  });
+  const mergeHtml = progress(failedMerge);
+  expect(mergeHtml.match(/workflow-stage done/g)).toHaveLength(3);
+  expect(mergeHtml.match(/workflow-stage failed/g)).toHaveLength(1);
+
+  // Expanding a failed line hides the collapsed single-line reason so the
+  // notice is shown once, full, inside workflow-outcome-notice.
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", { HTMLIFrameElement: class {} });
+  const container = Object.assign(new EventTarget(), {
+    nodeType: 1,
+    tagName: "DIV",
+    ownerDocument: new EventTarget(),
+  });
+  const root = createRoot(container as unknown as HTMLElement);
+  let tree!: ReactElement;
+  function Probe() {
+    tree = WorkflowLine({
+      client: new ServiceClient(transport()),
+      run: failedDev,
+      onOpen: () => {},
+    });
+    return null;
+  }
+  try {
+    await act(async () => root.render(<Probe />));
+    expect(renderToStaticMarkup(tree)).toContain("workflow-line-reason");
+    const open = hostButtons(tree).find(
+      (b) =>
+        (b.props as { className?: string }).className === "workflow-line-open",
+    );
+    if (!open) throw new Error("the line's open button is missing");
+    await act(async () => (open.props as { onClick(): void }).onClick());
+    const expandedHtml = renderToStaticMarkup(tree);
+    expect(expandedHtml).not.toContain("workflow-line-reason");
+    expect(expandedHtml).toContain("workflow-outcome-notice");
+  } finally {
+    await act(async () => root.unmount());
+    vi.unstubAllGlobals();
+  }
+
+  // Paginated runs pass partial to AssignmentBoard; empty completed runs omit
+  // <dl class="workflow-outcome">; equal start/settle timestamps put settle first.
+  const paginated = run({
+    status: "completed",
+    phase: "finished",
+    stepsBefore: 5,
+    tasks: [task("a", "completed")],
+    steps: [
+      {
+        ...step("a", "implementation", "completed"),
+        timing: timing(1_000_000, 1_000_000),
+      },
+    ],
+  });
+  const pageHtml = progress(paginated);
+  expect(pageHtml).toContain(
+    "Only the steps on this page are grouped below; other pages hold more.",
+  );
+  expect(pageHtml).not.toContain('<dl class="workflow-outcome">');
+  expect(pageHtml.indexOf("completed · implementation · a")).toBeLessThan(
+    pageHtml.indexOf("Started · implementation · a"),
+  );
 });
 it("a completed delivery states its deviations on its line and leads its view with each of them", () => {
   const deviations = [

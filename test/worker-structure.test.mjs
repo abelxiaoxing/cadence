@@ -12,12 +12,15 @@ import {
   RECOVERY_BYTES,
   ROUTE_PLAN_BYTES,
 } from "../src/service/workflow-controller.ts";
+import { WorkflowTranscript } from "../src/service/workflow-report.ts";
+import { sanitizedJsonChunks } from "../src/worker-redaction.mjs";
 import {
   createSubmissionTools,
   RECOVERY_PARAMETERS,
   ROUTE_PLAN_PARAMETERS,
   SUBMISSION_LIMITS,
 } from "../src/worker-toolkit.mjs";
+import { frame } from "./helpers/capture-frames.ts";
 
 const [route, recovery] = createSubmissionTools();
 const task = (id, extra = {}) => ({
@@ -73,7 +76,7 @@ it("the three shapes that ended a real delivery are refused in-session with the 
   expect(call(route, plan)).toEqual(plan);
 });
 
-it("what the tool accepts, the owner decodes: the tool's own serialization is the submission", async () => {
+it("what the tool accepts, the owner decodes: the tool's structured details are the submission", async () => {
   const investigation = randomUUID();
   const plan = {
     tasks: [
@@ -88,8 +91,8 @@ it("what the tool accepts, the owner decodes: the tool's own serialization is th
   };
   const accepted = call(route, plan);
   const result = await route.execute("c", accepted);
-  const submission = result.content[0].text;
-  expect(JSON.parse(submission)).toEqual(plan);
+  expect(result.details).toEqual(plan);
+  const submission = JSON.stringify(result.details);
   expect(
     decodeRoutePlan(submission, {
       agreementDocuments: [],
@@ -99,15 +102,16 @@ it("what the tool accepts, the owner decodes: the tool's own serialization is th
   // An explicit "plan" action is the same plan: the schema allows it, the
   // tool accepts it and the owner decodes it, so no objection loop starts.
   const explicit = { action: "plan", tasks: [task("core")] };
-  const explicitSubmission = (await route.execute("c", call(route, explicit)))
-    .content[0].text;
-  expect(JSON.parse(explicitSubmission)).toEqual(explicit);
-  expect(decodeRoutePlan(explicitSubmission).action).toBe("plan");
+  const explicitResult = await route.execute("c", call(route, explicit));
+  expect(explicitResult.details).toEqual(explicit);
+  expect(decodeRoutePlan(JSON.stringify(explicitResult.details)).action).toBe(
+    "plan",
+  );
   const blocked = await route.execute("c", {
     action: "blocked",
     reason: "Immutable public API",
   });
-  expect(decodeRoutePlan(blocked.content[0].text)).toMatchObject({
+  expect(decodeRoutePlan(JSON.stringify(blocked.details))).toMatchObject({
     action: "blocked",
     reason: "Immutable public API",
   });
@@ -209,4 +213,90 @@ it("the recovery schema states the bounds the owner contract enforces", () => {
   expect(() => call(recovery, { ...decision, level: "retry" })).toThrow(
     /level/,
   );
+  // A route revision that only drops a waiting assignment may pass add: [].
+  expect(
+    call(recovery, {
+      ...decision,
+      level: "replan",
+      route: { drop: ["old"], add: [] },
+    }),
+  ).toMatchObject({ route: { drop: ["old"], add: [] } });
+});
+
+it("structured tool details survive capture sanitization when instructions quote auth/token text", async () => {
+  const emptyTurn = () => ({
+    id: randomUUID(),
+    epoch: randomUUID(),
+    status: "running",
+    items: [],
+    notice: "",
+    omitted: { thinking: false, media: false, other: false },
+  });
+  const feed = (toolName, result) => {
+    const envelope = [
+      ...sanitizedJsonChunks(
+        { content: result.content, details: result.details },
+        [],
+        () => ({ grow() {}, release() {} }),
+      ),
+    ].join("");
+    const recorder = new WorkflowTranscript(emptyTurn(), () => []);
+    const callId = randomUUID(),
+      detailId = randomUUID();
+    for (const event of [
+      { kind: "tool-start", callId, name: toolName },
+      {
+        kind: "detail-begin",
+        detailId,
+        descriptor: {
+          owner: { kind: "tool", callId, stage: "result" },
+          field: "tool-result",
+          encoding: "canonical-json",
+        },
+      },
+      { kind: "detail-chunk", detailId, text: envelope },
+      { kind: "detail-end", detailId },
+      { kind: "tool-end", callId, name: toolName, isError: false },
+    ])
+      recorder.accept(frame(event));
+    return recorder.submission(toolName);
+  };
+  const routeResult = await route.execute("c1", {
+    tasks: [
+      {
+        id: "auth",
+        title: "Fix bearer auth",
+        instructions:
+          'Reject header when token="abc" or Authorization: "Bearer xyz" fails',
+        writes: ["src/auth.ts"],
+      },
+    ],
+  });
+  const retainedRoute = feed("cadence_route", routeResult);
+  expect(retainedRoute).toBeDefined();
+  expect(decodeRoutePlan(retainedRoute).tasks[0].id).toBe("auth");
+
+  const recResult = await recovery.execute("c2", {
+    action: "continue",
+    cause: 'Parser failed on token="abc"',
+    evidence: ["step-1"],
+    strategy: 'Handle Authorization: "Bearer xyz"',
+    work: [
+      {
+        title: "Repair parser",
+        instructions: 'Parse secret="x" safely',
+        writes: ["src/auth.ts"],
+      },
+    ],
+  });
+  const retainedRec = feed("cadence_recovery", recResult);
+  expect(retainedRec).toBeDefined();
+  expect(
+    decodeRecoveryDecision(retainedRec, {
+      scope: ["src/auth.ts"],
+      evidence: ["step-1"],
+      floor: "repair",
+      checks: [],
+    }).action,
+  ).toBe("continue");
 });

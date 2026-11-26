@@ -149,7 +149,10 @@ export function createWorkerToolkit(options) {
         const text = JSON.stringify(report);
         if (!report.summary.trim() || Buffer.byteLength(text) > 16384)
           throw new Error("Assignment report exceeds bound");
-        return { content: [{ type: "text", text }], details: undefined };
+        return {
+          content: [{ type: "text", text: "Assignment report submitted." }],
+          details: report,
+        };
       },
     });
   if (options.reporting && !coordinator && purpose === "edit")
@@ -433,7 +436,7 @@ const ASSIGNMENT = (maxItems, description) =>
       },
       { additionalProperties: false },
     ),
-    { minItems: 1, maxItems, description },
+    { maxItems, description },
   );
 
 export const RECOVERY_PARAMETERS = Type.Object(
@@ -601,6 +604,36 @@ const serialize = (input, label, maximum) => {
   return text;
 };
 
+const nonEmpty = (value, label, why = "cannot be empty") => {
+  if (typeof value !== "string" || !value.trim()) throw shapeError(label, why);
+};
+const checkReadings = (readings, label) => {
+  if (readings === undefined) return;
+  for (const [i, entry] of readings.entries()) {
+    nonEmpty(entry?.reason, `${label}[${i}].reason`);
+    if (entry && "path" in entry) {
+      nonEmpty(entry.path, `${label}[${i}].path`);
+      if (entry.section !== undefined)
+        nonEmpty(entry.section, `${label}[${i}].section`);
+    } else if (entry && "research" in entry)
+      nonEmpty(entry.research, `${label}[${i}].research`);
+  }
+};
+const hasCycle = (tasks) => {
+  const remaining = new Map(tasks.map((t) => [t.id, new Set(t.after ?? [])]));
+  let progressed = true;
+  while (remaining.size && progressed) {
+    progressed = false;
+    for (const [id, deps] of remaining) {
+      if ([...deps].every((dep) => !remaining.has(dep))) {
+        remaining.delete(id);
+        progressed = true;
+      }
+    }
+  }
+  return remaining.size > 0;
+};
+
 /** The route plan as the owner will decode it, or a field-named error. */
 export function routeSubmission(input) {
   if (!input || typeof input !== "object" || Array.isArray(input))
@@ -629,19 +662,38 @@ export function routeSubmission(input) {
   const ids = tasks.map((task) => task.id);
   for (const [i, task] of tasks.entries()) {
     const label = `tasks[${i}]`;
+    nonEmpty(task.title, `${label}.title`);
+    nonEmpty(task.instructions, `${label}.instructions`);
     if (!task.writes?.length)
       throw shapeError(
         `${label}.writes`,
         "needs at least one repository-relative path",
       );
+    for (const [j, path] of task.writes.entries())
+      nonEmpty(path, `${label}.writes[${j}]`);
+    if (new Set(task.writes).size !== task.writes.length)
+      throw shapeError(`${label}.writes`, "lists a path twice");
     if (ids.indexOf(task.id) !== i)
       throw shapeError(
         `${label}.id`,
         `(${task.id}) is already used by tasks[${ids.indexOf(task.id)}]`,
       );
-    const unknown = (task.after ?? []).find((dep) => !ids.includes(dep));
+    const after = task.after ?? [];
+    if (new Set(after).size !== after.length)
+      throw shapeError(`${label}.after`, "lists an assignment twice");
+    const unknown = after.find((dep) => !ids.includes(dep));
     if (unknown !== undefined)
       throw shapeError(`${label}.after`, `"${unknown}" is not in tasks`);
+    checkReadings(task.reads, `${label}.reads`);
+  }
+  if (hasCycle(tasks))
+    throw shapeError("route.tasks", "after dependencies form a cycle");
+  checkReadings(input.reviewReads, "route.reviewReads");
+  if (input.documents !== undefined) {
+    for (const [i, doc] of input.documents.entries())
+      nonEmpty(doc, `route.documents[${i}]`);
+    if (new Set(input.documents).size !== input.documents.length)
+      throw shapeError("route.documents", "lists a path twice");
   }
   return input;
 }
@@ -663,17 +715,61 @@ export function recoverySubmission(input) {
     "blocker",
     "completesStage",
   ]);
+  nonEmpty(input.cause, "recovery.cause");
+  nonEmpty(input.strategy, "recovery.strategy");
   if (!input.evidence?.length)
     throw shapeError(
       "recovery.evidence",
       "cite at least one exact failed step ID from the supplied evidence",
     );
-  for (const [i, item] of input.work.entries())
-    if (!item.writes?.length)
+  if (!Array.isArray(input.work))
+    throw shapeError(
+      "recovery.work",
+      "expected an array of remaining editing assignments",
+    );
+  for (const [i, item] of input.work.entries()) {
+    nonEmpty(item?.title, `recovery.work[${i}].title`);
+    nonEmpty(item?.instructions, `recovery.work[${i}].instructions`);
+    if (!item?.writes?.length)
       throw shapeError(
         `recovery.work[${i}].writes`,
         "name at least one editing path; omit check-only work items",
       );
+  }
+  if (input.route) {
+    const drop = input.route.drop ?? [];
+    const add = input.route.add ?? [];
+    if (!drop.length && !add.length)
+      throw shapeError(
+        "recovery.route",
+        "a route revision drops or adds at least one assignment",
+      );
+    for (const [i, task] of add.entries()) {
+      const label = `recovery.route.add[${i}]`;
+      nonEmpty(task?.title, `${label}.title`);
+      nonEmpty(task?.instructions, `${label}.instructions`);
+      if (!task?.writes?.length)
+        throw shapeError(
+          `${label}.writes`,
+          "needs at least one repository-relative path",
+        );
+      if (new Set(task.writes).size !== task.writes.length)
+        throw shapeError(`${label}.writes`, "lists a path twice");
+      if (new Set(task.after ?? []).size !== (task.after ?? []).length)
+        throw shapeError(`${label}.after`, "lists an assignment twice");
+    }
+  }
+  const level = input.level ?? "repair";
+  if ((level === "deviate") !== Boolean(input.deviation))
+    throw shapeError(
+      level === "deviate" ? "recovery.deviation" : "recovery.level",
+      'a deviation is recorded exactly when level is "deviate"',
+    );
+  if (input.deviation) {
+    nonEmpty(input.deviation.item, "recovery.deviation.item");
+    nonEmpty(input.deviation.reason, "recovery.deviation.reason");
+    nonEmpty(input.deviation.delivered, "recovery.deviation.delivered");
+  }
   if (input.action === "blocked") {
     if (!input.blocker)
       throw shapeError(
@@ -708,18 +804,14 @@ export function createSubmissionTools() {
         "Submit the complete route plan once, after inspecting the agreement and the repository. The parameters state the required shape and bounds; a refused call names the field to fix, and you may call it again with the correction. Your final answer may then be a brief summary; no JSON formatting is required in it.",
       parameters: ROUTE_PLAN_PARAMETERS,
       async execute(_id, input) {
+        const text = serialize(
+          routeSubmission(input),
+          "route",
+          SUBMISSION_LIMITS.routeBytes,
+        );
         return {
-          content: [
-            {
-              type: "text",
-              text: serialize(
-                routeSubmission(input),
-                "route",
-                SUBMISSION_LIMITS.routeBytes,
-              ),
-            },
-          ],
-          details: undefined,
+          content: [{ type: "text", text: "Route plan submitted." }],
+          details: JSON.parse(text),
         };
       },
     },
@@ -730,18 +822,14 @@ export function createSubmissionTools() {
         "Submit the recovery decision once, after diagnosing the settled failure from actual files and the supplied native facts. The parameters state the required shape and bounds; a refused call names the field to fix, and you may call it again with the correction. Your final answer may then be a brief summary; no JSON formatting is required in it.",
       parameters: RECOVERY_PARAMETERS,
       async execute(_id, input) {
+        const text = serialize(
+          recoverySubmission(input),
+          "recovery",
+          SUBMISSION_LIMITS.recoveryBytes,
+        );
         return {
-          content: [
-            {
-              type: "text",
-              text: serialize(
-                recoverySubmission(input),
-                "recovery",
-                SUBMISSION_LIMITS.recoveryBytes,
-              ),
-            },
-          ],
-          details: undefined,
+          content: [{ type: "text", text: "Recovery decision submitted." }],
+          details: JSON.parse(text),
         };
       },
     },

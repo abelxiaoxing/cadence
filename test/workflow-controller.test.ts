@@ -20,7 +20,11 @@ import {
   revisedRoute,
   VerificationGate,
 } from "../src/service/workflow-controller.ts";
-import { formatStepEvidence } from "../src/service/workflow-result.ts";
+import {
+  formatStepEvidence,
+  workflowResult,
+  workflowResultDetail,
+} from "../src/service/workflow-result.ts";
 
 const decision = (
   strategy = "Inspect partial outputs and finish only missing behavior",
@@ -494,12 +498,17 @@ it("a deviation names the item, the reason and what is delivered, and can set as
     { ...value, deviation: null },
     { ...value, level: "replan" },
     { ...value, deviation: { ...value.deviation, waives: ["invented-check"] } },
+    { ...value, deviation: { ...value.deviation, waives: ["unit", "lint"] } },
     { ...value, deviation: { ...value.deviation, item: "" } },
     { ...decision(), deviation: value.deviation },
   ])
     expect(() =>
       decodeRecoveryDecision(JSON.stringify(invalid), bounds()),
     ).toThrow(InvalidDecision);
+  // Cumulative deviations cannot set aside the last remaining declared check either.
+  expect(() =>
+    decodeRecoveryDecision(JSON.stringify(value), bounds({ waived: ["unit"] })),
+  ).toThrow(/cannot set aside every declared acceptance check/u);
 });
 it("model recovery exhaustion never starts diagnosis or replays an earlier repair", async () => {
   let original = 0;
@@ -1207,4 +1216,48 @@ it("VerificationGate delivers the field-specific evidence objection before admit
   expect(f.records).toHaveLength(1);
   expect(f.records[0].decision.evidence).toEqual([step]);
   expect(f.ports.execute).toHaveBeenCalledTimes(1);
+});
+
+it("workflowResult and workflowResultDetail preserve JSON validity when structured step text mentions quoted token or Authorization patterns", () => {
+  const payload = JSON.stringify({
+    tasks: [
+      {
+        id: "auth-parser",
+        instructions:
+          'Support token="abc" and Authorization: "Bearer live-secret-value"',
+      },
+    ],
+  });
+  const stored = workflowResult(
+    {
+      outcome: "completed",
+      closed: true,
+      exitCode: 0,
+      signal: null,
+      durationMs: 12,
+      text: payload,
+      output: "",
+      truncated: false,
+    },
+    ["live-secret-value"],
+  );
+  const parsedStored = JSON.parse(stored.text) as {
+    tasks: { id: string; instructions: string }[];
+  };
+  expect(parsedStored.tasks[0].id).toBe("auth-parser");
+  expect(parsedStored.tasks[0].instructions).not.toContain("live-secret-value");
+  expect(parsedStored.tasks[0].instructions).toContain("[redacted]");
+
+  const detail = workflowResultDetail(
+    { stepId: "route-plan", result: stored },
+    ["live-secret-value"],
+  );
+  const parsedDetail = JSON.parse(detail.text) as {
+    stepId: string;
+    result: { text: string };
+  };
+  const parsedAgain = JSON.parse(parsedDetail.result.text) as {
+    tasks: { id: string; instructions: string }[];
+  };
+  expect(parsedAgain).toEqual(parsedStored);
 });

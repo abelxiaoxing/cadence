@@ -189,6 +189,10 @@ export async function acceptingFixture(
         "Diagnose this settled attempt using actual files",
       )
     ) {
+      if (input.messages.at(-1)?.role === "tool") {
+        finish(res, "Decision submitted.", false);
+        return;
+      }
       const prompt = input.messages
         .map((m: { content?: unknown }) => messageText(m.content))
         .join("\n");
@@ -235,6 +239,10 @@ export async function acceptingFixture(
           "Plan the execution route for this approved delivery agreement",
         )
       ) {
+        if (input.messages.at(-1)?.role === "tool") {
+          finish(res, "Route submitted.", false);
+          return;
+        }
         const scoped = prompt.includes("Create one scoped file");
         // The readonly planner submits through its tool, then answers briefly.
         callTool(

@@ -16,9 +16,8 @@ Source: internalized from engineering/worker-tools.md, 2026-11-22
 
 Kind: contract
 
-Why: `createSubmissionTools` gives route planners `cadence_route` and diagnosis workers `cadence_recovery`: TypeBox parameters state the shape and the bounds a model can check itself (lowercase assignment IDs, at most 16 reads, field lengths), the installed SDK validates a call before `execute` and returns field-named errors into the same session, and `execute` closes key sets and self-consistency, then serializes the accepted call itself.
-Values pass through untouched: secrets, investigations, Git-ignore and links stay owner gates.
-A hand-escaped reply is never parsed.
+Why: `createSubmissionTools` gives route planners `cadence_route` and diagnosis workers `cadence_recovery`: TypeBox parameters state the shape and bounds, the SDK validates calls before `execute` with field-named errors in-session, and `execute` closes self-consistency (cycles, duplicates, deviation/level pairing) then returns the payload in `details` (like `cadence_report`) with a short confirmation in `content`.
+Structural `details` lets capture sanitize leaf strings before JSON encoding so quoted auth/token text never corrupts JSON delimiters; owner gates still run on decode, and missing submissions stay empty.
 
 Anchors: `src/worker-toolkit.mjs#createSubmissionTools`, `src/worker-toolkit.mjs#createWorkerToolkit`, `test/worker-structure.test.mjs`, `test/worker-toolkit.test.mjs`
 

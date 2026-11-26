@@ -178,7 +178,7 @@ export function FolderSetup({
                   {t("Choose a folder before sending.")}
                 </span>
                 <CadenceModeButton
-                  known={false}
+                  known
                   active={false}
                   armed={false}
                   disabled

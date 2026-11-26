@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -505,6 +511,141 @@ it.each([
     } finally {
       captured.mockRestore();
       selected.mockRestore();
+    }
+  },
+);
+
+it.each([
+  [
+    "planning" as const,
+    JSON.stringify({
+      tasks: [
+        {
+          id: "a",
+          title: "A",
+          instructions: "Edit a.txt",
+          writes: ["a.txt"],
+        },
+      ],
+    }),
+  ],
+  [
+    "diagnosis" as const,
+    JSON.stringify({
+      action: "continue",
+      cause: "Cause",
+      evidence: ["step-1"],
+      strategy: "Strategy",
+      work: [{ title: "Fix", instructions: "Edit a.txt", writes: ["a.txt"] }],
+    }),
+  ],
+  ["planning" as const, "I inspected the repo and recommend two tasks."],
+  ["diagnosis" as const, undefined],
+])(
+  "a %s worker without a tool submission never falls back to final prose JSON or FINAL_UNAVAILABLE",
+  async (kind, finalReply) => {
+    const cwd = mkdtempSync(join(tmpdir(), "workflow-missing-sub-"));
+    const epoch = randomUUID();
+    const version = {
+      epoch,
+      accessGeneration: 1,
+      configRev: 1,
+      catalogId: randomUUID(),
+    };
+    const model = {
+      sourceSelectionId: randomUUID(),
+      provider: "fixture",
+      model: "fixed",
+      api: "openai-completions" as const,
+      thinking: "off" as const,
+    };
+    const selected = vi
+      .spyOn(WorkflowTranscript.prototype, "selected")
+      .mockReturnValue(finalReply);
+    const captured = vi
+      .spyOn(WorkflowTranscript.prototype, "submission")
+      .mockReturnValue(undefined);
+    const live = {
+      execution: { version, model },
+      abort: new AbortController(),
+      run: {
+        id: randomUUID(),
+        epoch,
+        goal: "Fixture",
+        phase: kind === "planning" ? "planning" : "recovering",
+        steps: [],
+      },
+    };
+    const owner = Object.assign(Object.create(Workflows.prototype), {
+      cwd,
+      root: cwd,
+      assertRunning() {},
+      executionCwd: () => cwd,
+      reader: async () => ({ writes: [], named: {} }),
+      save() {},
+      write: () => ({}),
+      o: {
+        secrets: () => [],
+        owner: {
+          lease: { assert() {} },
+          trackConversationProcess: (p: Promise<unknown>) => {
+            void p.catch(() => {});
+          },
+        },
+        models: {
+          workerSettings: () => fixtureRuntime(),
+          assertCurrent() {},
+          prepareTracked: () => ({
+            result: Promise.resolve({ status: "prepared", prepared: {} }),
+            settled: Promise.resolve(),
+          }),
+        },
+      },
+    });
+    worker.mockImplementationOnce(async (_prepared, _cwd, _signal, options) => {
+      options.onNative({
+        outcome: "completed",
+        closure: "direct-child-closed",
+        exitCode: 0,
+        signal: null,
+        durationMs: 1,
+        stdin: "delivered",
+        final: "valid",
+        cleanup: "settled",
+        capture: {
+          observed: finalReply === undefined ? "incomplete" : "complete",
+          source: "complete",
+          redacted: false,
+          omissions: [],
+        },
+      });
+      return {
+        outcome: "completed",
+        closed: true,
+        exitCode: 0,
+        signal: null,
+        durationMs: 1,
+        text: finalReply ?? "",
+        output: "",
+        truncated: false,
+      };
+    });
+    try {
+      const { result } = await owner.worker(
+        live,
+        cwd,
+        kind === "planning" ? "route-plan" : "diagnose",
+        "Inspect fixture",
+        true,
+        version,
+        undefined,
+        kind,
+      );
+      expect(result.text).toBe("");
+    } finally {
+      captured.mockRestore();
+      selected.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
     }
   },
 );

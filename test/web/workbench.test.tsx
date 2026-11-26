@@ -753,6 +753,7 @@ it("folder setup uses the conversation shell, keeps input editable and cannot se
   expect(chinese).toContain("选择工作文件夹即可开始，也可以先在下方写草稿");
   expect(chinese).toContain("发送前请选择文件夹");
   expect(chinese).toContain("先选择工作文件夹");
+  expect(chinese).not.toContain("Cadence 状态未确认");
   // The welcome and the composer no longer point in different directions.
   expect(chinese).not.toContain("右下角");
   expect(chinese).not.toContain("从左侧");
@@ -1424,9 +1425,10 @@ it("folder setup keeps a text draft and model preselection, never a Send intent"
   expect(html).toMatch(/<textarea[^>]*>An unsent first message<\/textarea>/);
   expect(html).not.toContain("<form");
   expect(html).toContain("Choose a folder before sending.");
-  expect(html).toMatch(
-    /<button[^>]*class="mode-toggle unknown"[^>]*disabled=""/,
-  );
+  expect(html).toMatch(/<button[^>]*class="mode-toggle off"[^>]*disabled=""/);
+  expect(html).toContain('<span class="mode-toggle-label">Cadence</span>');
+  expect(html).toContain('<span class="mode-switch" aria-hidden="true">');
+  expect(html).not.toContain("Cadence state unavailable");
   expect(html).toContain('title="Choose a working folder first"');
   expect(html).toMatch(/<button[^>]*class="primary"[^>]*disabled=""/);
   expect(previewModels).not.toHaveBeenCalled();

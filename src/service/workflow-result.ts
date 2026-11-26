@@ -1,6 +1,10 @@
 import type { RunResult } from "../task-types.ts";
 import { sanitizeData, sanitizeText } from "../worker-redaction.mjs";
-import { ContractError, canonicalJson } from "./contracts/core.ts";
+import {
+  ContractError,
+  canonicalJson,
+  parseWireJson,
+} from "./contracts/core.ts";
 
 /** Encoded result, not raw stdout bytes. Leaves 16 KiB for the step/native
  * wrappers below the 256 KiB file-text DTO and 384 KiB journal record. Even
@@ -69,6 +73,71 @@ function boundedResult(
   return result;
 }
 
+/** Sanitize a wire JSON object structurally so heuristic redaction inside
+ * string values never eats a JSON backslash before an escaped quote. */
+function sanitizeStructuredObject(
+  value: string,
+  secrets: readonly string[],
+): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return undefined;
+  try {
+    const parsed = parseWireJson(trimmed, WORKFLOW_RESULT_BYTES);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return undefined;
+    const sanitized = sanitizeData(parsed, secrets);
+    // Keep the original serialization (and key order) when structural
+    // redaction changed nothing; use the canonical sanitized JSON when
+    // redaction actually fired so escaped quotes are never broken.
+    if (canonicalJson(parsed, WORKFLOW_RESULT_BYTES) === sanitized)
+      return value;
+    return sanitized;
+  } catch {
+    return undefined;
+  }
+}
+
+function ownPlainObject(value: unknown): Record<string, unknown> | undefined {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(value))
+  )
+    return undefined;
+  return value as Record<string, unknown>;
+}
+
+function ownDataProperty(
+  obj: Record<string, unknown>,
+  key: string,
+): { value: unknown } | undefined {
+  const desc = Object.getOwnPropertyDescriptor(obj, key);
+  if (!desc || !("value" in desc)) return undefined;
+  return { value: desc.value };
+}
+
+function cloneWithOwnDescriptors(
+  obj: Record<string, unknown>,
+  override: Record<string, unknown>,
+): Record<string, unknown> {
+  const copy = Object.create(Object.getPrototypeOf(obj)) as Record<
+    string,
+    unknown
+  >;
+  const descriptors = Object.getOwnPropertyDescriptors(obj);
+  for (const [k, v] of Object.entries(override)) {
+    descriptors[k] = {
+      value: v,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    };
+  }
+  Object.defineProperties(copy, descriptors);
+  return copy;
+}
+
 /** Native outcome/exit/closure stay unchanged; omitted diagnostic bytes are an
  * independent observation. Used before recording original process results. */
 export function workflowResult(
@@ -78,7 +147,9 @@ export function workflowResult(
   return boundedResult(
     {
       ...original,
-      text: sanitizeText(original.text, secrets),
+      text:
+        sanitizeStructuredObject(original.text, secrets) ??
+        sanitizeText(original.text, secrets),
       output: sanitizeText(original.output, secrets),
     },
     ["text", "output", "truncated"],
@@ -91,11 +162,36 @@ export function workflowResultDetail(
   value: unknown,
   secrets: readonly string[],
 ) {
-  const record = JSON.parse(sanitizeData(value, secrets));
+  let structuredText: string | undefined;
+  let source: unknown = value;
+  const root = ownPlainObject(value);
+  const resProp = root ? ownDataProperty(root, "result") : undefined;
+  const resObj = resProp ? ownPlainObject(resProp.value) : undefined;
+  const textProp = resObj ? ownDataProperty(resObj, "text") : undefined;
+  if (root && resObj && textProp && typeof textProp.value === "string") {
+    structuredText = sanitizeStructuredObject(textProp.value, secrets);
+    if (structuredText !== undefined) {
+      source = cloneWithOwnDescriptors(root, {
+        result: cloneWithOwnDescriptors(resObj, { text: "" }),
+      });
+    }
+  }
+  const record = JSON.parse(sanitizeData(source, secrets));
   const resultKey = sanitizeText("result", secrets);
   const keys = ["text", "output", "truncated"].map((key) =>
     sanitizeText(key, secrets),
   );
+  if (
+    structuredText !== undefined &&
+    keys[0] !== keys[1] &&
+    keys[0] !== keys[2] &&
+    record[resultKey] &&
+    typeof record[resultKey] === "object" &&
+    !Array.isArray(record[resultKey]) &&
+    Object.hasOwn(record[resultKey], keys[0])
+  ) {
+    record[resultKey][keys[0]] = structuredText;
+  }
   // New check records also carry execution context. Budget the actual wrapper,
   // rather than assuming every record contains only stepId and result.
   const wrapper =
