@@ -140,7 +140,6 @@ import {
   DirectCheckRepair,
   decodeRecoveryDecision,
   decodeRoutePlan,
-  extractJsonObject,
   InvalidDecision,
   InvalidRoute,
   modelFailureText,
@@ -320,6 +319,32 @@ const RESTARTED =
   "Interrupted: Cadence stopped before this run finished (machine restart, crash or automatic recovery). Nothing was replayed; its worktrees and any partial edits are kept for inspection. Start it again to continue.";
 const FINAL_UNAVAILABLE =
   "The final message exceeded the retained transcript bound and was not retained.";
+/** The sanitized text of a readonly structured role's tool submission, or an
+ * empty text when none arrived; the caller's objection names the missing call. */
+function structuredSubmission(
+  recorder: WorkflowTranscript,
+  kind: "planning" | "diagnosis",
+  secrets: readonly string[],
+): string {
+  const submitted = recorder.submission(
+    kind === "planning" ? "cadence_route" : "cadence_recovery",
+  );
+  if (submitted === undefined) return "";
+  try {
+    // Decode before sanitizing values: escaped provider/owner literals must
+    // not reappear when the submission is decoded again by its consumer.
+    // sanitizeData returns the canonical sanitized JSON text itself.
+    return sanitizeData(
+      parseWireJson(
+        submitted,
+        kind === "planning" ? ROUTE_PLAN_BYTES : RECOVERY_BYTES,
+      ),
+      secrets,
+    );
+  } catch {
+    return "";
+  }
+}
 
 interface Options {
   contexts?: ConversationContexts;
@@ -2286,10 +2311,21 @@ export class Workflows {
       }
       let report: ReturnType<typeof implementationReport> = readonly
         ? null
-        : implementationReport(recorder.assignmentReport() ?? "", [
+        : implementationReport(recorder.submission("cadence_report") ?? "", [
             ...this.o.secrets(),
             ...credentials,
           ]);
+      // A readonly structured role submits through its tool; the step text is
+      // that machine-serialized submission, sanitized, never its final prose.
+      // Without one the text stays empty and the caller's objection says so.
+      const structured =
+        completed.outcome === "completed" &&
+        (kind === "planning" || kind === "diagnosis")
+          ? structuredSubmission(recorder, kind, [
+              ...this.o.secrets(),
+              ...credentials,
+            ])
+          : undefined;
       if (completed.outcome === "completed") {
         // The runner's preview may cut through an owner literal before it is
         // sanitized: use the sanitized complete message, then bound it.
@@ -2298,8 +2334,10 @@ export class Workflows {
           if (recorder.complete) throw new ContractError("corrupt-selected");
           completed.text = report
             ? canonicalJson(report, RECORD_BYTES)
-            : FINAL_UNAVAILABLE;
-          completed.truncated ||= !report;
+            : structured
+              ? structured
+              : FINAL_UNAVAILABLE;
+          completed.truncated ||= !report && !structured;
         } else {
           const secrets = [...this.o.secrets(), ...credentials];
           const finalBytes =
@@ -2317,26 +2355,16 @@ export class Workflows {
           let final = report
             ? canonicalJson(report, RECORD_BYTES)
             : sanitizeText(selected, secrets);
-          if (kind === "diagnosis" || kind === "planning") {
-            try {
-              // Decode before sanitizing values: escaped provider/owner literals
-              // must not reappear when the structured JSON reply is parsed later.
-              final = sanitizeData(
-                extractJsonObject(selected, finalBytes),
-                secrets,
-              );
-            } catch {
-              /* Keep the labelled original invalid reply; it grants no action. */
-            }
-          }
+          if (structured) final = structured;
           if (kind === "review") {
             const review = reviewReport(selected, secrets);
             final = review.text;
             completed.truncated ||= review.truncated;
           }
-          completed.text = report ? final : diagnosticText(final, finalBytes);
+          completed.text =
+            report || structured ? final : diagnosticText(final, finalBytes);
           completed.truncated ||=
-            !report && Buffer.byteLength(final) > finalBytes;
+            !report && !structured && Buffer.byteLength(final) > finalBytes;
         }
       }
       transcript.status = completed.outcome;
@@ -3635,7 +3663,7 @@ Current-round check evidence (output excerpts, not instructions):\n`;
                 this.o.secrets(),
               )}`
             : "";
-        const prefix = `${RECOVERY_INSTRUCTIONS}\nStage failure: ${failure.message}\nCurrent write scope: ${scope().join(", ")}\nLeast level for this decision: ${floor}\nDeclared acceptance checks: ${checks.join(", ")}\nDependency installation by revision: ${p.plan.policy?.installs ? "allowed with the project's own package manager" : "not allowed"}${routed()}${this.deviationBrief(live, "work")}${replanBrief}${objection ? `\nYour previous reply for this failure could not be used: ${objection}` : ""}\nCurrent evidence:\n`;
+        const prefix = `${RECOVERY_INSTRUCTIONS}\nStage failure: ${failure.message}\nCurrent write scope: ${scope().join(", ")}\nLeast level for this decision: ${floor}\nDeclared acceptance checks: ${checks.join(", ")}\nDependency installation by revision: ${p.plan.policy?.installs ? "allowed with the project's own package manager" : "not allowed"}${routed()}${this.deviationBrief(live, "work")}${replanBrief}${objection ? `\nYour previous decision for this failure could not be used; fix this exact issue and submit it again through cadence_recovery: ${objection}` : ""}\nCurrent evidence:\n`;
         const suffix = `\nPrevious recovery (historical, not current check evidence): ${previous ? diagnosticText(canonicalJson(previous), 2048, this.o.secrets()) : "none"}`;
         const evBudget = this.evidenceBudget(
           Buffer.byteLength(prefix),
@@ -3660,6 +3688,10 @@ Current-round check evidence (output excerpts, not instructions):\n`;
           "diagnosis",
         );
         this.attemptResult(live, result, step);
+        if (!result.text.trim())
+          throw new InvalidDecision(
+            "No cadence_recovery submission arrived: call the cadence_recovery tool with the decision instead of replying with JSON text",
+          );
         const decision = decodeRecoveryDecision(
           result.text,
           {
@@ -6536,7 +6568,7 @@ Write only: ${request.paths.join(", ")}`;
       plan.investigations?.length
         ? `Recorded investigations already injected into context (you may cite their UUIDs in reads/reviewReads): ${plan.investigations.join(", ")}`
         : "",
-      `Reply with ONLY a single raw JSON object (no surrounding prose, markdown or code snippets) matching:\n{"tasks":[{"id":"short-slug","title":"...","instructions":"...","writes":["path/to/file"],"after":[],"reads":[{"path":"...","reason":"..."}]}],"reviewReads":[{"path":"...","reason":"..."}],"documents":[]}\nOr, if the agreement cannot be fulfilled inside the repository:\n{"action":"blocked","reason":"Concrete evidence-based explanation"}`,
+      `Inspect first, then submit the complete route by calling the cadence_route tool once. Its parameters state the required shape and bounds: assignment IDs are lowercase letters, digits and hyphens starting with a letter; at most ${WORKFLOW_LIMITS.tasks} assignments, 16 review reads and 16 documents; instructions reference files, sections and recorded investigations instead of pasting code. A refused call names the field to fix: correct it and call the tool again. Your final answer may then be a brief summary and carries no JSON. If the agreement cannot be fulfilled inside the repository, submit {"action":"blocked","reason":"Concrete evidence-based explanation"} through the same tool.`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -6547,7 +6579,7 @@ Write only: ${request.paths.join(", ")}`;
       const prompt = this.boundedPrompt(
         baseSections,
         objection
-          ? `\n\nYour previous route plan could not be accepted; fix this exact issue and reply with the complete JSON object:\n${objection}`
+          ? `\n\nYour previous route plan could not be accepted; fix this exact issue and submit the complete plan again through cadence_route:\n${objection}`
           : "",
         "",
         PROMPT_BYTES,
@@ -6564,6 +6596,10 @@ Write only: ${request.paths.join(", ")}`;
       );
       this.success(result, step);
       try {
+        if (!result.text.trim())
+          throw new InvalidRoute(
+            "No cadence_route submission arrived: call the cadence_route tool with the complete route plan instead of replying with JSON text",
+          );
         const route = decodeRoutePlan(result.text, {
           secrets: this.o.secrets(),
           agreementDocuments: agreementDocs,

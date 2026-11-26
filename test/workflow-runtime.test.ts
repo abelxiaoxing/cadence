@@ -14,6 +14,10 @@ import type {
   WorkflowStep,
 } from "../src/service/contracts/workflow.ts";
 import {
+  decodeRoutePlan,
+  ROUTE_PLAN_BYTES,
+} from "../src/service/workflow-controller.ts";
+import {
   implementationReport,
   reviewReport,
   reviewVerdict,
@@ -24,7 +28,7 @@ import { runProcess } from "../src/subagent-process.ts";
 import { CaptureEmitter, SdkCapture } from "../src/worker-capture.mjs";
 import type { CaptureFrame } from "../src/worker-public.mjs";
 import { recordedTurn } from "../web/src/client/turn-source.ts";
-import { frame, message } from "./helpers/capture-frames.ts";
+import { frame, message, submission } from "./helpers/capture-frames.ts";
 
 const turn = (): ChatTurn => ({
   id: randomUUID(),
@@ -827,15 +831,46 @@ it("structured assignment reports survive transcript overflow and inspection, bu
     { kind: "tool-end", callId, name: "cadence_report", isError: false },
   ])
     recorder.accept(frame(event));
-  expect(implementationReport(recorder.assignmentReport()!)).toEqual(report);
+  expect(implementationReport(recorder.submission("cadence_report")!)).toEqual(
+    report,
+  );
+  // A submission belongs to the tool that made it; another role's tool sees none.
+  expect(recorder.submission("cadence_route")).toBeUndefined();
   for (const name of ["read", "find", "grep", "ls"]) {
     recorder.accept(frame({ kind: "tool-start", callId: randomUUID(), name }));
-    expect(implementationReport(recorder.assignmentReport()!)).toEqual(report);
+    expect(
+      implementationReport(recorder.submission("cadence_report")!),
+    ).toEqual(report);
   }
   recorder.accept(
     frame({ kind: "tool-start", callId: randomUUID(), name: "edit" }),
   );
-  expect(recorder.assignmentReport()).toBeUndefined();
+  expect(recorder.submission("cadence_report")).toBeUndefined();
+});
+
+it("a near-maximum route submission survives the escaping of its retained JSON envelope", () => {
+  const recorder = new WorkflowTranscript(turn(), () => []);
+  // Within the tool's 64KiB submission bound; its quote-dense instructions
+  // are escaped again by the retained envelope, pushing that wrapper's bytes
+  // past 64KiB even though the submission itself is within its bound.
+  const plan = JSON.stringify({
+    tasks: Array.from({ length: 4 }, (_, i) => ({
+      id: `t${i}`,
+      title: `Task ${i}`,
+      instructions: '"q"'.repeat(2666),
+      writes: [`f${i}.txt`],
+    })),
+  });
+  expect(Buffer.byteLength(plan)).toBeLessThanOrEqual(ROUTE_PLAN_BYTES);
+  expect(
+    Buffer.byteLength(
+      JSON.stringify({ content: [{ type: "text", text: plan }] }),
+    ),
+  ).toBeGreaterThan(65536);
+  for (const event of submission("cadence_route", plan)) recorder.accept(event);
+  const retained = recorder.submission("cadence_route");
+  expect(retained).toBe(plan);
+  expect(decodeRoutePlan(retained!).tasks).toHaveLength(4);
 });
 
 it("review never approves contradictory duplicate keys or an uninspected suffix", () => {

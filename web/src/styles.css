@@ -4922,8 +4922,10 @@ button.file-item:hover:not(:disabled),
 }
 
 /* Conversation-first workflow records. No second task editor or terminal.
- * A workflow is one line after the turn it started in; its steps, checks and
- * delivery open in the main-area workflow view, its subagents in the dock. */
+ * A workflow is one line after the turn it started in; its chevron opens an
+ * in-place progress body (stages, current work, recent activity, outcome),
+ * its full steps and delivery open in the main-area workflow view, and its
+ * subagents in the dock. */
 .workflow-line {
   display: flex;
   flex-wrap: wrap;
@@ -4998,6 +5000,152 @@ button.file-item:hover:not(:disabled),
 @keyframes live-pulse {
   50% {
     opacity: 0.3;
+  }
+}
+/* The open and Stop buttons keep the line's flex row; only the expanded
+ * progress body takes a full row below them. */
+.workflow-line-head {
+  display: contents;
+}
+.workflow-line-chevron {
+  flex: none;
+  color: var(--text-faint);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .workflow-line-chevron {
+    transition: transform 0.15s ease;
+  }
+}
+.workflow-line.expanded .workflow-line-chevron {
+  transform: rotate(180deg);
+}
+.workflow-line-body {
+  flex-basis: 100%;
+  display: grid;
+  gap: 10px;
+  margin: 2px 8px 6px;
+  padding: 10px 4px 4px;
+  border-top: 1px solid var(--glass-card-border);
+}
+.workflow-stages {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-stage {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.workflow-stage:not(:last-child)::after {
+  content: "";
+  flex: 1 1 auto;
+  min-width: 6px;
+  height: 1px;
+  background: var(--glass-card-border);
+}
+.workflow-stage-dot {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 11px;
+}
+.workflow-stage.done {
+  color: var(--green);
+}
+.workflow-stage.current {
+  color: var(--text);
+  font-weight: 600;
+}
+.workflow-stage.current .workflow-stage-dot {
+  color: var(--accent-text);
+  border-color: var(--accent-text);
+}
+.workflow-stage.failed {
+  color: var(--red);
+}
+.workflow-stage-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-line-heading {
+  margin: 0 0 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 600;
+}
+.workflow-line-now ul,
+.workflow-line-recent ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.workflow-line-now li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workflow-line-now time {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.workflow-line-recent li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.workflow-line-recent li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-line-recent time {
+  flex: none;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.workflow-outcome {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.workflow-outcome dt {
+  color: var(--text-faint);
+}
+.workflow-outcome dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workflow-line-actions {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+@media (max-width: 640px) {
+  .workflow-stages {
+    gap: 4px;
+  }
+  .workflow-stage-label {
+    font-size: 11px;
   }
 }
 /* A workflow card's steps: quiet one-line disclosures. */

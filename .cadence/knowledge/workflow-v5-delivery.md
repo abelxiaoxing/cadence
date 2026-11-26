@@ -30,11 +30,12 @@ Source: internalized from engineering/worktree-delivery.md, 2026-11-22
 
 Kind: contract
 
-Why: After worktree setup and baseline checks, `planRoute` runs readonly `route-planner` (`planning` phase, `purpose: "plan"`) and validates its single JSON `RoutePlan` via `decodeRoutePlan` plus owner gates (`.cadence/` write exclusion, managed-link non-overlap, and `git check-ignore` on `integration` failing closed on Git errors), retrying objections up to `PLAN_OBJECTIONS` (2) or aborting with zero edits on `blocked`.
+Why: After worktree setup and baseline checks, `planRoute` runs readonly `route-planner` (`planning` phase, `purpose: "plan"`), which submits its RoutePlan through the `cadence_route` tool; the owner decodes the retained tool result with `decodeRoutePlan` (one complete object, never prose) plus owner gates (`.cadence/` write exclusion, managed-link non-overlap, and `git check-ignore` on `integration` failing closed on Git errors), retrying objections up to `PLAN_OBJECTIONS` (2) or aborting with zero edits on `blocked`.
+A missing submission is itself the objection.
 
-Anchors: `src/service/workflows.ts#planRoute`, `src/service/workflow-controller.ts#decodeRoutePlan`, `src/service/workflow-controller.ts#PLAN_OBJECTIONS`, `test/workflow-v5-planning.test.ts`
+Anchors: `src/service/workflows.ts#planRoute`, `src/service/workflow-controller.ts#decodeRoutePlan`, `src/service/workflow-controller.ts#PLAN_OBJECTIONS`, `test/workflow-v5-planning.test.ts`, `test/worker-structure.test.mjs`
 
-Source: internalized from engineering/worktree-delivery.md, 2026-11-22
+Source: internalized from engineering/worktree-delivery.md, updated 2026-11-26
 
 ### Parallel child worktrees never own overlapping writes or adopt sibling drift
 

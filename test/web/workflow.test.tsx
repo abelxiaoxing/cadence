@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
+import {
+  act,
+  Children,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { newDesign, reviseDesign } from "../../src/service/contracts/design.ts";
 import type {
   CadenceConversation,
@@ -9,6 +17,7 @@ import type {
 import type {
   WorkflowRun,
   WorkflowStep,
+  WorkflowTiming,
 } from "../../src/service/contracts/workflow.ts";
 import { decodeDeliveryObservation } from "../../src/service/contracts/workflow.ts";
 import { deliveryObservation } from "../../src/service/workflow-delivery.ts";
@@ -40,6 +49,7 @@ import {
   placeWorkflows,
   WorkflowAttemptSummary,
   WorkflowLine,
+  WorkflowLineProgress,
   WorkflowRunState,
   WorkflowStepSummary,
 } from "../../web/src/components/workspace/WorkflowPanel";
@@ -507,7 +517,8 @@ it("assignments are counted from the run, and only a side-by-side run replaces n
     steps: [step("a", "implementation", "running")],
   });
   expect(sideBySideCounts(serial)).toBeNull();
-  expect(line(serial)).toContain("implementing · a</span>");
+  // The live line also carries its ticking elapsed time after the step names.
+  expect(line(serial)).toMatch(/implementing · a · \d+h \d+m<\/span>/);
   // Once every assignment is in the candidate the steps are named again.
   const verifying = parallel({
     phase: "verifying",
@@ -515,7 +526,7 @@ it("assignments are counted from the run, and only a side-by-side run replaces n
     steps: [step("unit", "check", "running")],
   });
   expect(sideBySideCounts(verifying)).toBeNull();
-  expect(line(verifying)).toContain("verifying · unit</span>");
+  expect(line(verifying)).toMatch(/verifying · unit · \d+h \d+m<\/span>/);
   // A revised route: what a revision dropped is counted apart, never as waiting.
   const revised = parallel({
     tasks: [
@@ -738,6 +749,214 @@ it("the dock groups subagents per run, live first, and shows each one's assignme
   const research = group(1);
   expect(research).not.toContain("agent-dock-run-state");
   expect(research).not.toContain("Assignment:");
+});
+/** Every host button in an element tree, for invoking its handler directly. */
+function hostButtons(
+  node: ReactNode,
+  out: ReactElement[] = [],
+): ReactElement[] {
+  if (isValidElement(node)) {
+    if (node.type === "button") out.push(node);
+    for (const child of Children.toArray(
+      (node.props as { children?: ReactNode }).children,
+    ))
+      hostButtons(child, out);
+  } else if (Array.isArray(node))
+    for (const child of node) hostButtons(child, out);
+  return out;
+}
+const timing = (
+  startedAt: number,
+  settledAt: number | null,
+): WorkflowTiming => ({
+  createdAt: startedAt,
+  preparedAt: null,
+  startedAt,
+  stopRequestedAt: null,
+  closedAt: null,
+  settledAt,
+  stopReason: null,
+});
+const progress = (
+  r: WorkflowRun,
+  now = 1_120_000,
+  locale: "en" | "zh" = "en",
+  onOpenStep?: (step: WorkflowStep) => void,
+) =>
+  renderToStaticMarkup(
+    <LocaleProvider initial={locale}>
+      <WorkflowLineProgress
+        run={r}
+        now={now}
+        onOpen={() => {}}
+        onOpenStep={onOpenStep}
+      />
+    </LocaleProvider>,
+  );
+it("the line stays collapsed until its chevron opens the progress body in place", async () => {
+  const live = run();
+  const html = line(live);
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).not.toContain("workflow-line-body");
+  expect(html).not.toContain("Recent activity");
+  // A real stateful render: the component's own hooks drive the toggle, and
+  // the captured tree is inspected statically after each click.
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", { HTMLIFrameElement: class {} });
+  const container = Object.assign(new EventTarget(), {
+    nodeType: 1,
+    tagName: "DIV",
+    ownerDocument: new EventTarget(),
+  });
+  const root = createRoot(container as unknown as HTMLElement);
+  let tree!: ReactElement;
+  function Probe() {
+    tree = WorkflowLine({
+      client: new ServiceClient(transport()),
+      run: live,
+      onOpen: () => {},
+    });
+    return null;
+  }
+  try {
+    await act(async () => root.render(<Probe />));
+    const open = hostButtons(tree).find(
+      (button) =>
+        (button.props as { className?: string }).className ===
+        "workflow-line-open",
+    );
+    if (!open) throw new Error("the line's open button is missing");
+    const toggle = (open.props as { onClick(): void }).onClick;
+    await act(async () => toggle());
+    const expanded = renderToStaticMarkup(tree);
+    expect(expanded).toContain('aria-expanded="true"');
+    expect(expanded).toContain("workflow-line-body");
+    expect(expanded).toContain("Current activity");
+    expect(expanded).toContain("implementation · a");
+    expect(expanded).toContain("Open workflow details");
+    await act(async () => toggle());
+    expect(renderToStaticMarkup(tree)).not.toContain("workflow-line-body");
+  } finally {
+    await act(async () => root.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+it("an expanded live workflow shows its stages, current work and recent activity", () => {
+  const started = 1_060_000,
+    now = 1_120_000;
+  const live = run({
+    tasks: [task("schema", "completed"), task("a", "running")],
+    steps: [
+      {
+        ...step("schema", "implementation", "completed"),
+        timing: timing(1_000_000, 1_040_000),
+      },
+      {
+        ...step("a", "implementation", "running"),
+        timing: timing(started, null),
+      },
+    ],
+  });
+  const html = progress(live, now, "en", () => {});
+  // Plan is done, Develop is current, Verify waits; no delivery, no Merge.
+  expect(html.match(/workflow-stage done/g)).toHaveLength(1);
+  expect(html.match(/workflow-stage current/g)).toHaveLength(1);
+  expect(html.match(/workflow-stage pending/g)).toHaveLength(1);
+  expect(html).toContain(">Develop<");
+  expect(html).not.toContain(">Merge<");
+  // The running step says how long it has been going (now - started = 60s).
+  expect(html).toContain("Current activity");
+  expect(html).toContain("implementation · a");
+  expect(html).toContain(">1m 0s</time>");
+  // Recent activity re-expresses the step timings, newest first.
+  expect(html).toContain("Recent activity");
+  expect(html).toContain("Started · implementation · a");
+  expect(html).toContain("completed · implementation · schema");
+  expect(html).toContain(">2m ago</time>");
+  expect(html.indexOf("Started · implementation · a")).toBeLessThan(
+    html.indexOf("completed · implementation · schema"),
+  );
+  // A step with a subagent opens its live context from the board.
+  expect(html).toContain("Open subagent context");
+  const zh = progress(live, now, "zh");
+  expect(zh).toContain("当前进行");
+  expect(zh).toContain("最近动态");
+  expect(zh).toContain("开始");
+  expect(zh).toContain("分钟前");
+});
+it("a queued or idle run says plainly that no step is running", () => {
+  const queued = run({ status: "queued", phase: "planning", steps: [] });
+  const html = progress(queued);
+  expect(html.match(/workflow-stage pending/g)).toHaveLength(3);
+  expect(html).toContain("No step is running right now.");
+  expect(html).not.toContain("Recent activity");
+  expect(progress(queued, 1_120_000, "zh")).toContain(
+    "此刻没有正在运行的步骤。",
+  );
+});
+it("a completed delivery's progress shows its merge evidence and elapsed time", () => {
+  const delivery = observed();
+  delivery.candidate = "9a94027ea14a0351c29deb872349614ad9bc7513";
+  delivery.acceptance = {
+    candidate: delivery.candidate,
+    tree: "t".repeat(40),
+    planDigest: "p".repeat(64),
+    contextDigest: "c".repeat(64),
+    checks: ["unit-1"],
+    review: "review-1",
+  };
+  delivery.integration.status = "applied";
+  delivery.integration.after = delivery.candidate;
+  const done = run(
+    {
+      status: "completed",
+      phase: "finished",
+      mergedCommit: delivery.candidate,
+      delivery,
+    },
+    1_000_000,
+    1_072_000,
+  );
+  const html = progress(done);
+  expect(html.match(/workflow-stage done/g)).toHaveLength(4);
+  expect(html).toContain(">Merge<");
+  expect(html).toContain(
+    "<code>9a94027ea14a0351c29deb872349614ad9bc7513</code>",
+  );
+  expect(html).toContain("Checks and automatic Agent review passed");
+  expect(html).toContain("Time elapsed");
+  expect(html).toContain(">1m 12s</dd>");
+  expect(html).toContain("Open workflow details");
+  const zh = progress(done, 1_120_000, "zh");
+  expect(zh).toContain("实际本地合并提交：");
+  expect(zh).toContain("检查和自动 Agent review 已通过");
+  expect(zh).toContain("已用时间");
+});
+it("an unmerged delivery says where the result stayed, and a failed run shows its full notice", () => {
+  const delivery = observed();
+  delivery.integration.status = "branch";
+  delivery.integration.reason =
+    "the target moved and verification could not finish";
+  const unmerged = run(
+    { status: "completed", phase: "finished", delivery },
+    1_000_000,
+    1_072_000,
+  );
+  const html = progress(unmerged);
+  expect(html).toContain("Local integration");
+  expect(html).toContain(
+    "not merged into main; the result is on cadence/feature-",
+  );
+  const failed = run({
+    status: "failed",
+    phase: "implementing",
+    notice: "checks failed\nfix required",
+  });
+  const failure = progress(failed);
+  expect(failure).toContain("workflow-stage failed");
+  expect(failure).toContain("checks failed");
+  expect(failure).toContain("fix required");
+  expect(failure).not.toContain("Current activity");
 });
 it("a completed delivery states its deviations on its line and leads its view with each of them", () => {
   const deviations = [

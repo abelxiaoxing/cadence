@@ -333,7 +333,7 @@ it("recovery distinguishes a check-only assignment from out-of-scope writes", ()
     ),
   ).toEqual({ ...value, work: [edit] });
 });
-it("recovery accepts one complete decision surrounded by diagnostic prose", () => {
+it("recovery accepts exactly the cadence_recovery submission and refuses prose, fences or wrappers around a decision", () => {
   const value = {
     ...decision('Keep the literal { marker and escaped "quote" in the file'),
     work: [
@@ -345,17 +345,19 @@ it("recovery accepts one complete decision surrounded by diagnostic prose", () =
     ],
   };
   const json = JSON.stringify(value);
+  expect(decodeRecoveryDecision(json, bounds())).toEqual(value);
+  // The tool serialized the text itself; a hand-written reply is never salvaged.
   for (const reply of [
-    json,
     `\`\`\`json\n${json}\n\`\`\``,
     `Diagnosis complete. Only lint failed.\n${json}`,
     `See [failure](test/foo.test.ts).\n${json}`,
-    `Evidence [step-a] identifies the failed check.\n${json}`,
-    `See [failure][1].\n\`\`\`json\n${json}\n\`\`\`\n[1]: test/foo.test.ts`,
     `${json}\nThe [step-a] evidence and [regression](test/foo.test.ts) remain available.`,
-    `Observed facts: headings need blank lines.\n\n\`\`\`json\n${json}\n\`\`\`\nThe owner checks the repaired candidate.`,
+    `[${json}]`,
+    `{"example":${json}}`,
   ])
-    expect(decodeRecoveryDecision(reply, bounds())).toEqual(value);
+    expect(() => decodeRecoveryDecision(reply, bounds())).toThrow(
+      InvalidDecision,
+    );
 });
 it("recovery refuses ambiguous, malformed and oversized surrounded decisions", () => {
   const json = JSON.stringify(decision());

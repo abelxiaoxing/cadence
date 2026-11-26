@@ -39,17 +39,17 @@ Source: internalized from engineering/checks-review.md, 2026-11-22
 
 ## Adaptive recovery, deviations and review verdicts
 
-### Structured recovery and route replies use strict single-object extraction
+### Structured submissions arrive through tools and are decoded strictly
 
 Kind: contract
 
-Why: `extractJsonObject` enforces the whole-reply byte ceiling and refuses multiple JSON objects, duplicate keys, incomplete objects or array wrappers rather than salvaging a fragment.
-`decodeRecoveryDecision` keeps exact failed-step identity validation for `evidence` and returns a field-specific objection (directing prose to `cause`/`strategy`) rather than misreporting valid JSON as malformed.
-Unchanged failure/source evidence escalates the revision level (`repair` -> `replan` -> `deviate`) even if the model rephrases its strategy, and concrete scope/route additions automatically classify as `replan`.
+Why: Diagnosis submits through `cadence_recovery`, route planning through `cadence_route`; `WorkflowTranscript.submission(tool)` retains the latest successful tool result beyond transcript bounds, and the step text is that object.
+`decodeRecoveryDecision` and `decodeRoutePlan` parse exactly one complete object with `parseWireJson` (prose, fences, arrays, duplicate keys and unknown fields are refused, never salvaged), keep exact failed-step identity for `evidence`, and return field-specific objections; a missing submission is the objection.
+Unchanged evidence with an identical approach still escalates `repair` -> `replan` -> `deviate`.
 
-Anchors: `src/service/workflow-controller.ts#extractJsonObject`, `src/service/workflow-controller.ts#decodeRecoveryDecision`, `test/workflow-controller.test.ts`, `test/workflow-revision.test.ts`
+Anchors: `src/service/workflow-controller.ts#decodeRecoveryDecision`, `src/service/workflow-report.ts#WorkflowTranscript`, `test/workflow-controller.test.ts`, `test/workflow-revision.test.ts`, `test/worker-structure.test.mjs`
 
-Source: internalized from engineering/checks-review.md, updated 2026-11-22
+Source: engineering/checks-review.md, updated 2026-11-26
 
 ### Deviations require independent Agent review confirmation and never silence all checks
 

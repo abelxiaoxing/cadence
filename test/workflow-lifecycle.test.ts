@@ -90,21 +90,25 @@ it.each([
     const replace = vi.spyOn(coordination.files, "replace");
     let observed = false;
     let temporaryDirectory: string | undefined;
+    // The planner submits its route through cadence_route; the final prose is
+    // not parsed for JSON anymore.
     const selectedPlan = editing
-      ? vi.spyOn(WorkflowTranscript.prototype, "selected").mockReturnValueOnce(
-          JSON.stringify({
-            tasks: [
-              {
-                id: "a",
-                title: "A",
-                instructions: "Create a.txt",
-                writes: ["a.txt"],
-                after: [],
-                reads: [],
-              },
-            ],
-          }),
-        )
+      ? vi
+          .spyOn(WorkflowTranscript.prototype, "submission")
+          .mockReturnValueOnce(
+            JSON.stringify({
+              tasks: [
+                {
+                  id: "a",
+                  title: "A",
+                  instructions: "Create a.txt",
+                  writes: ["a.txt"],
+                  after: [],
+                  reads: [],
+                },
+              ],
+            }),
+          )
       : undefined;
     if (editing)
       worker.mockImplementationOnce(
@@ -303,16 +307,21 @@ it.each([
       .spyOn(WorkflowTranscript.prototype, "selected")
       .mockReturnValue(
         kind === "diagnosis"
-          ? JSON.stringify(diagnosis)
+          ? "Decision submitted; nothing else to add."
           : kind === "review"
             ? `{"approved":true}\n${"Context ".repeat(3000)}\n{"approved":false,"blockingIssues":["missing requirement"]}`
             : undefined,
       );
     // The capture parser has separate event-stream tests. This isolates the
-    // owner projection when its complete report survives a missing final preview.
+    // owner projection when its complete submission survives a missing final
+    // preview: a structured role's text is its tool submission, never its prose.
     const captured = vi
-      .spyOn(WorkflowTranscript.prototype, "assignmentReport")
-      .mockReturnValue(JSON.stringify(report));
+      .spyOn(WorkflowTranscript.prototype, "submission")
+      .mockImplementation((tool) =>
+        tool === "cadence_recovery"
+          ? JSON.stringify(diagnosis)
+          : JSON.stringify(report),
+      );
     const live = {
       execution: { version, model },
       abort: new AbortController(),

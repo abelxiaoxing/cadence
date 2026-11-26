@@ -12,6 +12,18 @@ Anchors: `src/worker-toolkit.mjs#createWorkerToolkit`, `src/sdk-worker.mjs`, `te
 
 Source: internalized from engineering/worker-tools.md, 2026-11-22
 
+### Readonly structured roles submit through a tool, never final-prose JSON
+
+Kind: contract
+
+Why: `createSubmissionTools` gives route planners `cadence_route` and diagnosis workers `cadence_recovery`: TypeBox parameters state the shape and the bounds a model can check itself (lowercase assignment IDs, at most 16 reads, field lengths), the installed SDK validates a call before `execute` and returns field-named errors into the same session, and `execute` closes key sets and self-consistency, then serializes the accepted call itself.
+Values pass through untouched: secrets, investigations, Git-ignore and links stay owner gates.
+A hand-escaped reply is never parsed.
+
+Anchors: `src/worker-toolkit.mjs#createSubmissionTools`, `src/worker-toolkit.mjs#createWorkerToolkit`, `test/worker-structure.test.mjs`, `test/worker-toolkit.test.mjs`
+
+Source: this delivery, 2026-11-26
+
 ### Shell display output uses nonfatal UTF-8 replacement without bypassing bounds
 
 Kind: contract

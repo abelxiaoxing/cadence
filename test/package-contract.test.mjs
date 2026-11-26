@@ -194,7 +194,11 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
       expect(body).toMatch(/readonly/i);
       expect(body).toMatch(/Do not/i);
       expect(body).toContain("There is no total runtime deadline");
-      expect(body).toMatch(/supporting evidence|human review|JSON object/i);
+      // Each readonly role names how it reports: evidence, human review, a
+      // JSON object, or the structured submission tool that carries one.
+      expect(body).toMatch(
+        /supporting evidence|human review|JSON object|cadence_route`? tool/i,
+      );
     }
   });
 });

@@ -199,21 +199,18 @@ export async function acceptingFixture(
         implementationReply =
           '{"status":"completed","summary":"Completed remaining fixture work"}';
       recoverImplementation = false;
-      finish(
-        res,
-        JSON.stringify({
-          action: continuing ? "continue" : "blocked",
-          // Blocked is only for a named condition outside the repository.
-          ...(continuing ? {} : { blocker: "tool" }),
-          cause: "Fixture diagnosed the recorded failure",
-          evidence: [stepId],
-          strategy: continuing
-            ? "Inspect preserved output and complete remaining assignment"
-            : "The fixture deliberately cannot resolve this external condition",
-          work: [],
-        }),
-        false,
-      );
+      // The diagnosis worker submits its decision through its tool.
+      callTool(res, "recovery", "cadence_recovery", {
+        action: continuing ? "continue" : "blocked",
+        // Blocked is only for a named condition outside the repository.
+        ...(continuing ? {} : { blocker: "tool" }),
+        cause: "Fixture diagnosed the recorded failure",
+        evidence: [stepId],
+        strategy: continuing
+          ? "Inspect preserved output and complete remaining assignment"
+          : "The fixture deliberately cannot resolve this external condition",
+        work: [],
+      });
       return;
     }
     if (
@@ -239,11 +236,14 @@ export async function acceptingFixture(
         )
       ) {
         const scoped = prompt.includes("Create one scoped file");
-        finish(
+        // The readonly planner submits through its tool, then answers briefly.
+        callTool(
           res,
-          JSON.stringify({
-            tasks: scoped
-              ? [
+          "route-plan",
+          "cadence_route",
+          scoped
+            ? {
+                tasks: [
                   {
                     id: "a",
                     title: "A",
@@ -252,8 +252,10 @@ export async function acceptingFixture(
                     after: [],
                     reads: [],
                   },
-                ]
-              : [
+                ],
+              }
+            : {
+                tasks: [
                   {
                     id: "a",
                     title: "A",
@@ -271,10 +273,9 @@ export async function acceptingFixture(
                     reads: [],
                   },
                 ],
-            reviewReads: [],
-            documents: [],
-          }),
-          false,
+                reviewReads: [],
+                documents: [],
+              },
         );
       } else if (
         prompt.includes("Independently inspect the implemented files")
@@ -291,6 +292,10 @@ export async function acceptingFixture(
         const last = input.messages.at(-1);
         if (last.tool_call_id === "assignment-report")
           finish(res, "Assignment report submitted.", false);
+        else if (last.tool_call_id === "route-plan")
+          finish(res, "Route submitted.", false);
+        else if (last.tool_call_id === "recovery")
+          finish(res, "Decision submitted.", false);
         else {
           const reply = implementationReply;
           let report: unknown;

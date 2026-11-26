@@ -1,10 +1,13 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import {
   FiAlertTriangle,
+  FiCheck,
   FiCheckCircle,
+  FiChevronDown,
   FiClock,
   FiSlash,
   FiSquare,
+  FiX,
   FiXCircle,
 } from "react-icons/fi";
 import {
@@ -21,7 +24,12 @@ import {
 } from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
-import { describeError, type Translator, useT } from "../../i18n/locale";
+import {
+  describeError,
+  type MessageKey,
+  type Translator,
+  useT,
+} from "../../i18n/locale";
 import {
   type AssignmentState,
   assignmentCounts,
@@ -117,12 +125,8 @@ export function nextRunWindow(
     ? size + RUN_WINDOW
     : size;
 }
-/** Acceptance to settlement, both by the owner's clock; never the browser's. */
-function workflowDuration(run: WorkflowRun, t: Translator["t"]): string {
-  const start = run.diagnostics?.acceptedAt,
-    end = run.diagnostics?.settledAt;
-  if (!start || !end || end < start) return "";
-  const s = Math.round((end - start) / 1000);
+/** A whole seconds count as a compact duration, in the reader's locale. */
+function formatElapsed(s: number, t: Translator["t"]): string {
   if (s < 60) return t("{s}s", { s });
   if (s < 3600) return t("{m}m {s}s", { m: Math.floor(s / 60), s: s % 60 });
   return t("{h}h {m}m", {
@@ -130,24 +134,57 @@ function workflowDuration(run: WorkflowRun, t: Translator["t"]): string {
     m: Math.floor((s % 3600) / 60),
   });
 }
-/** One workflow in the conversation: what it is doing, or how it ended. Its
- * steps, checks, delivery and diagnostics open in the main-area workflow view;
- * its subagents are in the dock. */
+/** Acceptance to settlement, both by the owner's clock; never the browser's. */
+function workflowDuration(run: WorkflowRun, t: Translator["t"]): string {
+  const start = run.diagnostics?.acceptedAt,
+    end = run.diagnostics?.settledAt;
+  if (!start || !end || end < start) return "";
+  return formatElapsed(Math.round((end - start) / 1000), t);
+}
+/** How long ago an owner-recorded timestamp was, against the ticking clock. */
+function agoText(at: number, now: number, t: Translator["t"]): string {
+  const s = Math.max(0, Math.round((now - at) / 1000));
+  if (s < 5) return t("just now");
+  if (s < 60) return t("{s}s ago", { s });
+  if (s < 3600) return t("{m}m ago", { m: Math.floor(s / 60) });
+  return t("{h}h ago", { h: Math.floor(s / 3600) });
+}
+/** The browser clock for the live line's elapsed time and relative activity.
+ * It ticks only while the line is live or expanded; polling stays the source
+ * of every fact shown, this clock only re-expresses their timestamps. */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+/** One workflow in the conversation: a line saying what it is doing or how it
+ * ended. Its chevron opens an in-place progress view (stages, current work,
+ * recent activity, assignments and outcome); the full steps, checks, delivery
+ * and diagnostics open in the main-area workflow view, its subagents in the
+ * dock. */
 export function WorkflowLine({
   client,
   run,
   canCancelWorkflow,
   onOpen,
+  onOpenStep,
   onChanged,
 }: {
   client: ServiceClient;
   run: WorkflowRun;
   canCancelWorkflow?: CanCancelWorkflow;
   onOpen(): void;
+  onOpenStep?(step: WorkflowStep): void;
   onChanged?(): void;
 }) {
   const { t, tx } = useT();
   const goal = useId();
+  const bodyId = useId();
+  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const alive = useRef(true);
@@ -158,6 +195,7 @@ export function WorkflowLine({
     };
   }, []);
   const live = workflowLive(run);
+  const now = useNow(live || expanded);
   // Assignments that run side by side are counted, not named: their names
   // would not fit the line, and the queued ones have no step to name.
   const counts = live ? sideBySideCounts(run) : null;
@@ -170,6 +208,15 @@ export function WorkflowLine({
       ? t("delivered with 1 deviation")
       : t("delivered with {count} deviations", { count: deviations });
   const join = (parts: string[]) => parts.filter(Boolean).join(" · ");
+  // The line's one moving part while live: how long the owner has had it.
+  // Everything else changes only when the polled run itself changes.
+  const elapsed =
+    live && run.diagnostics?.acceptedAt
+      ? formatElapsed(
+          Math.max(0, Math.round((now - run.diagnostics.acceptedAt) / 1000)),
+          t,
+        )
+      : "";
   const lead = join(
     live
       ? [
@@ -180,6 +227,7 @@ export function WorkflowLine({
                 .filter((step) => step.status === "running")
                 .map((step) => workflowAgentLabel(step.id))
                 .join(", "),
+          elapsed,
         ]
       : [tx(run.status)],
   );
@@ -210,61 +258,73 @@ export function WorkflowLine({
       : (run.notice.split("\n").find((line) => line.trim()) ?? "");
   const state = join([lead, deviated, tail]);
   return (
-    <article className={`workflow-line ${run.status}`} aria-labelledby={goal}>
-      <button
-        type="button"
-        className="workflow-line-open"
-        title={t("Open workflow details")}
-        onClick={onOpen}
-      >
-        <span className={`agent-dot ${run.status}`} aria-hidden="true" />
-        <span className="workflow-line-goal" id={goal}>
-          {run.goal}
-        </span>
-        <span
-          className={`workflow-line-meta ep-state ${run.status}`}
-          title={state}
-        >
-          {deviated ? (
-            <>
-              {`${lead} · `}
-              <span className="workflow-line-deviation">
-                <FiAlertTriangle aria-hidden="true" />
-                {deviated}
-              </span>
-              {tail && ` · ${tail}`}
-            </>
-          ) : (
-            state
-          )}
-        </span>
-      </button>
-      {live && (
+    <article
+      className={`workflow-line ${run.status}${expanded ? " expanded" : ""}`}
+      aria-labelledby={goal}
+    >
+      {/* display:contents keeps the open and Stop buttons on the line's flex
+          row; the progress body takes a full row below them. */}
+      <div className="workflow-line-head">
         <button
           type="button"
-          className="ghost workflow-line-stop"
-          aria-label={t("Cancel workflow — request stop")}
-          title={t("Cancel workflow — request stop")}
-          disabled={busy || !canCancelWorkflow?.(run)}
-          onClick={() => {
-            if (busy || !canCancelWorkflow?.(run)) return;
-            setBusy(true);
-            setError("");
-            void cancelWorkflow(client, run, canCancelWorkflow)
-              .then((code) => {
-                if (!alive.current) return;
-                setError(code);
-                onChanged?.();
-              })
-              .finally(() => {
-                if (alive.current) setBusy(false);
-              });
-          }}
+          className="workflow-line-open"
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+          title={
+            expanded ? t("Hide workflow progress") : t("Show workflow progress")
+          }
+          onClick={() => setExpanded((shown) => !shown)}
         >
-          <FiSquare aria-hidden="true" />
-          {t("Stop")}
+          <span className={`agent-dot ${run.status}`} aria-hidden="true" />
+          <span className="workflow-line-goal" id={goal}>
+            {run.goal}
+          </span>
+          <span
+            className={`workflow-line-meta ep-state ${run.status}`}
+            title={state}
+          >
+            {deviated ? (
+              <>
+                {`${lead} · `}
+                <span className="workflow-line-deviation">
+                  <FiAlertTriangle aria-hidden="true" />
+                  {deviated}
+                </span>
+                {tail && ` · ${tail}`}
+              </>
+            ) : (
+              state
+            )}
+          </span>
+          <FiChevronDown className="workflow-line-chevron" aria-hidden="true" />
         </button>
-      )}
+        {live && (
+          <button
+            type="button"
+            className="ghost workflow-line-stop"
+            aria-label={t("Cancel workflow — request stop")}
+            title={t("Cancel workflow — request stop")}
+            disabled={busy || !canCancelWorkflow?.(run)}
+            onClick={() => {
+              if (busy || !canCancelWorkflow?.(run)) return;
+              setBusy(true);
+              setError("");
+              void cancelWorkflow(client, run, canCancelWorkflow)
+                .then((code) => {
+                  if (!alive.current) return;
+                  setError(code);
+                  onChanged?.();
+                })
+                .finally(() => {
+                  if (alive.current) setBusy(false);
+                });
+            }}
+          >
+            <FiSquare aria-hidden="true" />
+            {t("Stop")}
+          </button>
+        )}
+      </div>
       {error ? (
         <p className="workflow-line-reason" role="alert">
           {describeError(t, error)}
@@ -276,7 +336,268 @@ export function WorkflowLine({
           </p>
         )
       )}
+      {expanded && (
+        <WorkflowLineProgress
+          id={bodyId}
+          run={run}
+          now={now}
+          onOpen={onOpen}
+          onOpenStep={onOpenStep}
+        />
+      )}
     </article>
+  );
+}
+/** The line's expanded progress: where the run stands, what it is doing now,
+ * its latest recorded activity and, once settled, its outcome. Every fact is
+ * read from the polled run; the main-area workflow view keeps the complete
+ * steps, checks and delivery diagnostics. */
+export function WorkflowLineProgress({
+  run,
+  now,
+  id,
+  onOpen,
+  onOpenStep,
+}: {
+  run: WorkflowRun;
+  now: number;
+  id?: string;
+  onOpen(): void;
+  onOpenStep?(step: WorkflowStep): void;
+}) {
+  const { t } = useT();
+  const live = workflowLive(run);
+  return (
+    <div className="workflow-line-body" id={id}>
+      <WorkflowStages run={run} />
+      {live && <CurrentSteps run={run} now={now} />}
+      <RecentActivity run={run} now={now} />
+      <AssignmentBoard run={run} steps={run.steps} onOpen={onOpenStep} />
+      {!!run.deviations?.length && <Deviations run={run} />}
+      {!live && <WorkflowOutcome run={run} />}
+      <p className="workflow-line-actions">
+        <button type="button" className="ghost" onClick={onOpen}>
+          {t("Open workflow details")}
+        </button>
+      </p>
+    </div>
+  );
+}
+type WorkflowStageState = "done" | "current" | "failed" | "pending";
+const STAGE_SEQUENCE: readonly {
+  key: MessageKey;
+  phases: readonly WorkflowRun["phase"][];
+}[] = [
+  { key: "Plan", phases: ["planning"] },
+  { key: "Develop", phases: ["implementing", "recovering"] },
+  { key: "Verify", phases: ["verifying", "reviewing", "learning"] },
+  { key: "Merge", phases: ["integrating"] },
+];
+/** The run's coarse stages from its phase, not a second state machine: plan →
+ * develop → verify, plus merge only for a branch delivery. A research-only
+ * run has its single stage. Settled states mark the stage they stopped in. */
+function workflowStages(
+  run: WorkflowRun,
+): { key: MessageKey; state: WorkflowStageState }[] {
+  const failed = ["failed", "canceled", "timeout", "unknown"].includes(
+    run.status,
+  );
+  const researchOnly =
+    run.phase === "research" ||
+    (!run.delivery &&
+      !run.tasks?.length &&
+      run.steps.length > 0 &&
+      run.steps.every((step) => step.kind === "research"));
+  if (researchOnly) {
+    const state: WorkflowStageState =
+      run.status === "completed"
+        ? "done"
+        : run.status === "queued"
+          ? "pending"
+          : failed
+            ? "failed"
+            : "current";
+    return [{ key: "Research", state }];
+  }
+  const sequence = STAGE_SEQUENCE.filter(
+    (stage) => stage.key !== "Merge" || run.delivery,
+  );
+  if (run.status === "completed" || run.phase === "finished")
+    return sequence.map((stage) => ({ key: stage.key, state: "done" }));
+  if (run.status === "queued")
+    return sequence.map((stage) => ({ key: stage.key, state: "pending" }));
+  const current = Math.max(
+    0,
+    sequence.findIndex((stage) => stage.phases.includes(run.phase)),
+  );
+  return sequence.map((stage, index) => ({
+    key: stage.key,
+    state:
+      index < current
+        ? "done"
+        : index > current
+          ? "pending"
+          : failed
+            ? "failed"
+            : "current",
+  }));
+}
+function WorkflowStages({ run }: { run: WorkflowRun }) {
+  const { t } = useT();
+  const stages = workflowStages(run);
+  return (
+    <ol className="workflow-stages" aria-label={t("Workflow progress")}>
+      {stages.map((stage) => (
+        <li key={stage.key} className={`workflow-stage ${stage.state}`}>
+          <span className="workflow-stage-dot" aria-hidden="true">
+            {stage.state === "done" ? (
+              <FiCheck />
+            ) : stage.state === "failed" ? (
+              <FiX />
+            ) : stage.state === "current" ? (
+              <HalfRingSpinner />
+            ) : null}
+          </span>
+          <span className="workflow-stage-label">{t(stage.key)}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+/** What the run is doing right now: each running step with how long it has
+ * been going. No running step is said plainly, not as a stalled spinner. */
+function CurrentSteps({ run, now }: { run: WorkflowRun; now: number }) {
+  const { t, tx } = useT();
+  const running = run.steps.filter((step) => step.status === "running");
+  return (
+    <section className="workflow-line-now" aria-label={t("Current activity")}>
+      <h4 className="workflow-line-heading">{t("Current activity")}</h4>
+      {running.length ? (
+        <ul>
+          {running.map((step) => {
+            const at = step.timing?.startedAt ?? step.timing?.createdAt;
+            return (
+              <li key={step.id}>
+                <HalfRingSpinner />
+                <span>{`${tx(step.kind)} · ${workflowAgentLabel(step.id)}`}</span>
+                {at ? (
+                  <time>
+                    {formatElapsed(
+                      Math.max(0, Math.round((now - at) / 1000)),
+                      t,
+                    )}
+                  </time>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="inspector-note">{t("No step is running right now.")}</p>
+      )}
+    </section>
+  );
+}
+/** The last three events the run's step timings record, newest first: when
+ * each step started and when it settled. This is not a separate event log —
+ * it re-expresses the same steps the workflow view lists. */
+function RecentActivity({ run, now }: { run: WorkflowRun; now: number }) {
+  const { t, tx } = useT();
+  const items = run.steps
+    .flatMap((step) => {
+      const label = `${tx(step.kind)} · ${workflowAgentLabel(step.id)}`;
+      const started = step.timing?.startedAt ?? step.timing?.createdAt;
+      const settled = step.timing?.settledAt ?? step.timing?.closedAt;
+      return [
+        ...(started
+          ? [{ at: started, verb: t("Started"), label, id: `${step.id}:start` }]
+          : []),
+        ...(settled
+          ? [
+              {
+                at: settled,
+                verb: tx(step.status),
+                label,
+                id: `${step.id}:settle`,
+              },
+            ]
+          : []),
+      ];
+    })
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 3);
+  if (!items.length) return null;
+  return (
+    <section className="workflow-line-recent" aria-label={t("Recent activity")}>
+      <h4 className="workflow-line-heading">{t("Recent activity")}</h4>
+      <ul>
+        {items.map((item) => (
+          <li key={item.id}>
+            <span>{`${item.verb} · ${item.label}`}</span>
+            <time>{agoText(item.at, now, t)}</time>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+/** A settled run's evidence: the actual merge commit, or where the result
+ * stayed when it was not merged, what acceptance recorded and how long it
+ * took. A run that did not deliver shows its full notice instead. */
+function WorkflowOutcome({ run }: { run: WorkflowRun }) {
+  const { t } = useT();
+  const d = run.delivery;
+  if (run.status !== "completed")
+    return run.notice ? (
+      <p className="workflow-line-reason">{run.notice}</p>
+    ) : null;
+  const duration = workflowDuration(run, t);
+  const unmerged = d?.integration.status === "branch" ? d : undefined;
+  const branchName = (ref: string) => ref.replace(/^refs\/heads\//u, "");
+  return (
+    <dl className="workflow-outcome">
+      {run.mergedCommit && (
+        <>
+          <dt>{t("Actual local merge commit:")}</dt>
+          <dd>
+            <code>{run.mergedCommit}</code>
+          </dd>
+        </>
+      )}
+      {unmerged && (
+        <>
+          <dt>{t("Local integration")}</dt>
+          <dd>
+            {t("not merged into {branch}; the result is on {task}", {
+              branch: branchName(unmerged.binding.target.branch),
+              task: branchName(unmerged.taskBranch),
+            })}
+          </dd>
+        </>
+      )}
+      {d?.acceptance && (
+        <>
+          <dt>{t("Candidate acceptance")}</dt>
+          <dd>
+            {d.acceptance.waived?.length
+              ? t(
+                  "Accepted with {count} of {total} checks set aside by a recorded deviation; the others and the automatic Agent review passed",
+                  {
+                    count: d.acceptance.waived.length,
+                    total: d.acceptance.checks.length,
+                  },
+                )
+              : t("Checks and automatic Agent review passed")}
+          </dd>
+        </>
+      )}
+      {duration && (
+        <>
+          <dt>{t("Time elapsed")}</dt>
+          <dd>{duration}</dd>
+        </>
+      )}
+    </dl>
   );
 }
 /** A local paint-only highlight: never route pointer movement into React

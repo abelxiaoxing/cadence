@@ -320,13 +320,25 @@ export function implementationReport(
     return null;
   }
 }
+/** The tools through which a worker submits a structured result; its final
+ * prose then carries none. One is active per worker; the latest call wins. */
+export const SUBMISSION_TOOLS = [
+  "cadence_report",
+  "cadence_route",
+  "cadence_recovery",
+] as const;
+/** The retained result wraps the tool's serialized submission in a JSON
+ * envelope: escaping quotes and backslashes can double its bytes, and the
+ * largest submission is the route plan's 64KiB. The consumers re-bound the
+ * extracted submission itself; this bound only covers the envelope. */
+const SUBMISSION_ENVELOPE_BYTES = 2 * 65536 + 256;
 /** Workflow worker transcript. Its bound limits what is retained, never the
  * worker: past the bound a labelled prefix is kept and the worker continues.
  * The latest assistant message is tracked separately so the final result is
  * selected from sanitized complete text, never a raw clipped preview. */
 export class WorkflowTranscript {
   overflowed = false;
-  /** True if any non-readonly tool (other than read/grep/find/ls/changes/cadence_report) started. */
+  /** True if any non-readonly tool (other than read/grep/find/ls/changes and the submission tools) started. */
   hasWriteToolCall = false;
   private pending = false;
   private readonly capture: TurnCapture;
@@ -339,11 +351,16 @@ export class WorkflowTranscript {
   private reportId: string | undefined;
   private readonly reportDetails = new Set<string>();
   private reportText: string | undefined;
-  /** Report tool results are retained independently of transcript preview limits. */
-  assignmentReport(): string | undefined {
-    if (this.reportText === undefined) return;
+  private reportTool: string | undefined;
+  /** A submission tool's result is retained independently of transcript preview
+   * limits; undefined unless the latest submission came from `tool`. */
+  submission(tool: string): string | undefined {
+    if (this.reportTool !== tool || this.reportText === undefined) return;
     try {
-      const value = closed(parseWireJson(this.reportText, 65536), ["content"]);
+      const value = closed(
+        parseWireJson(this.reportText, SUBMISSION_ENVELOPE_BYTES),
+        ["content"],
+      );
       if (!Array.isArray(value.content) || value.content.length !== 1) return;
       const item = closed(value.content[0], ["type", "text"]);
       return item.type === "text" && typeof item.text === "string"
@@ -356,16 +373,19 @@ export class WorkflowTranscript {
   private trackReport(frame: CaptureFrame): void {
     const e = frame.event;
     if (e.kind === "tool-start") {
-      // Inspection cannot change the reported candidate. Unknown tools, shell,
-      // writes and a replacement report still invalidate it before admission.
+      // Inspection cannot change the submitted candidate. Unknown tools, shell,
+      // writes and a replacement submission still invalidate it before admission.
       if (["read", "grep", "find", "ls", "changes"].includes(e.name)) return;
-      if (e.name !== "cadence_report") this.hasWriteToolCall = true;
+      if (!(SUBMISSION_TOOLS as readonly string[]).includes(e.name))
+        this.hasWriteToolCall = true;
       this.reportText = undefined;
+      this.reportTool = undefined;
       this.reportDetails.clear();
       this.reportCapture = undefined;
       this.reportTurn = undefined;
       this.reportId = undefined;
-      if (e.name === "cadence_report") {
+      if ((SUBMISSION_TOOLS as readonly string[]).includes(e.name)) {
+        this.reportTool = e.name;
         this.reportId = e.callId;
         this.reportTurn = { ...structuredClone(this.turn), items: [] };
         this.reportCapture = new TurnCapture(
@@ -419,6 +439,7 @@ export class WorkflowTranscript {
       this.trackReport(frame);
     } catch {
       this.reportText = undefined;
+      this.reportTool = undefined;
       this.reportCapture = undefined;
     }
     this.track(frame);

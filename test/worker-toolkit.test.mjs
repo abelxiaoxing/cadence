@@ -42,7 +42,12 @@ it.each(["research", "diagnosis", "review"])(
     const kit = toolkit(purpose, root, { tools: ["bash", "write"] });
     expect(kit.instructions).toContain("Explicit absolute paths");
     expect(kit.instructions).toContain("no bash, write or edit");
-    expect(kit.sessionOptions.tools).toEqual(["read", "grep", "find", "ls"]);
+    // A structured readonly role submits through its tool; nothing else changes.
+    expect(kit.sessionOptions.tools).toEqual(
+      purpose === "diagnosis"
+        ? ["read", "grep", "find", "ls", "cadence_recovery"]
+        : ["read", "grep", "find", "ls"],
+    );
     expect(kit.sessionOptions.cwd).toBe(root);
     expect(kit.sessionOptions.tools).toEqual(
       kit.sessionOptions.customTools.map((tool) => tool.name),
@@ -288,6 +293,88 @@ it("only admitted editing workers get structured reporting; it grants no executi
   expect(toolkit("edit", resolve(".")).sessionOptions.tools).not.toContain(
     "cadence_report",
   );
+});
+
+it("route planners and diagnosis workers submit through their tool: closed, self-consistent and serialized by the tool itself", async () => {
+  const planner = toolkit("plan", resolve("."));
+  expect(planner.sessionOptions.tools).toEqual([
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "cadence_route",
+  ]);
+  const route = planner.sessionOptions.customTools.find(
+    (t) => t.name === "cadence_route",
+  );
+  const recovery = toolkit(
+    "diagnosis",
+    resolve("."),
+  ).sessionOptions.customTools.find((t) => t.name === "cadence_recovery");
+  expect(recovery).toBeDefined();
+  // Only the role that has a structured result gets its tool.
+  for (const purpose of ["research", "review", "edit"])
+    expect(toolkit(purpose, resolve(".")).sessionOptions.tools).not.toContain(
+      "cadence_route",
+    );
+  expect(toolkit("plan", resolve(".")).sessionOptions.tools).not.toContain(
+    "cadence_recovery",
+  );
+  const task = (id) => ({
+    id,
+    title: "A",
+    instructions: "Create a.txt",
+    writes: ["a.txt"],
+  });
+  // Values pass through untouched (secrets stay the owner's to refuse), in the
+  // tool's own serialization: a hand-escaped reply is never parsed.
+  const plan = {
+    tasks: [task("core"), { ...task("follow"), after: ["core"] }],
+    reviewReads: [{ path: "AGENTS.md", reason: "Rules" }],
+  };
+  expect(JSON.parse((await route.execute("c", plan)).content[0].text)).toEqual(
+    plan,
+  );
+  for (const [input, field] of [
+    [{ tasks: [] }, "route.tasks"],
+    [{ tasks: [task("a"), task("a")] }, "tasks[1].id"],
+    [{ tasks: [{ ...task("a"), after: ["zzz"] }] }, "tasks[0].after"],
+    [{ tasks: [{ ...task("a"), writes: [] }] }, "tasks[0].writes"],
+    [{ action: "blocked" }, "route.reason"],
+    [{ action: "later", tasks: [task("a")] }, "route.action"],
+    [{ tasks: [task("a")], extra: 1 }, "route"],
+    [
+      { tasks: [{ ...task("a"), instructions: "x".repeat(70000) }] },
+      "exceeds 65536 bytes",
+    ],
+  ])
+    await expect(route.execute("c", input)).rejects.toThrow(field);
+  expect(
+    JSON.parse(
+      (await route.execute("c", { action: "blocked", reason: "Immutable API" }))
+        .content[0].text,
+    ),
+  ).toEqual({ action: "blocked", reason: "Immutable API" });
+  const decision = {
+    action: "continue",
+    cause: "c",
+    evidence: ["s"],
+    strategy: "s",
+    work: [{ title: "t", instructions: "i", writes: ["a.ts"] }],
+  };
+  expect(
+    JSON.parse((await recovery.execute("c", decision)).content[0].text),
+  ).toEqual(decision);
+  for (const [input, field] of [
+    [{ ...decision, action: "blocked" }, "recovery.blocker"],
+    [{ ...decision, blocker: "model" }, "recovery.blocker"],
+    [{ ...decision, evidence: [] }, "recovery.evidence"],
+    [
+      { ...decision, work: [{ title: "t", instructions: "i", writes: [] }] },
+      "recovery.work[0].writes",
+    ],
+  ])
+    await expect(recovery.execute("c", input)).rejects.toThrow(field);
 });
 
 it("a research worker can inspect an installed-package fixture outside its cwd without new execution rights", async () => {

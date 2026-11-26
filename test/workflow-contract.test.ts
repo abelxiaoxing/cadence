@@ -765,34 +765,34 @@ it("a delivery that stayed on its task branch is labelled as that, never as merg
 
 it("decodeRoutePlan validates Stage 2 DAGs, blocked replies and rejects unsafe or cyclic routes", () => {
   const investigation = randomUUID();
-  const valid = decodeRoutePlan(
-    `\`\`\`json\n${JSON.stringify({
-      tasks: [
-        {
-          id: "core",
-          title: "Shared contract",
-          instructions: "Update src/core.ts",
-          writes: ["src/core.ts"],
-          after: [],
-          reads: [
-            { path: "AGENTS.md", section: "Development", reason: "Rules" },
-            { research: investigation, reason: "Prior evidence" },
-          ],
-        },
-        {
-          id: "tests",
-          title: "Unit tests",
-          instructions: "Add coverage",
-          writes: ["test/core.test.ts"],
-          after: ["core"],
-        },
-      ],
-      reviewReads: [
-        { path: "engineering/architecture.md", reason: "Module boundary" },
-      ],
-      documents: ["engineering/architecture.md"],
-    })}\n\`\`\``,
-  );
+  // The cadence_route tool serialized this text itself: no fence, no prose.
+  const plan = JSON.stringify({
+    tasks: [
+      {
+        id: "core",
+        title: "Shared contract",
+        instructions: "Update src/core.ts",
+        writes: ["src/core.ts"],
+        after: [],
+        reads: [
+          { path: "AGENTS.md", section: "Development", reason: "Rules" },
+          { research: investigation, reason: "Prior evidence" },
+        ],
+      },
+      {
+        id: "tests",
+        title: "Unit tests",
+        instructions: "Add coverage",
+        writes: ["test/core.test.ts"],
+        after: ["core"],
+      },
+    ],
+    reviewReads: [
+      { path: "engineering/architecture.md", reason: "Module boundary" },
+    ],
+    documents: ["engineering/architecture.md"],
+  });
+  const valid = decodeRoutePlan(plan);
   expect(valid).toMatchObject({
     action: "plan",
     documents: ["engineering/architecture.md"],
@@ -814,6 +814,8 @@ it("decodeRoutePlan validates Stage 2 DAGs, blocked replies and rejects unsafe o
 
   for (const [reply, match] of [
     ["not json at all", /JSON object/i],
+    [`\`\`\`json\n${plan}\n\`\`\``, /JSON object/i],
+    [`Plan:\n${plan}`, /JSON object/i],
     ['{"tasks":[]}', /at least one assignment/],
     [
       JSON.stringify({

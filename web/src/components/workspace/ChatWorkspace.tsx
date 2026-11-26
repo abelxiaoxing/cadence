@@ -125,7 +125,10 @@ import {
 import { pushPromptHistory } from "../../composer/prompt-history";
 import { describeError, useT } from "../../i18n/locale";
 import { dismissToasts, notify } from "../../layout/toasts";
-import { dockGroups } from "../../navigation/workflow-assignments";
+import {
+  dockGroups,
+  workflowAgentLabel,
+} from "../../navigation/workflow-assignments";
 import { useLazyWindow } from "../../transcript/use-lazy-window";
 import { LazyMount } from "../transcript/LazyMount";
 import type { ConversationAgents, WorkflowAgent } from "./AgentDock";
@@ -1659,6 +1662,13 @@ export function ChatWorkspace({
       canCancelWorkflow={canCancelWorkflow}
       onOpen={() =>
         onOpenAgent?.({ runId: run.id, stepId: null, label: run.goal })
+      }
+      onOpenStep={(step) =>
+        onOpenAgent?.({
+          runId: run.id,
+          stepId: step.id,
+          label: workflowAgentLabel(step.id),
+        })
       }
       onChanged={() => {
         workflow.refresh();

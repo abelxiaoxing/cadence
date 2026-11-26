@@ -14,6 +14,13 @@ import {
 import { sanitizeText } from "./worker-redaction.mjs";
 import { captureShell } from "./worker-tools.mjs";
 
+/** The structured submission of each readonly role that has one; the role's
+ * final prose then carries no JSON. */
+const SUBMISSION = Object.freeze({
+  plan: "cadence_route",
+  diagnosis: "cadence_recovery",
+});
+
 export function createWorkerToolkit(options) {
   const { purpose, coordinator = false } = options;
   if (
@@ -47,6 +54,13 @@ export function createWorkerToolkit(options) {
     );
     owned.push(observation);
     customTools.push(...observation.tools);
+    const submission = createSubmissionTools().find(
+      (tool) => tool.name === SUBMISSION[purpose],
+    );
+    if (submission) {
+      customTools.push(submission);
+      names.push(submission.name);
+    }
   } else {
     for (const name of names.filter((name) =>
       ["bash", "powershell"].includes(name),
@@ -221,4 +235,515 @@ export function createWorkerToolkit(options) {
       return closing;
     },
   };
+}
+
+/** Structured submissions a worker hands the owner through a tool instead of
+ * its final prose, beside cadence_report: one per readonly structured role.
+ * The parameters state the shape and the bounds a model can check itself; the
+ * installed SDK validates a call before `execute` and returns field-named
+ * errors into the same session, so a correction costs one turn, not a new
+ * worker that reads the repository again. `execute` closes what the schema
+ * leaves open and serializes the accepted call itself: a hand-escaped reply is
+ * never parsed. Values pass through untouched. Every gate that needs owner
+ * knowledge (secrets, recorded investigations, Git-ignore rules, managed links,
+ * the run's scope) stays with the owner, which decodes the retained result. */
+
+/** Bounds mirrored from the owner contract (`src/service/contracts/workflow.ts`,
+ * `src/service/workflow-controller.ts`); `test/worker-structure.test.mjs` pins
+ * them equal. Bytes are the owner's measure; the schema states characters. */
+export const SUBMISSION_LIMITS = Object.freeze({
+  tasks: 16,
+  readings: 16,
+  documents: 16,
+  writes: 128,
+  idLength: 48,
+  title: 256,
+  instructions: 8192,
+  section: 256,
+  readingReason: 512,
+  blockReason: 4096,
+  routeBytes: 65536,
+  evidence: 32,
+  evidenceId: 160,
+  scope: 64,
+  work: 16,
+  routeDrop: 48,
+  waive: 128,
+  cause: 2048,
+  strategy: 4096,
+  deviationField: 4096,
+  recoveryBytes: 32768,
+});
+
+const ID = Type.String({
+  pattern: "^[a-z][a-z0-9-]{0,47}$",
+  description:
+    "Assignment ID and worktree name: lowercase letters, digits and hyphens, starting with a letter, at most 48 characters.",
+});
+const PATH = Type.String({
+  minLength: 1,
+  description:
+    "Checkout-relative repository path; never .git, .env, credentials, keys or a managed link.",
+});
+const text = (maximum, description) =>
+  Type.String({ minLength: 1, maxLength: maximum, description });
+const READING = Type.Union(
+  [
+    Type.Object(
+      {
+        path: PATH,
+        section: Type.Optional(
+          Type.String({
+            minLength: 1,
+            maxLength: SUBMISSION_LIMITS.section,
+            description:
+              "Exact Markdown heading; use either section or nothing.",
+          }),
+        ),
+        reason: text(
+          SUBMISSION_LIMITS.readingReason,
+          "Why this should be read before the work starts.",
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        research: Type.String({
+          minLength: 1,
+          description: "The investigation value of a completed research step.",
+        }),
+        reason: text(
+          SUBMISSION_LIMITS.readingReason,
+          "Why this investigation should be read before the work starts.",
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  ],
+  {
+    description: "A file (optionally one heading) or a recorded investigation.",
+  },
+);
+
+export const ROUTE_PLAN_PARAMETERS = Type.Object(
+  {
+    action: Type.Optional(
+      Type.Union([Type.Literal("plan"), Type.Literal("blocked")], {
+        description:
+          'Omit for a plan. "blocked" only when the approved agreement cannot be fulfilled inside the repository; then give reason and nothing else.',
+      }),
+    ),
+    reason: Type.Optional(
+      text(
+        SUBMISSION_LIMITS.blockReason,
+        "For a blocked plan: the concrete source evidence why the agreement cannot be fulfilled.",
+      ),
+    ),
+    tasks: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            id: ID,
+            title: Type.String({
+              minLength: 1,
+              maxLength: SUBMISSION_LIMITS.title,
+              description: "Short imperative title.",
+            }),
+            instructions: Type.String({
+              minLength: 1,
+              maxLength: SUBMISSION_LIMITS.instructions,
+              description:
+                "The complete assignment. Name files, symbols and conventions; reference code by path, section or investigation instead of pasting it.",
+            }),
+            writes: Type.Array(PATH, {
+              minItems: 1,
+              maxItems: SUBMISSION_LIMITS.writes,
+              description:
+                "Every file this assignment creates or edits. Assignments that run side by side never share a write path.",
+            }),
+            after: Type.Optional(
+              Type.Array(ID, {
+                maxItems: SUBMISSION_LIMITS.tasks,
+                description: "IDs of assignments that must integrate first.",
+              }),
+            ),
+            reads: Type.Optional(
+              Type.Array(READING, {
+                maxItems: SUBMISSION_LIMITS.readings,
+                description:
+                  "What the implementation worker should read first.",
+              }),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+        {
+          minItems: 1,
+          maxItems: SUBMISSION_LIMITS.tasks,
+          description:
+            "Assignments with disjoint writes run side by side; wire cross-module integration through after.",
+        },
+      ),
+    ),
+    reviewReads: Type.Optional(
+      Type.Array(READING, {
+        maxItems: SUBMISSION_LIMITS.readings,
+        description:
+          "At most 16 reads that save review workers from rediscovering the change.",
+      }),
+    ),
+    documents: Type.Optional(
+      Type.Array(Type.String({ pattern: "\\.md$", minLength: 1 }), {
+        maxItems: SUBMISSION_LIMITS.documents,
+        description:
+          "Existing Markdown documents the agreement requires updating; never under .cadence/.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export const RECOVERY_LEVELS = Object.freeze(["repair", "replan", "deviate"]);
+export const RECOVERY_BLOCKERS = Object.freeze([
+  "model",
+  "authentication",
+  "storage",
+  "installation",
+  "tool",
+]);
+const ASSIGNMENT = (maxItems, description) =>
+  Type.Array(
+    Type.Object(
+      {
+        id: ID,
+        title: Type.String({
+          minLength: 1,
+          maxLength: SUBMISSION_LIMITS.title,
+        }),
+        instructions: Type.String({
+          minLength: 1,
+          maxLength: SUBMISSION_LIMITS.instructions,
+        }),
+        writes: Type.Array(PATH, {
+          minItems: 1,
+          maxItems: SUBMISSION_LIMITS.writes,
+        }),
+        after: Type.Array(ID, { maxItems: SUBMISSION_LIMITS.tasks }),
+      },
+      { additionalProperties: false },
+    ),
+    { minItems: 1, maxItems, description },
+  );
+
+export const RECOVERY_PARAMETERS = Type.Object(
+  {
+    action: Type.Union([Type.Literal("continue"), Type.Literal("blocked")], {
+      description:
+        '"blocked" only for a condition outside the repository that no route can remove.',
+    }),
+    level: Type.Optional(
+      Type.Union(
+        RECOVERY_LEVELS.map((level) => Type.Literal(level)),
+        {
+          description:
+            "Least departure that can work: repair inside the current scope, replan with a different approach or split, deviate from an acceptance item. Omit for repair.",
+        },
+      ),
+    ),
+    cause: text(
+      SUBMISSION_LIMITS.cause,
+      "Evidence-based cause of the settled failure.",
+    ),
+    evidence: Type.Array(
+      Type.String({ minLength: 1, maxLength: SUBMISSION_LIMITS.evidenceId }),
+      {
+        minItems: 1,
+        maxItems: SUBMISSION_LIMITS.evidence,
+        description:
+          "Exact failed step IDs from the supplied current evidence; explanations go in cause or strategy.",
+      },
+    ),
+    strategy: text(
+      SUBMISSION_LIMITS.strategy,
+      "The specific changed approach, or the concrete outside condition. Explanation only; executable repair actions go in work.",
+    ),
+    work: Type.Array(
+      Type.Object(
+        {
+          title: Type.String({
+            minLength: 1,
+            maxLength: SUBMISSION_LIMITS.title,
+          }),
+          instructions: Type.String({
+            minLength: 1,
+            maxLength: SUBMISSION_LIMITS.instructions,
+          }),
+          writes: Type.Array(PATH, {
+            minItems: 1,
+            maxItems: SUBMISSION_LIMITS.writes,
+            description:
+              "At least one editing path inside the current write scope (plus scope); check-only work items are omitted.",
+          }),
+        },
+        { additionalProperties: false },
+      ),
+      {
+        maxItems: SUBMISSION_LIMITS.work,
+        description:
+          "Remaining editing assignments. [] only for a safe retry of the original operation.",
+      },
+    ),
+    scope: Type.Optional(
+      Type.Array(PATH, {
+        maxItems: SUBMISSION_LIMITS.scope,
+        description:
+          "Further repository paths this decision brings into the write scope (level replan).",
+      }),
+    ),
+    route: Type.Optional(
+      Type.Union(
+        [
+          Type.Null(),
+          Type.Object(
+            {
+              drop: Type.Optional(
+                Type.Array(ID, {
+                  maxItems: SUBMISSION_LIMITS.routeDrop,
+                  description: "IDs of assignments that have not started.",
+                }),
+              ),
+              add: Type.Optional(
+                ASSIGNMENT(
+                  SUBMISSION_LIMITS.tasks,
+                  "New assignments, or a waiting one given again under its own ID to rewrite it.",
+                ),
+              ),
+            },
+            { additionalProperties: false },
+          ),
+        ],
+        { description: "Only while assignments are still waiting to start." },
+      ),
+    ),
+    deviation: Type.Optional(
+      Type.Union(
+        [
+          Type.Null(),
+          Type.Object(
+            {
+              item: Type.String({ minLength: 1, maxLength: 2048 }),
+              reason: Type.String({
+                minLength: 1,
+                maxLength: SUBMISSION_LIMITS.deviationField,
+              }),
+              delivered: Type.String({
+                minLength: 1,
+                maxLength: SUBMISSION_LIMITS.deviationField,
+              }),
+              waives: Type.Optional(
+                Type.Array(
+                  Type.String({
+                    minLength: 1,
+                    maxLength: SUBMISSION_LIMITS.waive,
+                  }),
+                  {
+                    maxItems: SUBMISSION_LIMITS.documents,
+                    description:
+                      "Names of declared acceptance checks this sets aside.",
+                  },
+                ),
+              ),
+            },
+            { additionalProperties: false },
+          ),
+        ],
+        {
+          description:
+            "Exactly when level is deviate: the acceptance item or decision that cannot be met, the evidence, and what is delivered instead.",
+        },
+      ),
+    ),
+    blocker: Type.Optional(
+      Type.Union(
+        [
+          Type.Null(),
+          ...RECOVERY_BLOCKERS.map((blocker) => Type.Literal(blocker)),
+        ],
+        { description: "Named only by a blocked decision." },
+      ),
+    ),
+    completesStage: Type.Optional(
+      Type.Boolean({
+        description:
+          "True only when finishing work fulfills every remaining obligation of the assignment.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const only = (input, label, keys) => {
+  for (const key of Object.keys(input))
+    if (!keys.includes(key))
+      throw new Error(
+        `${label}: unknown field ${JSON.stringify(key)}; omit it`,
+      );
+};
+const shapeError = (label, why) => new Error(`${label}: ${why}`);
+const serialize = (input, label, maximum) => {
+  const text = JSON.stringify(input);
+  if (Buffer.byteLength(text) > maximum)
+    throw shapeError(
+      label,
+      `the submission exceeds ${maximum} bytes; shorten instructions and cite files instead of pasting them`,
+    );
+  return text;
+};
+
+/** The route plan as the owner will decode it, or a field-named error. */
+export function routeSubmission(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw shapeError("route", "expected one object");
+  const blocked = input.action === "blocked";
+  only(
+    input,
+    "route",
+    blocked
+      ? ["action", "reason"]
+      : ["tasks", "action", "reviewReads", "documents"],
+  );
+  if (!blocked && input.action !== undefined && input.action !== "plan")
+    throw shapeError("route.action", 'give "plan", "blocked" or omit it');
+  if (blocked) {
+    if (!input.reason?.trim())
+      throw shapeError(
+        "route.reason",
+        "a blocked plan names concrete source evidence",
+      );
+    return input;
+  }
+  const tasks = input.tasks;
+  if (!Array.isArray(tasks) || !tasks.length)
+    throw shapeError("route.tasks", "a plan needs at least one assignment");
+  const ids = tasks.map((task) => task.id);
+  for (const [i, task] of tasks.entries()) {
+    const label = `tasks[${i}]`;
+    if (!task.writes?.length)
+      throw shapeError(
+        `${label}.writes`,
+        "needs at least one repository-relative path",
+      );
+    if (ids.indexOf(task.id) !== i)
+      throw shapeError(
+        `${label}.id`,
+        `(${task.id}) is already used by tasks[${ids.indexOf(task.id)}]`,
+      );
+    const unknown = (task.after ?? []).find((dep) => !ids.includes(dep));
+    if (unknown !== undefined)
+      throw shapeError(`${label}.after`, `"${unknown}" is not in tasks`);
+  }
+  return input;
+}
+
+/** The recovery decision as the owner will decode it, or a field-named error. */
+export function recoverySubmission(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw shapeError("recovery", "expected one object");
+  only(input, "recovery", [
+    "action",
+    "level",
+    "cause",
+    "evidence",
+    "strategy",
+    "work",
+    "scope",
+    "route",
+    "deviation",
+    "blocker",
+    "completesStage",
+  ]);
+  if (!input.evidence?.length)
+    throw shapeError(
+      "recovery.evidence",
+      "cite at least one exact failed step ID from the supplied evidence",
+    );
+  for (const [i, item] of input.work.entries())
+    if (!item.writes?.length)
+      throw shapeError(
+        `recovery.work[${i}].writes`,
+        "name at least one editing path; omit check-only work items",
+      );
+  if (input.action === "blocked") {
+    if (!input.blocker)
+      throw shapeError(
+        "recovery.blocker",
+        "a blocked decision names the outside condition",
+      );
+    if (
+      input.work.length ||
+      input.scope?.length ||
+      input.route ||
+      input.deviation
+    )
+      throw shapeError(
+        "recovery",
+        "a blocked decision cannot dispatch work; give blocker, cause, evidence and strategy only",
+      );
+  } else if (input.blocker)
+    throw shapeError(
+      "recovery.blocker",
+      "only a blocked decision names a blocker",
+    );
+  return input;
+}
+
+/** The submission tools, one per readonly structured role. */
+export function createSubmissionTools() {
+  return [
+    {
+      name: "cadence_route",
+      label: "Submit the route plan",
+      description:
+        "Submit the complete route plan once, after inspecting the agreement and the repository. The parameters state the required shape and bounds; a refused call names the field to fix, and you may call it again with the correction. Your final answer may then be a brief summary; no JSON formatting is required in it.",
+      parameters: ROUTE_PLAN_PARAMETERS,
+      async execute(_id, input) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: serialize(
+                routeSubmission(input),
+                "route",
+                SUBMISSION_LIMITS.routeBytes,
+              ),
+            },
+          ],
+          details: undefined,
+        };
+      },
+    },
+    {
+      name: "cadence_recovery",
+      label: "Submit the recovery decision",
+      description:
+        "Submit the recovery decision once, after diagnosing the settled failure from actual files and the supplied native facts. The parameters state the required shape and bounds; a refused call names the field to fix, and you may call it again with the correction. Your final answer may then be a brief summary; no JSON formatting is required in it.",
+      parameters: RECOVERY_PARAMETERS,
+      async execute(_id, input) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: serialize(
+                recoverySubmission(input),
+                "recovery",
+                SUBMISSION_LIMITS.recoveryBytes,
+              ),
+            },
+          ],
+          details: undefined,
+        };
+      },
+    },
+  ];
 }

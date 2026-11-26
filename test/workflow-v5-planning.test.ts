@@ -610,9 +610,7 @@ it("security hardening: auto-discovered links filter secret-bearing paths and de
         }),
       ),
     ).toThrow(/\.cadence\//);
-
-    // decodeRoutePlan rejects secret literal in reads[].path and sanitizes
-    // secret literals inside prose-wrapped reads[].reason & reviewReads[].reason.
+    // decodeRoutePlan rejects a secret literal in reads[].path.
     expect(() =>
       decodeRoutePlan(
         JSON.stringify({
@@ -630,7 +628,18 @@ it("security hardening: auto-discovered links filter secret-bearing paths and de
       ),
     ).toThrow(/protected text/);
 
-    const wrapped = `Here is the route:\n${JSON.stringify({
+    // Prose around a submission is never salvaged: the cadence_route tool
+    // serialized the text itself.
+    expect(() =>
+      decodeRoutePlan(
+        `Here is the route:\n${JSON.stringify({ tasks: [{ id: "core", title: "Core", instructions: "Edit a.txt", writes: ["a.txt"] }] })}\nDone.`,
+        { secrets: [secret] },
+      ),
+    ).toThrow(/JSON object/i);
+
+    // Secret literals inside reads[].reason & reviewReads[].reason of the
+    // submission are sanitized.
+    const submitted = JSON.stringify({
       tasks: [
         {
           id: "core",
@@ -647,8 +656,8 @@ it("security hardening: auto-discovered links filter secret-bearing paths and de
         },
       ],
       reviewReads: [{ path: "AGENTS.md", reason: `Check ${secret}` }],
-    })}\nDone.`;
-    const decoded = decodeRoutePlan(wrapped, { secrets: [secret] });
+    });
+    const decoded = decodeRoutePlan(submitted, { secrets: [secret] });
     expect(JSON.stringify(decoded)).not.toContain(secret);
     expect(decoded.reviewReads[0].reason).toContain("[redacted]");
   } finally {
