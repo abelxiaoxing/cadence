@@ -1,8 +1,8 @@
 {
   "schema": "cadence-web-assets/1",
-  "sourceHash": "a6ed66fba898a9e3c45c11c73cad5678a79d30b51c37507ccbf23beda795fafb",
+  "sourceHash": "3c7df1ea828dc3881c66e43b8159a10f08f1a103440919df24ae3b6e307f6c00",
   "contractHash": "8073eb17cb754b420f987393d0b6924dde0cb8c4eba3e83a2a596fae90c10620",
-  "buildId": "78aff3a3a57e675c33e8b5c1588590a5eaba03cff53af131abec90ce8a6a6040",
+  "buildId": "255980db4b458f398a50f0b2d36b0776500f2a5f46e0346e74d7fb29390eee87",
   "assets": [
     {
       "name": "assets/app.webmanifest",
@@ -24,7 +24,7 @@
     {
       "name": "assets/cadence.css",
       "bytes": 236607,
-      "sha256": "c9939d82870863f38c850e6ac081c206ff05ab28f901674cf0aba0a6638f1532",
+      "sha256": "9ac8589cbc4f21a28eb6117146584d5a78f05bedc18b6a43697e0e36fb7f58de",
       "references": [
         "assets/KaTeX_AMS-Regular.ttf",
         "assets/KaTeX_AMS-Regular.woff",
@@ -91,7 +91,7 @@
     {
       "name": "assets/cadence.js",
       "bytes": 699506,
-      "sha256": "0732489192fe48d8114011ef41c8155ee603a41e901cb0b46b0aa633aca991cb",
+      "sha256": "8f906781c1925a5ca30324a65285b13759854681591443b5b73b2b0f4715ce5c",
       "references": [
         "assets/markdown.js",
         "assets/react.js",
@@ -538,7 +538,7 @@
     {
       "name": "index.html",
       "bytes": 1963,
-      "sha256": "d6b88a26cbfc6fb5739796c77ac840b9a892a7465b4e5d56ba838c210987f340",
+      "sha256": "2cc7bace71e63c7e430747b5a0eb5489e721318add0bfb1cd9c449445bee9dbf",
       "references": [
         "assets/app.webmanifest",
         "assets/apple-touch-icon.png",
